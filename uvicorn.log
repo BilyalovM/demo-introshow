@@ -1,0 +1,115 @@
+INFO:     Will watch for changes in these directories: ['/Users/maximbilyalov/Documents/КОС/rental_app']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [23259] using StatReload
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/google/api_core/_python_version_support.py:242: FutureWarning: You are using a non-supported Python version (3.9.6). Google will not post any further updates to google.api_core supporting this Python version. Please upgrade to the latest Python version, or at least Python 3.10, and then update google.api_core.
+  warnings.warn(message, FutureWarning)
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/google/auth/__init__.py:54: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/google/oauth2/__init__.py:40: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/maximbilyalov/Documents/КОС/rental_app/app.py:11: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [23261]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:49414 - "GET /quotes/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49414 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49414 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49414 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49422 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49422 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49428 - "GET /apple-touch-icon-precomposed.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49429 - "GET /apple-touch-icon.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49430 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49428 - "GET /apple-touch-icon-precomposed.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49429 - "GET /apple-touch-icon.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49430 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49428 - "GET /apple-touch-icon-precomposed.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49429 - "GET /apple-touch-icon.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49430 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49435 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49435 - "GET /static/css/dashboard.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49435 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49435 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49435 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49537 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49537 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49537 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49744 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49744 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49744 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49744 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49744 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49862 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49872 - "GET /quotes/new HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'fix_base.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [23261]
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/google/api_core/_python_version_support.py:242: FutureWarning: You are using a non-supported Python version (3.9.6). Google will not post any further updates to google.api_core supporting this Python version. Please upgrade to the latest Python version, or at least Python 3.10, and then update google.api_core.
+  warnings.warn(message, FutureWarning)
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/google/auth/__init__.py:54: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/maximbilyalov/Documents/КОС/rental_app/venv_new/lib/python3.9/site-packages/google/oauth2/__init__.py:40: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/maximbilyalov/Documents/КОС/rental_app/app.py:11: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [23559]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:49897 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49917 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49917 - "GET /api/equipment?t=1781860200404 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49918 - "GET /api/folders?t=1781860200407 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50183 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50184 - "GET /api/folders?t=1781860627664 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50183 - "GET /api/equipment?t=1781860627661 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50376 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50377 - "GET /api/folders?t=1781860907406 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50376 - "GET /api/equipment?t=1781860907404 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50717 - "GET /quotes/new HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50717 - "GET /api/equipment?t=1781861448032 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50718 - "GET /api/folders?t=1781861448036 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50720 - "GET /apple-touch-icon-precomposed.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50720 - "GET /apple-touch-icon.png HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50720 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50754 - "GET /crm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50754 - "GET /inbox?c=cmqgfapqt002yt9dcftzig2qt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50770 - "GET /crm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50775 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50775 - "GET /quotes/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50775 - "GET /api/equipment?t=1781861518827 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50779 - "GET /api/folders?t=1781861518831 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50775 - "GET /api/deals/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50789 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50789 - "GET /api/equipment?t=1781861531440 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50790 - "GET /api/folders?t=1781861531440 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50790 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50790 - "GET /equipment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50790 - "GET /api/equipment?t=1781861538687 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /api/folders?t=1781861538687 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50950 - "GET /quotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50950 - "GET /quotes/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50950 - "GET /api/equipment?t=1781861795593 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50959 - "GET /api/folders?t=1781861795593 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50950 - "GET /api/deals/5 HTTP/1.1" 200 OK

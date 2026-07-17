@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Управление пользователями - CRM{% endblock %}
+
+{% block extra_head %}
+<style>
+    .container { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 2rem; margin-bottom: 2rem; }
+    
+    button {
+        background-color: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem;
+        border-radius: 4px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;
+    }
+    button:hover { background-color: var(--primary-hover); }
+    button.danger { background-color: #ef4444; }
+    button.danger:hover { background-color: #dc2626; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { font-weight: 600; color: var(--text-light); }
+    
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+    .form-group input, .form-group select {
+        width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px;
+        background: var(--background); color: var(--text);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2>Управление пользователями (до 10 человек)</h2>
+
+    <div class="card">
+        <h3>Добавить пользователя</h3>
+        <form id="create-user-form">
+            <div class="form-group">
+                <label>Имя пользователя</label>
+                <input type="text" name="username" required>
+            </div>
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label>Роль</label>
+                <select name="role">
+                    <option value="user">Пользователь</option>
+                    <option value="admin">Администратор</option>
+                </select>
+            </div>
+            <button type="submit">Создать</button>
+            <p id="create-error" style="color: #ef4444; margin-top: 1rem; display: none;"></p>
+        </form>
+    </div>
+
+    <div class="card">
+        <h3>Список пользователей</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Имя пользователя</th>
+                    <th>Роль</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody id="users-table-body">
+                <!-- Users will be loaded here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    async function loadUsers() {
+        try {
+            const res = await fetch('/api/users');
+            if (res.ok) {
+                const users = await res.json();
+                const tbody = document.getElementById('users-table-body');
+                tbody.innerHTML = '';
+                users.forEach(u => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${u.id}</td>
+                        <td>${u.username}</td>
+                        <td>${u.role === 'admin' ? 'Администратор' : 'Пользователь'}</td>
+                        <td>
+                            <button class="danger" onclick="deleteUser(${u.id})" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;">Удалить</button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function deleteUser(id) {
+        if (!confirm('Удалить пользователя?')) return;
+        try {
+            const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (res.ok) {
+                loadUsers();
+            } else {
+                alert(data.error || 'Ошибка удаления');
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    document.getElementById('create-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const data = Object.fromEntries(fd.entries());
+        
+        try {
+            const res = await fetch('/api/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            
+            const errEl = document.getElementById('create-error');
+            if (res.ok) {
+                errEl.style.display = 'none';
+                e.target.reset();
+                loadUsers();
+            } else {
+                errEl.textContent = result.error || 'Ошибка создания';
+                errEl.style.display = 'block';
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    });
+
+    window.onload = loadUsers;
+</script>
+{% endblock %}
