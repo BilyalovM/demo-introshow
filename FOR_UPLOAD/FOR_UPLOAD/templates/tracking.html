@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Статус заказа</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<div class="container mt-5">
+    <div class="card shadow-sm max-w-md mx-auto" style="max-width: 600px;">
+        <div class="card-body text-center">
+            <h3 class="card-title mb-4">Статус вашего заказа</h3>
+            <h5 class="text-primary">{{ deal.title }}</h5>
+            
+            <div class="my-4">
+                <span class="badge bg-info fs-5 p-3 rounded-pill">
+                    {% if deal.stage_obj %}
+                        {{ deal.stage_obj.name }}
+                    {% else %}
+                        В обработке
+                    {% endif %}
+                </span>
+            </div>
+
+            <p class="text-muted">Если вы хотите получать уведомления о смене статуса (когда оборудование будет доставлено и установлено), нажмите кнопку ниже.</p>
+            
+            <button id="enable-push-btn" class="btn btn-success btn-lg mt-3">
+                🔔 Получать Push-уведомления
+            </button>
+            <p id="push-status" class="mt-2 text-success" style="display: none;">Вы успешно подписаны на уведомления!</p>
+        </div>
+    </div>
+</div>
+
+<script>
+const dealId = {{ deal.id }};
+
+// Helper function
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
+document.getElementById('enable-push-btn').addEventListener('click', async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        alert("Push-уведомления не поддерживаются в этом браузере.");
+        return;
+    }
+
+    try {
+        // Запрос разрешения
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+            alert("Вы отклонили отправку уведомлений.");
+            return;
+        }
+
+        // Регистрация SW
+        const register = await navigator.serviceWorker.register('/static/sw.js');
+        
+        // Получение VAPID ключа
+        const keyResponse = await fetch('/api/push/vapid_public_key');
+        const keyData = await keyResponse.json();
+        const publicVapidKey = keyData.public_key;
+
+        if (!publicVapidKey) {
+            alert("Пуш-сервер не настроен (отсутствует VAPID_PUBLIC_KEY).");
+            return;
+        }
+
+        // Подписка
+        const subscription = await register.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+        });
+
+        // Отправка на бэкенд
+        const subData = subscription.toJSON();
+        await fetch('/api/push/subscribe', {
+            method: 'POST',
+            body: JSON.stringify({
+                deal_id: dealId,
+                endpoint: subData.endpoint,
+                keys: subData.keys
+            }),
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        document.getElementById('enable-push-btn').style.display = 'none';
+        document.getElementById('push-status').style.display = 'block';
+
+    } catch (err) {
+        console.error("Ошибка при подписке:", err);
+        alert("Произошла ошибка при настройке уведомлений.");
+    }
+});
+</script>
+</body>
+</html>

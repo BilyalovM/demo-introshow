@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Intro Show{% endblock %}
+
+{% block extra_head %}
+<style>
+
+        
+        
+        
+        
+        
+        
+        .container { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 2rem; margin-bottom: 2rem; }
+        
+        button {
+            background-color: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem;
+            border-radius: 4px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;
+        }
+        button:hover { background-color: var(--primary-hover); }
+        button:disabled { background-color: var(--text-light); cursor: not-allowed; }
+
+        .status-badge {
+            display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.875rem; font-weight: bold;
+        }
+        .status-badge.offline { background-color: #fee2e2; color: #dc2626; }
+        .status-badge.scanning { background-color: #fef3c7; color: #d97706; }
+        .status-badge.online { background-color: #dcfce7; color: #16a34a; }
+
+        #qr_container { margin-top: 1.5rem; display: none; text-align: center; }
+        #qr_image { max-width: 300px; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; background: white; }
+    
+</style>
+{% endblock %}
+
+{% block content %}
+
+    
+
+    <div class="container">
+        <h2>Настройки системы</h2>
+
+        <div class="card">
+            <h3 style="margin-top:0;">Информация о компании (Intro Show)</h3>
+            <div style="margin-top: 1rem; line-height: 1.6; color: var(--text);">
+                <p><strong>Адрес:</strong> Тюлькубасская улица, 4, Алматы, Алматинская область, Казахстан</p>
+                <p><strong>График работы:</strong> Пн - Вс, 10:00 - 22:00</p>
+                <p><strong>Телефоны:</strong></p>
+                <ul style="margin-left: 1.5rem; margin-bottom: 1rem;">
+                    <li>+7 (701) 554-13-80 (менеджер)</li>
+                    <li>+7 (702) 227-66-73 (менеджер)</li>
+                </ul>
+                <p><strong>Email:</strong> show.intro@yandex.kz</p>
+                <p><strong>Сайт:</strong> <a href="https://intro-show-rental.satu.kz/" target="_blank" style="color: var(--primary);">intro-show-rental.satu.kz</a></p>
+            </div>
+        </div>
+
+
+        <div class="card">
+            <h3 style="margin-top:0;">Пользователи системы</h3>
+            <p>Управление пользователями и правами доступа (макс. 10 человек).</p>
+            <button onclick="window.location.href='/users'">Перейти к управлению</button>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">Интеграция Telegram</h3>
+            <p>Укажите токен бота для получения уведомлений и связи с клиентами.</p>
+            <div style="margin-top: 1rem;">
+                <input type="text" id="tg_token" placeholder="123456789:ABCdefGHIjkl..." style="width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 1rem; background: var(--background); color: var(--text);">
+                <button onclick="saveTelegramToken()">Сохранить токен</button>
+            </div>
+            <p id="tg_status" style="color: #16a34a; margin-top: 0.5rem; display: none;">Сохранено!</p>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">Интеграция WhatsApp (WAHA)</h3>
+            <p>Подключите рабочий WhatsApp для переписки с клиентами прямо из CRM.</p>
+            
+            <div style="display:flex; align-items: center; gap: 1rem; margin-top: 1.5rem; margin-bottom: 1.5rem;">
+                <span style="font-weight: 500;">Статус подключения:</span>
+                <span id="wa_status" class="status-badge offline">Проверка...</span>
+            </div>
+
+            <div id="action_container">
+                <button id="btn_connect" onclick="startSession()" style="display:none;">Начать подключение</button>
+            </div>
+
+            <div id="qr_container">
+                <p>Откройте WhatsApp на телефоне -> Привязанные устройства -> Привязка устройства.</p>
+                <img id="qr_image" src="" alt="QR Code" />
+                <p style="font-size: 0.9rem; color: var(--text-light);">QR-код может загружаться несколько секунд. Если код не появился, обновите страницу.</p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3 style="margin-top:0;">Как запустить сервер WhatsApp?</h3>
+            <p>Чтобы QR-код и интеграция работали, на этом компьютере/сервере должен быть установлен <strong>Docker</strong> и запущен контейнер WAHA.</p>
+            <p>Выполните в терминале команду (только один раз):</p>
+            <code style="display:block; background:#f1f5f9; padding:1rem; border-radius:4px; font-family:monospace; word-break:break-all;">
+                docker run -it -p 3000:3000/tcp devlikeapro/waha
+            </code>
+            <p style="font-size:0.9rem; margin-top:1rem; color:var(--text-light);">После успешного запуска WAHA на порту 3000 вы сможете отсканировать QR-код выше.</p>
+        </div>
+    </div>
+
+    
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+        let checkInterval = null;
+
+        async function checkStatus() {
+            try {
+                const res = await fetch('/api/wa/status');
+                const data = await res.json();
+                
+                const badge = document.getElementById('wa_status');
+                const btn = document.getElementById('btn_connect');
+                const qrContainer = document.getElementById('qr_container');
+                
+                if (data.status === 'OFFLINE') {
+                    badge.className = 'status-badge offline';
+                    badge.innerText = 'Сервер WAHA не запущен';
+                    btn.style.display = 'none';
+                    qrContainer.style.display = 'none';
+                    if(checkInterval) clearInterval(checkInterval);
+                } else if (data.status === 'NOT_FOUND') {
+                    // Session not created yet
+                    badge.className = 'status-badge offline';
+                    badge.innerText = 'Не подключено';
+                    btn.style.display = 'block';
+                    btn.innerText = 'Начать подключение';
+                    qrContainer.style.display = 'none';
+                } else if (data.status === 'SCAN_QR_CODE' || (data.status && data.status.includes('QR'))) {
+                    badge.className = 'status-badge scanning';
+                    badge.innerText = 'Ожидание сканирования QR';
+                    btn.style.display = 'none';
+                    qrContainer.style.display = 'block';
+                    document.getElementById('qr_image').src = '/api/wa/qr?t=' + new Date().getTime();
+                } else if (data.status === 'WORKING') {
+                    badge.className = 'status-badge online';
+                    badge.innerText = 'Подключено';
+                    btn.style.display = 'none';
+                    qrContainer.style.display = 'none';
+                    if(checkInterval) clearInterval(checkInterval);
+                } else {
+                    badge.className = 'status-badge scanning';
+                    badge.innerText = 'Загрузка (' + (data.status || 'unknown') + ')...';
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function startSession() {
+            document.getElementById('btn_connect').disabled = true;
+            document.getElementById('btn_connect').innerText = 'Запуск...';
+            await fetch('/api/wa/start', { method: 'POST' });
+            // start polling
+            checkInterval = setInterval(checkStatus, 3000);
+            checkStatus();
+        }
+
+        async function saveTelegramToken() {
+            const token = document.getElementById('tg_token').value;
+            if (!token) return;
+            try {
+                const res = await fetch('/api/settings/telegram', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                if (res.ok) {
+                    const status = document.getElementById('tg_status');
+                    status.style.display = 'block';
+                    setTimeout(() => status.style.display = 'none', 3000);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        window.onload = () => {
+            checkStatus();
+        };
+    </script>
+{% endblock %}

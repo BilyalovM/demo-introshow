@@ -1,0 +1,1499 @@
+{% extends "base.html" %}
+
+{% block title %}CRM - Intro Show{% endblock %}
+
+{% block extra_head %}
+<style>
+    .crm-main-layout {
+        display: flex;
+        align-items: start;
+        width: 100%;
+        margin-top: 10px;
+    }
+    
+    /* Overlay display fix to prevent click blocking */
+    .slider-overlay {
+        display: none !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
+    .slider-overlay.active {
+        display: flex !important;
+    }
+    #slider-backdrop.active {
+        display: block !important;
+    }
+
+    .kanban-cards::-webkit-scrollbar {
+        width: 6px;
+    }
+    .kanban-cards::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.1);
+        border-radius: 4px;
+    }
+    
+    .deal-title-link:hover {
+        text-decoration: underline;
+    }
+
+    /* Timeline Overrides & New Bitrix24 Layout */
+    .log-timeline {
+        position: relative;
+        padding-left: 24px !important;
+        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+    .log-timeline::before {
+        content: '';
+        position: absolute;
+        top: 8px;
+        left: 13px !important;
+        bottom: 8px;
+        width: 2px !important;
+        background: var(--border) !important;
+        z-index: 1;
+    }
+
+    .log-item {
+        position: relative;
+        padding-left: 20px !important;
+        display: flex;
+        flex-direction: column;
+    }
+    /* Disable the old CSS dot */
+    .log-item::before {
+        display: none !important;
+    }
+
+    /* Timeline Icons/Badges */
+    .timeline-badge {
+        position: absolute;
+        left: -24px;
+        top: 2px;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--bg-2);
+        border: 2px solid var(--surface);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2;
+        color: var(--text-2);
+    }
+    .timeline-icon {
+        width: 14px;
+        height: 14px;
+    }
+
+    /* Badge colors matching Bitrix24 style */
+    .timeline-badge-comment {
+        background: #fffdf0;
+        color: #cca300;
+        border-color: #ffe0b2;
+    }
+    [data-theme="dark"] .timeline-badge-comment {
+        background: #3e3b2e;
+        color: #ffd54f;
+        border-color: #5d543e;
+    }
+
+    .timeline-badge-stage {
+        background: var(--primary-soft);
+        color: var(--primary);
+        border-color: var(--primary-soft);
+    }
+    .timeline-badge-created {
+        background: var(--success-soft);
+        color: var(--success);
+        border-color: var(--success-soft);
+    }
+    .timeline-badge-system {
+        background: var(--bg-2);
+        color: var(--muted);
+        border-color: var(--border);
+    }
+
+    /* Comment Card styling like Bitrix24 */
+    .comment-card {
+        background: #fffef5;
+        border: 1px solid #ffe0b2;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        width: 100%;
+        box-sizing: border-box;
+    }
+    [data-theme="dark"] .comment-card {
+        background: #272822;
+        border: 1px solid #49483e;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+
+    .comment-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+        font-size: 11px;
+    }
+    .comment-author {
+        font-weight: 600;
+        color: var(--text);
+    }
+    .comment-time {
+        color: var(--muted);
+    }
+    .comment-card-body {
+        font-size: 13px;
+        color: var(--text);
+        line-height: 1.5;
+        white-space: pre-wrap; /* Preserve spaces and linebreaks! */
+        word-break: break-word;
+    }
+
+    /* System event styling */
+    .system-event {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .system-event-text {
+        font-size: 13px;
+        color: var(--text-2);
+    }
+    .system-event-time {
+        font-size: 11px;
+        color: var(--muted);
+    }
+
+    /* Bitrix24 Slider Redesign CSS */
+    .deal-slider {
+        width: 1000px !important;
+        right: -1000px !important;
+    }
+    .deal-slider.active {
+        right: 0 !important;
+    }
+
+    .slider-deal-title-input {
+        font-size: 20px;
+        font-weight: 700;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text);
+        padding: 4px 8px;
+        border-radius: 6px;
+        width: 60%;
+        transition: all 0.2s;
+    }
+    .slider-deal-title-input:focus, .slider-deal-title-input:hover {
+        border-color: var(--border);
+        background: var(--surface);
+    }
+
+    .slider-actions-group {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-right: 16px;
+    }
+    .slider-action-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-2);
+        background: var(--surface);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .slider-action-icon:hover {
+        background: var(--primary-soft);
+        color: var(--primary);
+        border-color: var(--primary);
+    }
+    .slider-action-icon svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    /* Horizontal Stage Progress Bar */
+    .slider-stages-bar {
+        display: flex;
+        align-items: center;
+        background: var(--surface);
+        padding: 8px 24px;
+        border-bottom: 1px solid var(--border);
+        gap: 2px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+    .slider-stages-bar::-webkit-scrollbar {
+        display: none;
+    }
+    .slider-stage-step {
+        flex-grow: 1;
+        flex-shrink: 1;
+        flex-basis: 0;
+        padding: 8px 6px;
+        font-size: 11px;
+        font-weight: 600;
+        text-align: center;
+        cursor: pointer;
+        position: relative;
+        background: var(--bg-2);
+        color: var(--text-2);
+        transition: all 0.2s;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-radius: 4px;
+    }
+    .slider-stage-step.completed {
+        background: #d2f4ea;
+        color: #0b6951;
+    }
+    [data-theme="dark"] .slider-stage-step.completed {
+        background: #113e33;
+        color: #34d399;
+    }
+    .slider-stage-step.active {
+        background: var(--primary);
+        color: #fff;
+    }
+    .slider-stage-step.upcoming {
+        background: var(--bg-2);
+        color: var(--text-2);
+    }
+    .slider-stage-step:hover {
+        opacity: 0.9;
+    }
+
+    /* Left Column Global Tabs */
+    .slider-tabs-row {
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        gap: 16px;
+        margin-bottom: 16px;
+        padding-bottom: 2px;
+        background: var(--surface);
+        padding-left: 24px;
+        padding-right: 24px;
+    }
+    .slider-tab-item {
+        font-size: 13px;
+        font-weight: 600;
+        padding: 8px 12px;
+        color: var(--text-2);
+        cursor: pointer;
+        position: relative;
+        transition: all 0.2s;
+    }
+    .slider-tab-item:hover {
+        color: var(--primary);
+    }
+    .slider-tab-item.active {
+        color: var(--primary);
+    }
+    .slider-tab-item.active::after {
+        content: '';
+        position: absolute;
+        bottom: -3px;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--primary);
+        border-radius: 99px;
+    }
+
+    /* Collapsible Card styling */
+    .slider-info-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 16px;
+        overflow: hidden;
+        box-shadow: var(--shadow-xs);
+    }
+    .slider-info-card-header {
+        padding: 10px 14px;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        font-weight: 700;
+        font-size: 12.5px;
+        color: var(--text-2);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+    }
+    .slider-info-card-body {
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    /* Right Column Activity Tabs & Input Editor */
+    .activity-tabs {
+        display: flex;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 8px 8px 0 0;
+        overflow: hidden;
+        border-bottom: none;
+    }
+    .activity-tab-btn {
+        flex: 1;
+        padding: 10px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        border: none;
+        background: transparent;
+        color: var(--text-2);
+        cursor: pointer;
+        text-align: center;
+        transition: all 0.2s;
+        border-bottom: 2px solid transparent;
+    }
+    .activity-tab-btn:hover {
+        color: var(--primary);
+        background: var(--surface);
+    }
+    .activity-tab-btn.active {
+        color: var(--primary);
+        background: var(--surface);
+        border-bottom-color: var(--primary);
+    }
+    .activity-content-box {
+        border: 1px solid var(--border);
+        border-radius: 0 0 8px 8px;
+        background: var(--surface);
+        padding: 16px;
+        margin-bottom: 16px;
+        box-shadow: var(--shadow-xs);
+    }
+    .activity-pane {
+        display: none;
+    }
+    .activity-pane.active {
+        display: block;
+    }
+    .activity-placeholder-text {
+        text-align: center;
+        color: var(--muted);
+        font-size: 12.5px;
+        padding: 12px 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="padding: 24px; box-sizing: border-box; width: 100%;">
+    <h1 class="page-title">CRM</h1>
+    <p class="page-sub">Клиенты, сделки и этапы воронки. В работе: <span id="crm-total-sum-label" style="font-weight: 700; color: var(--primary);">0 ₸</span></p>
+    
+    <div class="notice" style="margin-bottom: 18px;">
+        Интеграция с WhatsApp и Telegram активна. Статусы сделок синхронизируются с базой данных в реальном времени.
+    </div>
+
+    <!-- Toggle views & quick actions -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 16px; flex-wrap: wrap;">
+        <div class="view-switcher" style="margin-bottom: 0;">
+            <button id="view-kanban-btn" class="view-btn active" onclick="switchView('kanban')">
+                <svg style="width: 15px; height: 15px;" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 24 24">
+                    <rect x="3" y="3" width="7" height="9" rx="1"></rect>
+                    <rect x="14" y="3" width="7" height="5" rx="1"></rect>
+                    <rect x="14" y="12" width="7" height="9" rx="1"></rect>
+                    <rect x="3" y="16" width="7" height="5" rx="1"></rect>
+                </svg>
+                Канбан
+            </button>
+            <button id="view-list-btn" class="view-btn" onclick="switchView('list')">
+                <svg style="width: 15px; height: 15px;" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 24 24">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                Список
+            </button>
+        </div>
+        <button class="btn btn-primary" onclick="openCreateDealModal()">+ Быстрая сделка</button>
+    </div>
+
+    <!-- Main Workspace Layout -->
+    <div class="crm-main-layout">
+        <!-- Content Area -->
+        <div id="crm-content-area" style="flex-grow: 1; min-width: 0;">
+            <!-- Kanban View -->
+            <div id="crm-kanban-view" class="kanban-board">
+                <!-- Columns loaded by JS -->
+            </div>
+
+            <!-- List View -->
+            <div id="crm-list-view" class="card card-pad-0" style="display: none; overflow-x: auto;">
+                <table class="data">
+                    <thead>
+                        <tr>
+                            <th>Сделка</th>
+                            <th>Клиент</th>
+                            <th>Этап</th>
+                            <th>Дата мероприятия</th>
+                            <th class="num">Сумма</th>
+                        </tr>
+                    </thead>
+                    <tbody id="crm-list-table-body">
+                        <!-- Loaded by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Sidebar Area (Visible only in List view to match layout) -->
+        <div id="crm-sidebar-area" style="width: 340px; margin-left: 24px; flex-shrink: 0; display: none;">
+            <div class="card" style="margin-top: 0;">
+                <h3 style="margin-top: 0; margin-bottom: 16px;">Добавить клиента</h3>
+                <form id="add-client-form" onsubmit="submitAddClient(event)">
+                    <label class="field">
+                        <span>ФИО директора/контакта</span>
+                        <input type="text" id="new-client-name" placeholder="Например: Иван Иванов" required>
+                    </label>
+                    <label class="field">
+                        <span>Телефон</span>
+                        <input type="text" id="new-client-phone" placeholder="Например: +77011234567" required>
+                    </label>
+                    <label class="field">
+                        <span>Название компании</span>
+                        <input type="text" id="new-client-company" placeholder="Например: ТОО Ромашка" required>
+                    </label>
+                    <button type="submit" class="btn btn-green" style="width: 100%; margin-top: 8px;">Создать контакт</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Slide-over Slider (Bitrix24 style) -->
+<div id="slider-backdrop" class="slider-overlay" onclick="closeDealSlider()"></div>
+<div id="deal-slider" class="deal-slider">
+    <div class="slider-header" style="padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <input type="text" id="edit-deal-title" class="slider-deal-title-input" required onblur="saveDealTitleDirectly()" onkeypress="if(event.key === 'Enter') { this.blur(); }">
+            
+            <div style="display: flex; align-items: center;">
+                <div class="slider-actions-group">
+                    <a id="deal-call-btn" class="slider-action-icon" title="Позвонить клиенту" href="#">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                        </svg>
+                    </a>
+                    <a id="deal-chat-btn" class="slider-action-icon" title="Написать в WhatsApp/Telegram" href="/inbox?chat=aigerim">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                        </svg>
+                    </a>
+                    <a id="deal-email-btn" class="slider-action-icon" title="Отправить Email" href="#">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                            <polyline points="22,6 12,13 2,6"></polyline>
+                        </svg>
+                    </a>
+                </div>
+                <button class="close-slider-btn" onclick="closeDealSlider()">&times;</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Dynamic horizontal Stages bar -->
+    <div id="slider-stages-bar" class="slider-stages-bar"></div>
+
+    <!-- Global slider tabs row -->
+    <div class="slider-tabs-row">
+        <div id="tab-btn-info" class="slider-tab-item active" onclick="switchSliderTab('info')">Общие (Параметры)</div>
+        <div id="tab-btn-products" class="slider-tab-item" onclick="switchSliderTab('products')">Товары (Смета)</div>
+    </div>
+
+    <div class="slider-body">
+        <div class="slider-left">
+            <!-- Hidden Stage Select helper to prevent code errors -->
+            <select id="edit-deal-stage" style="display: none;"></select>
+
+            <!-- Tab Content: Parameters -->
+            <div id="tab-content-info" class="tab-pane active">
+                <form id="deal-details-form" onsubmit="saveDealDetails(event)">
+                    <input type="hidden" id="edit-deal-id">
+                    
+                    <!-- Card 1: О сделке -->
+                    <div class="slider-info-card">
+                        <div class="slider-info-card-header">
+                            <span>Основная информация о сделке</span>
+                        </div>
+                        <div class="slider-info-card-body">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                <label class="field">
+                                    <span>Сумма сделки (₸)</span>
+                                    <input type="number" id="edit-deal-sum" readonly style="background: var(--bg-2); font-weight: 700; cursor: not-allowed;">
+                                </label>
+                                <label class="field">
+                                    <span>Скидка (%)</span>
+                                    <input type="number" id="edit-deal-discount" min="0" max="100" step="0.1" onchange="recalculateSliderDiscount()">
+                                </label>
+                            </div>
+                            
+                            <label class="field">
+                                <span>Клиент / Компания</span>
+                                <select id="edit-deal-company"></select>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Card 2: Логистика и Смета -->
+                    <div class="slider-info-card">
+                        <div class="slider-info-card-header">
+                            <span>Логистика и примечания</span>
+                        </div>
+                        <div class="slider-info-card-body">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                <label class="field">
+                                    <span>Дата монтажа</span>
+                                    <input type="date" id="edit-deal-setup-date">
+                                </label>
+                                <label class="field">
+                                    <span>Дата мероприятия</span>
+                                    <input type="date" id="edit-deal-event-date" required>
+                                </label>
+                            </div>
+
+                            <label class="field">
+                                <span>Адрес площадки</span>
+                                <input type="text" id="edit-deal-address">
+                            </label>
+                            
+                            <label class="field">
+                                <span>Примечания к заказу</span>
+                                <textarea id="edit-deal-comment" rows="3"></textarea>
+                            </label>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">Сохранить изменения</button>
+                </form>
+            </div>
+
+            <!-- Tab Content: Products -->
+            <div id="tab-content-products" class="tab-pane">
+                <div style="background: var(--bg-2); padding: 12px; border-radius: var(--r-sm); margin-bottom: 16px;">
+                    <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">Добавить оборудование со склада:</div>
+                    <div style="display: flex; gap: 8px;">
+                        <select id="add-prod-select" style="flex-grow: 1; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text);"></select>
+                        <button class="btn btn-green btn-sm" onclick="addProductRow()">+ Добавить</button>
+                    </div>
+                </div>
+                
+                <table class="prod-table">
+                    <thead>
+                        <tr>
+                            <th>Товар / Услуга</th>
+                            <th>Цена</th>
+                            <th>Кол-во</th>
+                            <th>Дней</th>
+                            <th>Итого</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="deal-products-list">
+                        <!-- Loaded by JS -->
+                    </tbody>
+                </table>
+                <div style="display: flex; justify-content: flex-end; margin-top: 16px; gap: 16px; font-weight: 700; font-size: 14px;">
+                    <div>Скидка: <span id="modal-discount-label">0%</span></div>
+                    <div>Итого с учетом скидки: <span id="modal-total-label" style="color: var(--primary);">0 ₸</span></div>
+                </div>
+                <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
+            </div>
+        </div>
+        
+        <div class="slider-right">
+            <!-- Activity Tabs (Bitrix24 style) -->
+            <div class="activity-tabs">
+                <button id="act-tab-delo" class="activity-tab-btn" onclick="switchActivityTab('delo')">Дело</button>
+                <button id="act-tab-comment" class="activity-tab-btn active" onclick="switchActivityTab('comment')">Комментарий</button>
+                <button id="act-tab-message" class="activity-tab-btn" onclick="switchActivityTab('message')">Сообщение</button>
+                <button id="act-tab-task" class="activity-tab-btn" onclick="switchActivityTab('task')">Задача</button>
+            </div>
+            
+            <div class="activity-content-box">
+                <!-- Comment Editor Pane -->
+                <div id="act-pane-comment" class="activity-pane active">
+                    <textarea id="add-deal-note-text" placeholder="Введите текст заметки..." rows="3" style="width: 100%; font-size: 12.5px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); box-sizing: border-box;"></textarea>
+                    <button class="btn btn-sm btn-primary" style="width: 100%" onclick="addDealNote()">Добавить</button>
+                </div>
+                
+                <!-- Activity Pane -->
+                <div id="act-pane-delo" class="activity-pane">
+                    <div class="activity-placeholder-text">Запланировать звонок, встречу или визит к клиенту</div>
+                </div>
+                
+                <!-- Message Pane -->
+                <div id="act-pane-message" class="activity-pane">
+                    <div class="activity-placeholder-text">Написать сообщение в WhatsApp / Telegram</div>
+                </div>
+                
+                <!-- Task Pane -->
+                <div id="act-pane-task" class="activity-pane">
+                    <div class="activity-placeholder-text">Поставить задачу менеджеру или исполнителю</div>
+                </div>
+            </div>
+
+            <div style="font-weight: 700; font-size: 14px; margin-top: 8px;">История и события</div>
+            <div id="deal-timeline-list" class="log-timeline">
+                <!-- Loaded by JS -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Deal Modal -->
+<div id="quick-deal-modal" class="slider-overlay" style="display: flex; align-items: center; justify-content: center;">
+    <div class="card" style="width: 500px; max-width: 90%; background: var(--surface); padding: 24px; position: relative; border-radius: var(--r-md); box-shadow: var(--shadow-lg);">
+        <button onclick="closeCreateDealModal()" style="position: absolute; top: 12px; right: 16px; background: transparent; border: none; font-size: 24px; cursor: pointer; color: var(--muted);">&times;</button>
+        <h3 style="margin-top: 0; margin-bottom: 16px;">Создание быстрой сделки</h3>
+        <form onsubmit="submitCreateDeal(event)">
+            <label class="field">
+                <span>Название сделки</span>
+                <input type="text" id="new-deal-title" placeholder="Например: Презентация LED-экранов" required>
+            </label>
+            <label class="field">
+                <span>Компания / Клиент</span>
+                <select id="new-deal-company" required></select>
+            </label>
+            <label class="field">
+                <span>Дата проведения</span>
+                <input type="date" id="new-deal-event-date" required>
+            </label>
+            <label class="field">
+                <span>Адрес площадки</span>
+                <input type="text" id="new-deal-address" placeholder="Например: ул. Абая 45">
+            </label>
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 16px;">Создать сделку</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Global error logger for diagnostics
+    window.onerror = function(message, source, lineno, colno, error) {
+        alert("JS Error: " + message + " at line " + lineno + ":" + colno);
+        return false;
+    };
+
+    let crmDeals = [];
+    let crmStages = [];
+    let crmCompanies = [];
+    let crmEquipment = [];
+    let currentView = 'kanban'; // 'kanban' or 'list'
+    let currentDealProducts = []; // items in active slider deal
+
+    // Load initial data
+    async function initCrm() {
+        try {
+            // Load stages (default pipeline 1)
+            const stagesRes = await fetch('/api/pipelines/1/stages');
+            crmStages = await stagesRes.json();
+
+            // Load companies
+            const companiesRes = await fetch('/api/companies');
+            crmCompanies = await companiesRes.json();
+
+            // Load equipment catalog
+            const equipRes = await fetch('/api/equipment');
+            crmEquipment = await equipRes.json();
+
+            // Load deals
+            await loadDeals();
+
+            // Fill selectors
+            fillSelectors();
+            
+            // Render
+            renderCrm();
+        } catch (e) {
+            console.error('CRM Init failed:', e);
+        }
+    }
+
+    async function loadDeals() {
+        const dealsRes = await fetch('/api/deals');
+        crmDeals = await dealsRes.json();
+    }
+
+    function fillSelectors() {
+        // Fill companies dropdowns
+        const compSelects = ['edit-deal-company', 'new-deal-company'];
+        compSelects.forEach(id => {
+            const select = document.getElementById(id);
+            if(select) {
+                select.innerHTML = crmCompanies.map(c => `<option value="${c.id}">${c.name} (${c.director_name})</option>`).join('');
+            }
+        });
+
+        // Fill stages dropdown in edit form
+        const stageSelect = document.getElementById('edit-deal-stage');
+        if(stageSelect) {
+            stageSelect.innerHTML = crmStages.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+        }
+
+        // Fill catalog selector in product tab
+        const prodSelect = document.getElementById('add-prod-select');
+        if(prodSelect) {
+            prodSelect.innerHTML = crmEquipment.map(eq => `<option value="${eq.id}">${eq.name} — ${eq.price.toLocaleString()} ₸</option>`).join('');
+        }
+    }
+
+    function switchView(view) {
+        currentView = view;
+        document.getElementById('view-kanban-btn').classList.toggle('active', view === 'kanban');
+        document.getElementById('view-list-btn').classList.toggle('active', view === 'list');
+        
+        document.getElementById('crm-kanban-view').style.display = view === 'kanban' ? 'flex' : 'none';
+        document.getElementById('crm-list-view').style.display = view === 'list' ? 'block' : 'none';
+        
+        // Show/hide sidebar only in List view
+        document.getElementById('crm-sidebar-area').style.display = view === 'list' ? 'block' : 'none';
+        
+        renderCrm();
+    }
+
+    function renderCrm() {
+        // Update total sum in work
+        const totalInWork = crmDeals.reduce((acc, deal) => acc + (deal.final_sum || 0), 0);
+        document.getElementById('crm-total-sum-label').innerText = `${totalInWork.toLocaleString()} ₸`;
+
+        if (currentView === 'kanban') {
+            renderKanban();
+        } else {
+            renderList();
+        }
+    }
+
+    // Render Kanban
+    function renderKanban() {
+        const kanban = document.getElementById('crm-kanban-view');
+        kanban.innerHTML = '';
+
+        crmStages.forEach((stage, idx) => {
+            // Filter deals in this stage
+            const stageDeals = crmDeals.filter(d => d.stage === stage.id);
+            const stageSum = stageDeals.reduce((sum, d) => sum + (d.final_sum || 0), 0);
+
+            // Create column element
+            const col = document.createElement('div');
+            col.className = 'kanban-column';
+            col.setAttribute('data-stage-id', stage.id);
+            col.setAttribute('data-stage-index', (idx % 7) + 1);
+            col.addEventListener('dragover', allowDrop);
+            col.addEventListener('dragenter', dragEnter);
+            col.addEventListener('dragleave', dragLeave);
+            col.addEventListener('drop', dropCard);
+
+            // Column Header HTML
+            col.innerHTML = `
+                <div class="kanban-header">
+                    <div>
+                        <div style="font-weight:700;">${stage.name}</div>
+                        <div class="muted" style="font-size:11.5px; font-weight:normal; margin-top:2px;">
+                            ${stageDeals.length} сделок • <span style="font-weight:600; color:var(--text);">${stageSum.toLocaleString()} ₸</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="kanban-cards" id="stage-cards-${stage.id}">
+                </div>
+            `;
+
+            kanban.appendChild(col);
+
+            // Render cards in this column
+            const cardsContainer = document.getElementById(`stage-cards-${stage.id}`);
+            stageDeals.forEach(deal => {
+                const card = document.createElement('div');
+                card.className = 'deal-card';
+                card.draggable = true;
+                card.setAttribute('data-deal-id', deal.id);
+                card.addEventListener('dragstart', dragStart);
+                card.addEventListener('click', () => openDealSlider(deal.id));
+
+                card.innerHTML = `
+                    <h4 class="deal-title-link" style="margin:0 0 6px 0; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--primary);">${deal.title}</h4>
+                    <p style="font-size:12px; margin:0 0 10px 0; color:var(--text-2);">${deal.company_name}</p>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+                        <span class="sum" style="font-size:13.5px; font-weight:800; color:var(--primary); margin:0;">${deal.final_sum.toLocaleString()} ₸</span>
+                        <span style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:3px;">
+                            📅 ${deal.event_date || ''}
+                        </span>
+                    </div>
+                `;
+                
+                // Add click listener specifically to title link
+                card.querySelector('.deal-title-link').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openDealSlider(deal.id);
+                });
+
+                cardsContainer.appendChild(card);
+            });
+        });
+    }
+
+    // Render List Table
+    function renderList() {
+        const tbody = document.getElementById('crm-list-table-body');
+        tbody.innerHTML = '';
+
+        if(crmDeals.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px;" class="muted">Сделок пока нет. Создайте новую сделку!</td></tr>`;
+            return;
+        }
+
+        crmDeals.forEach(deal => {
+            const stageObj = crmStages.find(s => s.id === deal.stage);
+            const stageName = stageObj ? stageObj.name : 'Unknown';
+            const stageClass = deal.stage === 6 ? 'won' : deal.stage === 7 ? 'lost' : 'qualified';
+
+            const tr = document.createElement('tr');
+            tr.style.cursor = 'pointer';
+            tr.addEventListener('click', () => openDealSlider(deal.id));
+
+            tr.innerHTML = `
+                <td style="font-weight:600;">${deal.title}</td>
+                <td>${deal.company_name}</td>
+                <td><span class="stage ${stageClass}">${stageName}</span></td>
+                <td>${deal.event_date || '—'}</td>
+                <td class="num" style="font-weight:700;">${deal.final_sum.toLocaleString()} ₸</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Drag and Drop implementation
+    let draggedCardId = null;
+
+    function dragStart(e) {
+        draggedCardId = this.getAttribute('data-deal-id');
+        e.dataTransfer.setData('text/plain', draggedCardId);
+        this.style.opacity = '0.5';
+    }
+
+    document.addEventListener('dragend', function(e) {
+        if(e.target.classList.contains('deal-card')) {
+            e.target.style.opacity = '1';
+        }
+    });
+
+    function allowDrop(e) {
+        e.preventDefault();
+    }
+
+    function dragEnter(e) {
+        e.preventDefault();
+        this.classList.add('drag-over');
+    }
+
+    function dragLeave(e) {
+        this.classList.remove('drag-over');
+    }
+
+    async function dropCard(e) {
+        e.preventDefault();
+        this.classList.remove('drag-over');
+        
+        const dealId = parseInt(draggedCardId || e.dataTransfer.getData('text/plain'));
+        const newStageId = parseInt(this.getAttribute('data-stage-id'));
+
+        if (!dealId || !newStageId) return;
+
+        // Find deal locally
+        const deal = crmDeals.find(d => d.id === dealId);
+        if (deal && deal.stage !== newStageId) {
+            // Optimistic update
+            const oldStageId = deal.stage;
+            deal.stage = newStageId;
+            renderCrm();
+
+            // API Call
+            try {
+                const response = await fetch(`/api/deals/${dealId}/stage`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stage: newStageId })
+                });
+                
+                if(!response.ok) {
+                    throw new Error('API failure');
+                }
+                
+                // Reload deals in background to get audit history, etc.
+                await loadDeals();
+            } catch (err) {
+                console.error('Failed to move stage:', err);
+                // Rollback on failure
+                deal.stage = oldStageId;
+                renderCrm();
+            }
+        }
+    }
+
+    // Quick Deal Modal logic
+    function openCreateDealModal() {
+        const modal = document.getElementById('quick-deal-modal');
+        modal.classList.add('active');
+    }
+
+    function closeCreateDealModal() {
+        const modal = document.getElementById('quick-deal-modal');
+        modal.classList.remove('active');
+    }
+
+    async function submitCreateDeal(e) {
+        e.preventDefault();
+        const title = document.getElementById('new-deal-title').value;
+        const company_id = parseInt(document.getElementById('new-deal-company').value);
+        const event_date = document.getElementById('new-deal-event-date').value;
+        const address = document.getElementById('new-deal-address').value;
+
+        try {
+            const res = await fetch('/api/deals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: title,
+                    company_id: company_id,
+                    event_date: event_date,
+                    event_address: address,
+                    pipeline_id: 1,
+                    discount_percentage: 0.0
+                })
+            });
+
+            if (res.ok) {
+                // Clear inputs
+                document.getElementById('new-deal-title').value = '';
+                document.getElementById('new-deal-event-date').value = '';
+                document.getElementById('new-deal-address').value = '';
+                
+                closeCreateDealModal();
+                await loadDeals();
+                renderCrm();
+            } else {
+                alert('Не удалось создать сделку');
+            }
+        } catch (err) {
+            console.error('Error creating deal:', err);
+        }
+    }
+
+    // Add client (company) form
+    async function submitAddClient(e) {
+        e.preventDefault();
+        const nameVal = document.getElementById('new-client-name').value;
+        const phoneVal = document.getElementById('new-client-phone').value;
+        const companyVal = document.getElementById('new-client-company').value;
+
+        const payload = {
+            name: companyVal || nameVal,
+            bin: "",
+            director_name: nameVal,
+            phone: phoneVal,
+            email: "",
+            requisites: "",
+            based_on: "Устава",
+            address: "",
+            bank_name: "",
+            kbe: "",
+            bik: ""
+        };
+
+        try {
+            const res = await fetch('/api/companies', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if(res.ok) {
+                // Reset inputs
+                document.getElementById('new-client-name').value = '';
+                document.getElementById('new-client-phone').value = '';
+                document.getElementById('new-client-company').value = '';
+
+                // Reload companies list
+                const companiesRes = await fetch('/api/companies');
+                crmCompanies = await companiesRes.json();
+                fillSelectors();
+                alert('Контакт добавлен успешно!');
+            } else {
+                alert('Ошибка при создании контакта');
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    // Bitrix24 Slider Logic
+    let activeDealId = null;
+
+    async function openDealSlider(dealId) {
+        activeDealId = dealId;
+        
+        // Fetch detailed deal info
+        try {
+            const res = await fetch(`/api/deals/${dealId}`);
+            const data = await res.json();
+
+            // Set Title & Stage
+            document.getElementById('edit-deal-id').value = data.id;
+            document.getElementById('edit-deal-title').value = data.title;
+            document.getElementById('edit-deal-stage').value = data.stage;
+            document.getElementById('edit-deal-sum').value = data.final_sum;
+            document.getElementById('edit-deal-company').value = data.company_id || '';
+            document.getElementById('edit-deal-discount').value = data.discount_percentage || 0;
+            document.getElementById('edit-deal-setup-date').value = data.setup_date || '';
+            document.getElementById('edit-deal-event-date').value = data.event_date || '';
+            document.getElementById('edit-deal-address').value = data.event_address || '';
+            document.getElementById('edit-deal-comment').value = data.comment || '';
+
+            // Set quick actions
+            const callBtn = document.getElementById('deal-call-btn');
+            const chatBtn = document.getElementById('deal-chat-btn');
+            if (callBtn) callBtn.href = data.company_phone ? 'tel:' + data.company_phone : '#';
+            if (chatBtn) chatBtn.href = data.company_phone ? 'https://wa.me/' + data.company_phone.replace(/[^0-9]/g, '') : '#';
+
+            // Set current products
+            currentDealProducts = data.items || [];
+            
+            // Labels
+            document.getElementById('modal-discount-label').innerText = `${data.discount_percentage}%`;
+            document.getElementById('modal-total-label').innerText = `${data.final_sum.toLocaleString()} ₸`;
+
+            // Draw stages progress bar
+            drawStagesProgressBar(data.stage);
+
+            // Draw products & timeline
+            drawProductRows();
+            drawTimeline(data.history || []);
+
+            // Set Info tab active by default
+            switchSliderTab('info');
+            switchActivityTab('comment');
+
+            // Slide in
+            document.getElementById('slider-backdrop').classList.add('active');
+            document.getElementById('deal-slider').classList.add('active');
+        } catch(e) {
+            console.error('Error loading deal detail:', e);
+        }
+    }
+
+    function closeDealSlider() {
+        document.getElementById('slider-backdrop').classList.remove('active');
+        document.getElementById('deal-slider').classList.remove('active');
+        activeDealId = null;
+    }
+
+    function switchSliderTab(tabName) {
+        document.getElementById('tab-btn-info').classList.toggle('active', tabName === 'info');
+        document.getElementById('tab-btn-products').classList.toggle('active', tabName === 'products');
+        
+        document.getElementById('tab-content-info').classList.toggle('active', tabName === 'info');
+        document.getElementById('tab-content-products').classList.toggle('active', tabName === 'products');
+    }
+
+    function switchActivityTab(tabName) {
+        document.getElementById('act-tab-delo').classList.toggle('active', tabName === 'delo');
+        document.getElementById('act-tab-comment').classList.toggle('active', tabName === 'comment');
+        document.getElementById('act-tab-message').classList.toggle('active', tabName === 'message');
+        document.getElementById('act-tab-task').classList.toggle('active', tabName === 'task');
+
+        document.getElementById('act-pane-delo').classList.toggle('active', tabName === 'delo');
+        document.getElementById('act-pane-comment').classList.toggle('active', tabName === 'comment');
+        document.getElementById('act-pane-message').classList.toggle('active', tabName === 'message');
+        document.getElementById('act-pane-task').classList.toggle('active', tabName === 'task');
+    }
+
+    function drawStagesProgressBar(currentStageId) {
+        const barContainer = document.getElementById('slider-stages-bar');
+        if (!barContainer) return;
+        barContainer.innerHTML = '';
+
+        const currentIndex = crmStages.findIndex(s => s.id === currentStageId);
+
+        crmStages.forEach((stage, idx) => {
+            const step = document.createElement('div');
+            step.className = 'slider-stage-step';
+            step.innerText = stage.name;
+            step.title = stage.name;
+
+            if (stage.id === currentStageId) {
+                step.classList.add('active');
+            } else if (idx < currentIndex) {
+                step.classList.add('completed');
+            } else {
+                step.classList.add('upcoming');
+            }
+
+            step.addEventListener('click', async () => {
+                if (stage.id === currentStageId) return;
+                
+                try {
+                    const res = await fetch(`/api/deals/${activeDealId}/stage`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage: stage.id })
+                    });
+                    if (res.ok) {
+                        await loadDeals();
+                        renderCrm();
+                        openDealSlider(activeDealId);
+                    } else {
+                        alert('Не удалось изменить стадию');
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            });
+
+            barContainer.appendChild(step);
+        });
+    }
+
+    async function saveDealTitleDirectly() {
+        if (!activeDealId) return;
+        const newTitle = document.getElementById('edit-deal-title').value.trim();
+        if (!newTitle) return;
+
+        try {
+            const payload = {
+                title: newTitle,
+                event_date: document.getElementById('edit-deal-event-date').value,
+                setup_date: document.getElementById('edit-deal-setup-date').value || null,
+                event_address: document.getElementById('edit-deal-address').value || null,
+                comment: document.getElementById('edit-deal-comment').value || null
+            };
+
+            const res = await fetch(`/api/deals/${activeDealId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                await loadDeals();
+                renderCrm();
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    // Save core deal parameters
+    async function saveDealDetails(e) {
+        e.preventDefault();
+        if(!activeDealId) return;
+
+        const payload = {
+            title: document.getElementById('edit-deal-title').value,
+            event_date: document.getElementById('edit-deal-event-date').value,
+            setup_date: document.getElementById('edit-deal-setup-date').value || null,
+            event_address: document.getElementById('edit-deal-address').value || null,
+            comment: document.getElementById('edit-deal-comment').value || null
+        };
+
+        const stageVal = parseInt(document.getElementById('edit-deal-stage').value);
+        const companyVal = parseInt(document.getElementById('edit-deal-company').value);
+
+        try {
+            // 1. Save core fields
+            await fetch(`/api/deals/${activeDealId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            // 2. Save stage (triggers notification, etc.)
+            await fetch(`/api/deals/${activeDealId}/stage`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stage: stageVal })
+            });
+
+            // Reload board and reopen to refresh
+            await loadDeals();
+            renderCrm();
+            openDealSlider(activeDealId);
+            alert('Сделка сохранена успешно!');
+        } catch (err) {
+            console.error(err);
+            alert('Не удалось сохранить изменения');
+        }
+    }
+
+    // Draw Products in Edit Table
+    function drawProductRows() {
+        const tbody = document.getElementById('deal-products-list');
+        tbody.innerHTML = '';
+
+        if(currentDealProducts.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:12px;" class="muted">В смете пока нет оборудования.</td></tr>`;
+            return;
+        }
+
+        currentDealProducts.forEach((prod, index) => {
+            const price = prod.price || 0;
+            const qty = prod.quantity || 1;
+            const days = prod.days || 1;
+            const total = price * qty * days;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-weight:600;">${prod.name}</td>
+                <td>${price.toLocaleString()} ₸</td>
+                <td><input type="number" min="1" value="${qty}" onchange="updateProductField(${index}, 'quantity', this.value)"></td>
+                <td><input type="number" min="1" value="${days}" onchange="updateProductField(${index}, 'days', this.value)"></td>
+                <td style="font-weight:700;">${total.toLocaleString()} ₸</td>
+                <td><button class="icon-btn" onclick="removeProductRow(${index})" style="color:var(--danger)">✕</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Local changes in products tab
+    function updateProductField(index, field, value) {
+        currentDealProducts[index][field] = parseInt(value) || 1;
+        drawProductRows();
+        recalculateSliderTotal();
+    }
+
+    function removeProductRow(index) {
+        currentDealProducts.splice(index, 1);
+        drawProductRows();
+        recalculateSliderTotal();
+    }
+
+    function addProductRow() {
+        const select = document.getElementById('add-prod-select');
+        const eqId = parseInt(select.value);
+        const equip = crmEquipment.find(eq => eq.id === eqId);
+
+        if(!equip) return;
+
+        // Check if already in list
+        const existing = currentDealProducts.find(p => p.equipment_id === eqId);
+        if(existing) {
+            existing.quantity = (existing.quantity || 0) + 1;
+        } else {
+            currentDealProducts.push({
+                equipment_id: equip.id,
+                name: equip.name,
+                price: equip.price,
+                quantity: 1,
+                days: 1
+            });
+        }
+
+        drawProductRows();
+        recalculateSliderTotal();
+    }
+
+    function recalculateSliderDiscount() {
+        recalculateSliderTotal();
+    }
+
+    function recalculateSliderTotal() {
+        const discount = parseFloat(document.getElementById('edit-deal-discount').value) || 0;
+        
+        let equipTotal = 0;
+        let fixedTotal = 0;
+
+        currentDealProducts.forEach(p => {
+            const rowTotal = p.price * p.quantity * p.days;
+            if (p.category_type === 'fixed') {
+                fixedTotal += rowTotal;
+            } else {
+                equipTotal += rowTotal;
+            }
+        });
+
+        const discountedEquip = equipTotal * (1 - discount / 100);
+        const grandTotal = Math.round(discountedEquip + fixedTotal);
+
+        document.getElementById('modal-discount-label').innerText = `${discount}%`;
+        document.getElementById('modal-total-label').innerText = `${grandTotal.toLocaleString()} ₸`;
+        document.getElementById('edit-deal-sum').value = grandTotal;
+    }
+
+    // Submit products update to backend
+    async function saveDealProducts() {
+        if(!activeDealId) return;
+
+        const discount = parseFloat(document.getElementById('edit-deal-discount').value) || 0;
+        const itemsPayload = currentDealProducts.map(p => ({
+            equipment_id: p.equipment_id,
+            quantity: p.quantity,
+            days: p.days
+        }));
+
+        try {
+            const response = await fetch(`/api/deals/${activeDealId}/items`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    discount_percentage: discount,
+                    items: itemsPayload
+                })
+            });
+
+            if(response.ok) {
+                const data = await response.json();
+                document.getElementById('edit-deal-sum').value = data.final_sum;
+                await loadDeals();
+                renderCrm();
+                openDealSlider(activeDealId);
+                alert('Смета успешно сохранена!');
+            } else {
+                alert('Не удалось обновить смету');
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    // Add text note to history
+    async function addDealNote() {
+        if(!activeDealId) return;
+        const textarea = document.getElementById('add-deal-note-text');
+        const text = textarea.value.trim();
+
+        if(!text) return;
+
+        try {
+            const response = await fetch(`/api/deals/${activeDealId}/comments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ comment: text })
+            });
+
+            if (response.ok) {
+                textarea.value = '';
+                await loadDeals();
+                openDealSlider(activeDealId);
+            } else {
+                alert('Не удалось добавить комментарий');
+            }
+        } catch(e) {
+            console.error(e);
+        }
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        return text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function drawTimeline(history) {
+        const container = document.getElementById('deal-timeline-list');
+        container.innerHTML = '';
+
+        if(history.length === 0) {
+            container.innerHTML = `<div class="muted" style="font-size:12.5px; padding:8px 0;">История пуста.</div>`;
+            return;
+        }
+
+        history.forEach(h => {
+            const isComment = h.action_text.startsWith("Комментарий: ");
+            const div = document.createElement('div');
+            div.className = isComment ? 'log-item log-item-comment' : 'log-item log-item-system';
+            
+            // Format time locally:
+            let dateStr = h.created_at;
+            try {
+                // h.created_at is like "2026-06-26 10:52:51" (UTC string in DB)
+                const utcDate = new Date(h.created_at.replace(/-/g, '/').replace(' ', 'T') + 'Z');
+                if (!isNaN(utcDate.getTime())) {
+                    const now = new Date();
+                    const isToday = utcDate.toDateString() === now.toDateString();
+                    const timePart = utcDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                    if (isToday) {
+                        dateStr = `сегодня, ${timePart}`;
+                    } else {
+                        const datePart = utcDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                        dateStr = `${datePart}, ${timePart}`;
+                    }
+                }
+            } catch(e) {
+                console.error("Error parsing date:", e);
+            }
+
+            if (isComment) {
+                const commentText = h.action_text.substring(13); // Length of "Комментарий: " is 13
+                div.innerHTML = `
+                    <div class="timeline-badge timeline-badge-comment">
+                        <svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                    </div>
+                    <div class="comment-card">
+                        <div class="comment-card-header">
+                            <span class="comment-author">Менеджер</span>
+                            <span class="comment-time">${dateStr}</span>
+                        </div>
+                        <div class="comment-card-body">${escapeHtml(commentText)}</div>
+                    </div>
+                `;
+            } else {
+                let badgeClass = 'timeline-badge-system';
+                let iconSvg = `<svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
+                
+                if (h.action_text.includes("Стадия изменена")) {
+                    badgeClass = 'timeline-badge-stage';
+                    iconSvg = `<svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`;
+                } else if (h.action_text.includes("Сделка создана")) {
+                    badgeClass = 'timeline-badge-created';
+                    iconSvg = `<svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>`;
+                }
+                
+                div.innerHTML = `
+                    <div class="timeline-badge ${badgeClass}">
+                        ${iconSvg}
+                    </div>
+                    <div class="system-event">
+                        <div class="system-event-text">${escapeHtml(h.action_text)}</div>
+                        <div class="system-event-time">${dateStr}</div>
+                    </div>
+                `;
+            }
+            container.appendChild(div);
+        });
+    }
+
+    // On Load
+    document.addEventListener('DOMContentLoaded', () => {
+        initCrm();
+    });
+</script>
+{% endblock %}
