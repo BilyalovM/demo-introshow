@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}Companies - Intro Show{% endblock %}
+
+{% block extra_head %}
+<style>
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
+    .modal-content { background: var(--surface); padding: 2rem; border-radius: var(--r-md); width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+    
+    .btn-whatsapp { background-color: #25D366; color: white; display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; padding: 0.5rem 1rem; border-radius: var(--r-sm); font-weight: bold; }
+    .btn-whatsapp:hover { background-color: #128C7E; }
+    .close {
+        position: absolute;
+        right: 1.5rem;
+        top: 1.5rem;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--text-2);
+        cursor: pointer;
+        line-height: 1;
+    }
+    .close:hover {
+        color: var(--text);
+    }
+
+    .history-item { background: var(--bg-2); padding: 1rem; border-radius: var(--r-md); margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;}
+</style>
+{% endblock %}
+
+{% block content %}
+
+    
+
+    <div class="card" style="padding: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h2 style="margin: 0; font-size: 1.25rem;">Клиенты (Компании)</h2>
+            <button class="btn btn-primary" onclick="openCompanyModal()">+ Добавить Клиента</button>
+        </div>
+
+        <div style="overflow-x: auto;">
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th>Название / ТОО / ИП</th>
+                        <th>БИН/ИИН</th>
+                        <th>Директор / Контактное лицо</th>
+                        <th>Телефон</th>
+                        <th>Email</th>
+                    </tr>
+                </thead>
+                <tbody id="companies_list">
+                    <!-- Заполняется через JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Edit/Add Company Modal -->
+    <div id="companyModal" class="modal">
+        <div class="modal-content" style="display: flex; gap: 2rem; position: relative;">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <div style="flex: 1;">
+                <h3 style="margin-top:0;" id="modal_title">Компания</h3>
+                <form onsubmit="saveCompany(event)">
+                    <input type="hidden" id="comp_id">
+                    <div class="form-group"><label>Название (с формой собственности, например ТОО Ромашка)</label><input type="text" id="comp_name" required></div>
+                    <div class="form-group"><label>БИН/ИИН</label><input type="text" id="comp_bin"></div>
+                    <div class="form-group"><label>ФИО Руководителя / Контакта</label><input type="text" id="comp_director"></div>
+                    <div class="form-group"><label>Действует на основании</label><input type="text" id="comp_based_on" value="Устава"></div>
+                    <div class="form-group"><label>Телефон</label><input type="text" id="comp_phone"></div>
+                    <div class="form-group"><label>Email</label><input type="email" id="comp_email"></div>
+                    <div class="form-group"><label>Юридический адрес</label><input type="text" id="comp_address"></div>
+                    <div class="form-group"><label>Наименование Банка</label><input type="text" id="comp_bank_name"></div>
+                    <div class="form-group"><label>БИК</label><input type="text" id="comp_bik"></div>
+                    <div class="form-group"><label>КБЕ</label><input type="text" id="comp_kbe"></div>
+                    <div class="form-group"><label>ИИК (Расчетный счет)</label><textarea id="comp_req" rows="2"></textarea></div>
+                    
+                    <div style="display:flex; justify-content:space-between; margin-top: 1.5rem; gap: 0.5rem;">
+                        <button type="submit" class="btn btn-primary" id="btn_save">Сохранить</button>
+                        <button type="button" class="btn btn-danger" id="btn_delete" onclick="deleteCompany()" style="display:none; background: var(--danger); border-color: var(--danger);">Удалить</button>
+                        <button type="button" class="btn" onclick="closeModal()">Отмена</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div style="flex: 1; border-left: 1px solid var(--border); padding-left: 2rem; display: none;" id="company_extra_panel">
+                <div style="margin-bottom: 2rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <a href="#" id="wa_link" class="btn-whatsapp" style="width: fit-content;">
+                        <svg viewBox="0 0 32 32" width="20" height="20" fill="currentColor"><path d="M16 2.01A14.02 14.02 0 0 0 2 16.03a13.9 13.9 0 0 0 1.86 6.96L2 29.99l7.15-1.85A13.9 13.9 0 0 0 16 30.01a14.02 14.02 0 0 0 14-13.98A14.02 14.02 0 0 0 16 2.01zM16 27.64c-1.92 0-3.8-.52-5.46-1.5l-.39-.23-4.06 1.05 1.07-3.96-.25-.4A11.58 11.58 0 0 1 4.36 16.03a11.66 11.66 0 0 1 11.64-11.64 11.66 11.66 0 0 1 11.64 11.64A11.66 11.66 0 0 1 16 27.64zm6.38-8.7c-.35-.18-2.07-1.02-2.39-1.14-.32-.11-.55-.18-.78.18-.23.35-.9 1.14-1.11 1.38-.2.23-.41.25-.76.08a9.4 9.4 0 0 1-2.76-1.7 10.4 10.4 0 0 1-1.92-2.39c-.21-.36 0-.54.16-.72.15-.15.35-.41.52-.61.18-.21.23-.36.35-.59.12-.23.06-.44-.03-.61-.09-.18-.78-1.89-1.07-2.59-.28-.68-.57-.59-.78-.6h-.66c-.23 0-.61.09-.93.44s-1.22 1.2-1.22 2.92c0 1.73 1.25 3.4 1.43 3.63.17.24 2.48 3.78 6 5.3 3.51 1.52 3.51 1.01 4.15.95.64-.06 2.07-.84 2.36-1.66.29-.81.29-1.5.21-1.65-.09-.14-.32-.23-.67-.41z"></path></svg>
+                        Написать в WhatsApp
+                    </a>
+                    <a href="#" id="tg_link" class="btn btn-info" style="display:inline-flex; align-items:center; gap:0.5rem; text-decoration:none; color:white; width: fit-content; background: #0088cc; border:none;">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.223-.548.223l.188-2.85 5.18-4.686c.223-.195-.054-.306-.346-.112l-6.4 4.027-2.76-.864c-.6-.188-.612-.6.126-.89l10.78-4.155c.498-.184.94.11.78.335z"/></svg>
+                        Скопировать ссылку на бота
+                    </a>
+                    <div id="tg_status" style="font-size: 0.85rem; color: #28a745; display: none;">✅ Telegram подключен</div>
+                </div>
+                
+                <h4 style="margin-top:0;">Сделки с клиентом</h4>
+                <div id="company_deals_list">
+                    <!-- Сделки -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+        async function loadData() {
+            try {
+                const res = await fetch('/api/companies');
+                const companies = await res.json();
+                const tbody = document.getElementById('companies_list');
+                tbody.innerHTML = '';
+                companies.forEach(c => {
+                    const tr = document.createElement('tr');
+                    tr.onclick = () => openCompanyDetail(c.id);
+                    tr.innerHTML = `
+                        <td><strong>${c.name}</strong></td>
+                        <td>${c.bin || ''}</td>
+                        <td>${c.director_name || ''}</td>
+                        <td>${c.phone || ''}</td>
+                        <td>${c.email || ''}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch(e) { console.error(e); }
+        }
+
+        function formatPhoneForWA(phone) {
+            if(!phone) return '';
+            let cleaned = ('' + phone).replace(/\D/g, '');
+            if(cleaned.length > 0 && cleaned[0] === '8') {
+                cleaned = '7' + cleaned.substring(1);
+            }
+            return cleaned;
+        }
+
+        async function openCompanyDetail(id) {
+            const res = await fetch(`/api/companies/${id}`);
+            const data = await res.json();
+            const c = data.company;
+            
+            document.getElementById('comp_id').value = c.id;
+            document.getElementById('comp_name').value = c.name || '';
+            document.getElementById('comp_bin').value = c.bin || '';
+            document.getElementById('comp_director').value = c.director_name || '';
+            document.getElementById('comp_based_on').value = c.based_on || 'Устава';
+            document.getElementById('comp_phone').value = c.phone || '';
+            document.getElementById('comp_email').value = c.email || '';
+            document.getElementById('comp_address').value = c.address || '';
+            document.getElementById('comp_bank_name').value = c.bank_name || '';
+            document.getElementById('comp_bik').value = c.bik || '';
+            document.getElementById('comp_kbe').value = c.kbe || '';
+            document.getElementById('comp_req').value = c.requisites || '';
+
+            document.getElementById('modal_title').innerText = 'Редактировать Клиента';
+            document.getElementById('btn_delete').style.display = 'block';
+            
+            const extraPanel = document.getElementById('company_extra_panel');
+            extraPanel.style.display = 'block';
+            
+            const waPhone = formatPhoneForWA(c.phone);
+            const waLink = document.getElementById('wa_link');
+            if(waPhone) {
+                waLink.onclick = function(e) {
+                    e.preventDefault();
+                    window.open(`https://web.whatsapp.com/send?phone=${waPhone}`, 'WhatsApp', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+                };
+                waLink.style.display = 'inline-flex';
+            } else {
+                waLink.style.display = 'none';
+            }
+            
+            // Telegram Bot Link
+            const tgLink = document.getElementById('tg_link');
+            tgLink.onclick = function(e) {
+                e.preventDefault();
+                // Replace RentalAppBot with your real bot username
+                const botUrl = `https://t.me/RentalAppBot?start=company_${c.id}`;
+                navigator.clipboard.writeText(botUrl).then(() => {
+                    alert('Ссылка скопирована! Отправьте её клиенту, чтобы он запустил бота.');
+                });
+            };
+            
+            // Telegram Status
+            const tgStatus = document.getElementById('tg_status');
+            if (c.telegram_chat_id) {
+                tgStatus.style.display = 'block';
+            } else {
+                tgStatus.style.display = 'none';
+            }
+            
+            const dealsList = document.getElementById('company_deals_list');
+            dealsList.innerHTML = '';
+            if (data.deals && data.deals.length > 0) {
+                data.deals.forEach(d => {
+                    dealsList.innerHTML += `
+                        <div class="history-item">
+                            <div>
+                                <div style="font-weight:bold; color:var(--primary);">${d.title}</div>
+                                <div style="font-size:0.8rem; color:var(--text-light);">${d.event_date} &bull; ${d.pipeline_name} &bull; ${d.stage_name}</div>
+                            </div>
+                            <div style="font-weight:bold;">${d.final_sum.toLocaleString('ru-RU')} ₸</div>
+                        </div>
+                    `;
+                });
+            } else {
+                dealsList.innerHTML = '<div style="color:var(--text-light); font-size:0.9rem;">Нет сделок.</div>';
+            }
+
+            document.getElementById('companyModal').style.display = 'flex';
+        }
+
+        function openCompanyModal() {
+            document.getElementById('comp_id').value = '';
+            document.getElementById('comp_name').value = '';
+            document.getElementById('comp_bin').value = '';
+            document.getElementById('comp_director').value = '';
+            document.getElementById('comp_based_on').value = 'Устава';
+            document.getElementById('comp_phone').value = '';
+            document.getElementById('comp_email').value = '';
+            document.getElementById('comp_address').value = '';
+            document.getElementById('comp_bank_name').value = '';
+            document.getElementById('comp_bik').value = '';
+            document.getElementById('comp_kbe').value = '';
+            document.getElementById('comp_req').value = '';
+            
+            document.getElementById('modal_title').innerText = 'Новый Клиент';
+            document.getElementById('btn_delete').style.display = 'none';
+            document.getElementById('company_extra_panel').style.display = 'none';
+            document.getElementById('companyModal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('companyModal').style.display = 'none';
+        }
+
+        async function saveCompany(e) {
+            e.preventDefault();
+            const id = document.getElementById('comp_id').value;
+            const data = {
+                name: document.getElementById('comp_name').value, bin: document.getElementById('comp_bin').value,
+                director_name: document.getElementById('comp_director').value, phone: document.getElementById('comp_phone').value,
+                email: document.getElementById('comp_email').value, requisites: document.getElementById('comp_req').value,
+                based_on: document.getElementById('comp_based_on').value, address: document.getElementById('comp_address').value,
+                bank_name: document.getElementById('comp_bank_name').value, kbe: document.getElementById('comp_kbe').value,
+                bik: document.getElementById('comp_bik').value
+            };
+            
+            if (id) {
+                await fetch(`/api/companies/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
+            } else {
+                await fetch('/api/companies', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
+            }
+            
+            closeModal();
+            loadData();
+        }
+
+        async function deleteCompany() {
+            const id = document.getElementById('comp_id').value;
+            if(!id) return;
+            if(!confirm('Удалить этого клиента навсегда?')) return;
+            
+            const res = await fetch(`/api/companies/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            closeModal();
+            loadData();
+        }
+
+        // Close modal on ESC key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === "Escape") {
+                closeModal();
+            }
+        });
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('companyModal');
+            if (event.target == modal) {
+                closeModal();
+            }
+        }
+
+        window.onload = loadData;
+    </script>
+{% endblock %}
