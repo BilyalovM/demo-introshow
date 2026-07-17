@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.git/
+FOR_UPLOAD/
+venv/
+venv_latest/
+venv_new/
+__pycache__/
+*.pyc
+uvicorn.log
+uploads/.DS_Store

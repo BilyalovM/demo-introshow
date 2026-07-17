@@ -3,3 +3,7 @@ venv/
 __pycache__/
 *.pyc
 .env
+venv_new/
+.DS_Store
+FOR_UPLOAD/
+uploads/.DS_Store

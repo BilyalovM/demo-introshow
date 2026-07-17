@@ -11,7 +11,24 @@ import requests
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+UPLOADS_DIR = (
+    os.path.join(tempfile.gettempdir(), "rental_app_uploads")
+    if IS_VERCEL
+    else os.path.join(BASE_DIR, "uploads")
+)
+ENV_PATH = (
+    os.path.join(tempfile.gettempdir(), "rental_app.env")
+    if IS_VERCEL
+    else os.path.join(BASE_DIR, ".env")
+)
+CONTRACT_TEMPLATE_PATH = os.path.join(TEMPLATES_DIR, "contract_template.docx")
+os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
+
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 if os.getenv("GEMINI_API_KEY"):
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -108,12 +125,11 @@ def expand_company_type(name: str) -> str:
     return name
 
 # Set up templates
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-os.makedirs("uploads", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-os.makedirs("static", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # Models for the API
 class EquipmentItem(BaseModel):
     name: str
@@ -407,7 +423,7 @@ def update_tg_settings(settings: TGTokenUpdate, user: User = Depends(get_current
     if user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
         
-    env_path = ".env"
+    env_path = ENV_PATH
     lines = []
     if os.path.exists(env_path):
         with open(env_path, "r") as f:
@@ -431,7 +447,7 @@ def update_tg_settings(settings: TGTokenUpdate, user: User = Depends(get_current
 
 @app.post("/api/settings/ai")
 def update_ai_settings(settings: AISettingsUpdate):
-    env_path = ".env"
+    env_path = ENV_PATH
     lines = []
     if os.path.exists(env_path):
         with open(env_path, "r") as f:
@@ -485,7 +501,7 @@ async def upload_equipment_photo(equip_id: int, file: UploadFile = File(...), db
         
     ext = file.filename.split(".")[-1]
     filename = f"eq_{equip_id}.{ext}"
-    filepath = os.path.join("uploads", filename)
+    filepath = os.path.join(UPLOADS_DIR, filename)
     with open(filepath, "wb") as buffer:
         buffer.write(await file.read())
         
@@ -1084,7 +1100,7 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
         "discount_percentage": d.discount_percentage
     }
     
-    template_path = os.path.join("templates", "contract_template.docx")
+    template_path = CONTRACT_TEMPLATE_PATH
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
     
@@ -1238,7 +1254,7 @@ async def api_generate_html_preview(request: Request):
     from document_generator import generate_contract
     context = await request.json()
     
-    template_path = os.path.join("templates", "contract_template.docx")
+    template_path = CONTRACT_TEMPLATE_PATH
     
     # We can generate to a temp file, but doing it in memory is tricky with docxtpl unless we use temp file
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
@@ -1264,7 +1280,7 @@ async def api_download_contract(
 ):
     context = await request.json()
     
-    template_path = os.path.join("templates", "contract_template.docx")
+    template_path = CONTRACT_TEMPLATE_PATH
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
     
@@ -1372,4 +1388,3 @@ async def analyze_3d_scene(
     }
     
     return JSONResponse(content=mock_response)
-

@@ -5,6 +5,13 @@ from docx.shared import Inches
 from num2words import num2words
 from typing import Dict, Any
 
+
+def resolve_photo_path(photo_url: str) -> str:
+    if photo_url.startswith("/uploads/"):
+        uploads_dir = os.environ.get("RENTAL_UPLOADS_DIR", "uploads")
+        return os.path.join(uploads_dir, os.path.basename(photo_url))
+    return photo_url.lstrip("/")
+
 def get_rubles_text(amount: float) -> str:
     """
     Converts a number to Russian text.
@@ -52,7 +59,7 @@ def generate_contract(context: Dict[str, Any], template_path: str, output_path: 
                 if item.get('description'):
                     append_doc.add_paragraph(item['description'])
                 if item.get('photo_url'):
-                    img_path = item['photo_url'].lstrip('/')
+                    img_path = resolve_photo_path(item['photo_url'])
                     if os.path.exists(img_path):
                         append_doc.add_picture(img_path, width=Inches(3))
                         

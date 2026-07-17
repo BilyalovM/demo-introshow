@@ -4,18 +4,27 @@ import datetime
 
 import os
 import shutil
+import tempfile
 
-# Vercel filesystem is read-only except for /tmp
-if os.environ.get("VERCEL"):
-    db_path = "/tmp/rental_app.db"
-    if not os.path.exists(db_path):
-        # Copy the bundled database to /tmp so it's writable
-        original_db = os.path.join(os.path.dirname(__file__), "rental_app.db")
-        if os.path.exists(original_db):
-            shutil.copy(original_db, db_path)
-    DATABASE_URL = f"sqlite:///{db_path}"
-else:
-    DATABASE_URL = "sqlite:////Users/maximbilyalov/Documents/КОС/rental_app/rental_app.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB_PATH = os.path.join(BASE_DIR, "rental_app.db")
+
+
+def get_database_url() -> str:
+    configured_url = os.environ.get("DATABASE_URL")
+    if configured_url:
+        return configured_url
+
+    if os.environ.get("VERCEL"):
+        db_path = os.path.join(tempfile.gettempdir(), "rental_app.db")
+        if not os.path.exists(db_path) and os.path.exists(DEFAULT_DB_PATH):
+            shutil.copyfile(DEFAULT_DB_PATH, db_path)
+        return f"sqlite:///{db_path}"
+
+    return f"sqlite:///{DEFAULT_DB_PATH}"
+
+
+DATABASE_URL = get_database_url()
 
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
