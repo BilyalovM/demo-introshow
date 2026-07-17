@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 if os.getenv("GEMINI_API_KEY"):
-    # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    pass
 
 from sqlalchemy.orm import Session
 from database import init_db, get_db, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, engine
