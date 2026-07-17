@@ -8,12 +8,12 @@ import json
 import os
 import tempfile
 import requests
-import google.generativeai as genai
+# import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
 if os.getenv("GEMINI_API_KEY"):
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    # genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 from sqlalchemy.orm import Session
 from database import init_db, get_db, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, engine
@@ -449,7 +449,7 @@ def update_ai_settings(settings: AISettingsUpdate):
             f.write(f"GEMINI_API_KEY={settings.api_key}\n")
             
     os.environ["GEMINI_API_KEY"] = settings.api_key
-    genai.configure(api_key=settings.api_key)
+    # genai.configure(api_key=settings.api_key)
     return {"status": "success"}
 
 @app.post("/api/equipment")
