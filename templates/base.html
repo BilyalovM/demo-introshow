@@ -3,7 +3,14 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
-    <title>Intro Show — premium workspace</title>
+    <title>{% block title %}Intro Show CRM{% endblock %}</title>
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="manifest" href="/static/manifest.json" />
+    <link rel="icon" type="image/png" href="/static/img/icon-192.png" />
+    <link rel="apple-touch-icon" href="/static/img/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="IntroShow" />
     <link rel="stylesheet" href="{{ url_for('static', path='css/dashboard.css') }}" />
     <script>
         (function() {
@@ -25,9 +32,11 @@
    </span>
   </div>
  </div>
+ {% set sections = request.state.user_sections or [] %}
  <div class="nav-section">
   Рабочее пространство
  </div>
+ {% if 'dashboard' in sections %}
  <a href="{{ url_for('read_dashboard') }}" class="nav-link {% if request.url.path == '/' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -45,6 +54,8 @@
    Дашборд
   </span>
  </a>
+ {% endif %}
+ {% if 'inbox' in sections %}
  <a href="/inbox" class="nav-link {% if request.url.path == '/inbox' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -55,12 +66,11 @@
    </svg>
   </span>
   <span>
-   WhatsApp Inbox
-  </span>
-  <span class="nav-badge">
-   12
+   Чаты
   </span>
  </a>
+ {% endif %}
+ {% if 'crm' in sections %}
  <a href="{{ url_for('read_crm') }}" class="nav-link {% if request.url.path == '/crm' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -76,6 +86,22 @@
    CRM
   </span>
  </a>
+ {% endif %}
+ {% if 'companies' in sections %}
+ <a href="{{ url_for('read_companies') }}" class="nav-link {% if request.url.path == '/companies' %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <path d="M3 21h18"></path>
+    <path d="M5 21V7l7-4 7 4v14"></path>
+    <path d="M9 9h1M9 13h1M14 9h1M14 13h1M11 21v-4h2v4"></path>
+   </svg>
+  </span>
+  <span>
+   Клиенты
+  </span>
+ </a>
+ {% endif %}
+ {% if 'quotes' in sections %}
  <a href="{{ url_for('read_quotes') }}" class="nav-link {% if request.url.path == '/quotes' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -89,6 +115,8 @@
    Сметы и договоры
   </span>
  </a>
+ {% endif %}
+ {% if 'equipment' in sections %}
  <a href="{{ url_for('read_equipment') }}" class="nav-link {% if request.url.path == '/equipment' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -102,6 +130,8 @@
    Склад
   </span>
  </a>
+ {% endif %}
+ {% if 'tasks' in sections %}
  <a href="/tasks" class="nav-link {% if request.url.path == '/tasks' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -113,6 +143,8 @@
    Задачи
   </span>
  </a>
+ {% endif %}
+ {% if 'analytics' in sections %}
  <a href="/analytics" class="nav-link {% if request.url.path == '/analytics' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -124,9 +156,11 @@
    Аналитика
   </span>
  </a>
+ {% endif %}
  <div class="nav-section">
   Система
  </div>
+  {% if 'assistant' in sections %}
   <a href="/assistant" class="nav-link {% if request.url.path == '/assistant' %}active{% endif %}">
    <span class="nav-ico">
     <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -140,6 +174,8 @@
     AI Чат-бот
    </span>
   </a>
+  {% endif %}
+  {% if 'settings' in sections %}
   <a href="{{ url_for('read_settings') }}" class="nav-link {% if request.url.path == '/settings' %}active{% endif %}">
   <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -150,30 +186,23 @@
    </svg>
   </span>
   <span>
-   Реквизиты
+   Настройки
   </span>
  </a>
+ {% endif %}
  <div class="spacer">
  </div>
- <div class="nav-link" style="cursor:default">
-  <span class="nav-ico grad-violet" style="color:#fff">
+ <a class="nav-link" href="#" onclick="doLogout(event)" title="Выйти из системы">
+  <span class="nav-ico">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
-    <path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z">
-    </path>
-    <path d="M19 14l.7 1.8L21 17l-1.3.5L19 19l-.7-1.5L17 17l1.3-.7z">
-    </path>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+    <path d="M16 17l5-5-5-5M21 12H9"></path>
    </svg>
   </span>
-  <span style="font-size:13px">
-   <strong>
-    Pro план
-   </strong>
-   <br/>
-   <span class="muted" style="font-size:12px">
-    активен
-   </span>
+  <span>
+   Выйти
   </span>
- </div>
+ </a>
 </aside>
 
         <div class="content">
@@ -194,24 +223,6 @@
   <input placeholder="Поиск клиентов, смет, сообщений…"/>
  </div>
  <div class="topbar-spacer">
- </div>
- <div class="presence" title="Команда онлайн">
-  <div class="avatar sm" style="background:linear-gradient(135deg,#3b82f6,#2563eb)">
-   ДА
-   <span class="online">
-   </span>
-  </div>
-  <div class="avatar sm" style="background:linear-gradient(135deg,#34d399,#10b981)">
-   АЛ
-   <span class="online">
-   </span>
-  </div>
-  <div class="avatar sm" style="background:linear-gradient(135deg,#3b82f6,#2563eb)">
-   МА
-  </div>
-  <div class="avatar sm" style="background:linear-gradient(135deg,#f472b6,#ec4899)">
-   SC
-  </div>
  </div>
   <button aria-label="Поиск" class="icon-btn mobile-only">
    <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="18">
@@ -249,18 +260,20 @@
    </span>
   </button>
  </div>
+ {% set cu = request.state.user %}
+ {% set cu_name = (cu.full_name or cu.username) if cu else 'Гость' %}
  <div class="desktop-only" style="display:flex;align-items:center;gap:10px;padding-left:6px">
   <div class="avatar" style="background:linear-gradient(135deg,#3b82f6,#2563eb)">
-   ДА
+   {{ cu_name[:2]|upper }}
    <span class="online">
    </span>
   </div>
   <div style="line-height:1.2">
    <div style="font-weight:700;font-size:13.5px">
-    Данил
+    {{ cu_name }}
    </div>
    <div class="muted" style="font-size:12px">
-    Intro Show
+    {% if cu and cu.role == 'admin' %}Администратор{% elif cu and cu.role == 'manager' %}Менеджер{% else %}Сотрудник{% endif %}
    </div>
   </div>
  </div>
@@ -271,97 +284,112 @@
             </main>
         </div>
     </div>
-    <button class="copilot-fab">
+    <button class="copilot-fab" onclick="window.location.href='/assistant'">
  <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
   <path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z">
   </path>
   <path d="M19 14l.7 1.8L21 17l-1.3.5L19 19l-.7-1.5L17 17l1.3-.7z">
   </path>
  </svg>
- AI Copilot
+ AI Чат-бот
 </button>
 
+    {% set cur_path = request.url.path %}
     <nav class="bottom-nav">
- <a class="bn-item active" href="{{ url_for('read_dashboard') }}">
+ {% if 'dashboard' in sections %}
+ <a class="bn-item {% if cur_path == '/' %}active{% endif %}" href="{{ url_for('read_dashboard') }}">
   <span class="bn-icon">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
-    <rect height="7" rx="2" width="7" x="3" y="3">
-    </rect>
-    <rect height="7" rx="2" width="7" x="14" y="3">
-    </rect>
-    <rect height="7" rx="2" width="7" x="3" y="14">
-    </rect>
-    <rect height="7" rx="2" width="7" x="14" y="14">
-    </rect>
+    <rect height="7" rx="2" width="7" x="3" y="3"></rect>
+    <rect height="7" rx="2" width="7" x="14" y="3"></rect>
+    <rect height="7" rx="2" width="7" x="3" y="14"></rect>
+    <rect height="7" rx="2" width="7" x="14" y="14"></rect>
    </svg>
   </span>
-  <span>
-   Главная
-  </span>
+  <span>Главная</span>
  </a>
- <a class="bn-item" href="/inbox">
+ {% endif %}
+ {% if 'inbox' in sections %}
+ <a class="bn-item {% if cur_path.startswith('/inbox') %}active{% endif %}" href="/inbox">
   <span class="bn-icon">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
-    <path d="M4 13h4l2 3h4l2-3h4">
-    </path>
-    <path d="M5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z">
-    </path>
+    <path d="M4 13h4l2 3h4l2-3h4"></path>
+    <path d="M5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"></path>
    </svg>
   </span>
-  <span>
-   Чаты
-  </span>
-  <span class="bn-badge">
-   12
-  </span>
+  <span>Чаты</span>
  </a>
- <a class="bn-item" href="{{ url_for('read_crm') }}">
+ {% endif %}
+ {% if 'crm' in sections %}
+ <a class="bn-item {% if cur_path.startswith('/crm') %}active{% endif %}" href="{{ url_for('read_crm') }}">
   <span class="bn-icon">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
-    <circle cx="9" cy="8" r="3.2">
-    </circle>
-    <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5">
-    </path>
-    <path d="M16 5.2a3 3 0 0 1 0 5.6M17.5 14c2.2.4 3.5 2.2 3.5 5">
-    </path>
+    <circle cx="9" cy="8" r="3.2"></circle>
+    <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"></path>
+    <path d="M16 5.2a3 3 0 0 1 0 5.6M17.5 14c2.2.4 3.5 2.2 3.5 5"></path>
    </svg>
   </span>
-  <span>
-   CRM
-  </span>
+  <span>CRM</span>
  </a>
- <a class="bn-item" href="{{ url_for('read_quotes') }}">
+ {% endif %}
+ {% if 'quotes' in sections %}
+ <a class="bn-item {% if cur_path.startswith('/quotes') %}active{% endif %}" href="{{ url_for('read_quotes') }}">
   <span class="bn-icon">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
-    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z">
-    </path>
-    <path d="M14 3v5h5M9 13h6M9 17h4">
-    </path>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+    <path d="M14 3v5h5M9 13h6M9 17h4"></path>
    </svg>
   </span>
-  <span>
-   Сметы
-  </span>
+  <span>Сметы</span>
  </a>
- <button class="bn-item">
+ {% endif %}
+ <button class="bn-item" onclick="toggleMoreSheet(true)">
   <span class="bn-icon">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" viewbox="0 0 24 24">
-    <circle cx="5" cy="12" r="1.6">
-    </circle>
-    <circle cx="12" cy="12" r="1.6">
-    </circle>
-    <circle cx="19" cy="12" r="1.6">
-    </circle>
+    <circle cx="5" cy="12" r="1.6"></circle>
+    <circle cx="12" cy="12" r="1.6"></circle>
+    <circle cx="19" cy="12" r="1.6"></circle>
    </svg>
   </span>
-  <span>
-   Ещё
-  </span>
+  <span>Ещё</span>
  </button>
 </nav>
 
+<!-- Меню «Ещё» (мобильное) -->
+<div id="more-sheet-backdrop" class="sheet-backdrop" style="display:none" onclick="toggleMoreSheet(false)"></div>
+<div id="more-sheet" class="sheet" style="display:none">
+    <div class="sheet-grip"></div>
+    <div class="more-grid">
+        {% if 'tasks' in sections %}<a class="more-item {% if cur_path.startswith('/tasks') %}active{% endif %}" href="/tasks">✅<span>Задачи</span></a>{% endif %}
+        {% if 'companies' in sections %}<a class="more-item {% if cur_path.startswith('/companies') %}active{% endif %}" href="/companies">🏢<span>Клиенты</span></a>{% endif %}
+        {% if 'equipment' in sections %}<a class="more-item {% if cur_path.startswith('/equipment') %}active{% endif %}" href="/equipment">📦<span>Склад</span></a>{% endif %}
+        {% if 'analytics' in sections %}<a class="more-item {% if cur_path.startswith('/analytics') %}active{% endif %}" href="/analytics">📊<span>Аналитика</span></a>{% endif %}
+        {% if 'assistant' in sections %}<a class="more-item {% if cur_path.startswith('/assistant') %}active{% endif %}" href="/assistant">🤖<span>AI Чат-бот</span></a>{% endif %}
+        {% if 'settings' in sections %}<a class="more-item {% if cur_path.startswith('/settings') %}active{% endif %}" href="/settings">⚙️<span>Настройки</span></a>{% endif %}
+        {% if cu and cu.role == 'admin' %}<a class="more-item" href="/users">👥<span>Сотрудники</span></a>{% endif %}
+        <a class="more-item" href="#" onclick="doLogout(event)">🚪<span>Выйти</span></a>
+    </div>
+</div>
+
 {% block extra_scripts %}{% endblock %}
 <script>
+    async function doLogout(e) {
+        e.preventDefault();
+        try { await fetch('/api/logout', { method: 'POST' }); } catch (err) {}
+        window.location.href = '/login';
+    }
+
+    // PWA: регистрация сервис-воркера (офлайн-кэш + push-уведомления)
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/sw.js').catch(err => console.warn('SW registration failed:', err));
+    }
+
+    // Мобильное меню «Ещё»
+    function toggleMoreSheet(show) {
+        document.getElementById('more-sheet-backdrop').style.display = show ? 'block' : 'none';
+        document.getElementById('more-sheet').style.display = show ? 'block' : 'none';
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         const themeToggleBtn = document.getElementById('theme-toggle');
         const sunIcon = document.getElementById('theme-toggle-sun');

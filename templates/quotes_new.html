@@ -1,117 +1,248 @@
 {% extends "base.html" %}
 
-{% block title %}Новая смета - Intro Show{% endblock %}
+{% block title %}Смета / договор - Intro Show{% endblock %}
 
 {% block content %}
-<h1 class="page-title">Новая смета / договор</h1><p class="page-sub">Добавьте позиции, задайте даты и скидку — затем выгрузите PDF или сохраните в базу.</p><div class="grid" style="grid-template-columns:1fr 360px;align-items:start"><div class="grid" style="gap:16px"><div class="card"><h3 style="margin-top:0">Параметры</h3><div class="grid cols-2"><label class="field"><span>Дата договора</span><input type="date" value="2026-06-18"/></label><label class="field"><span>Номер договора (по умолчанию = дата)</span><input value="19.06.2026"/></label></div><label class="field"><span>Мероприятие</span><input placeholder="Презентация / концерт / …" value=""/></label><label class="field"><span>Адрес проведения</span><input value=""/></label><div class="grid cols-3"><label class="field"><span>Аренда с</span><input id="rentStart" type="date" value=""/></label><label class="field"><span>Аренда по</span><input id="rentEnd" type="date" value=""/></label><label class="field"><span>Дата монтажа/оплаты</span><input type="date" value=""/></label></div></div><div class="card"><h3 style="margin-top:0">Каталог — добавить позиции</h3><div id="catalogContainer"></div></div><div class="card"><h3 style="margin-top:0">Позиции сметы</h3><p class="muted" id="cartEmpty">Пока пусто — добавьте позиции из каталога выше.</p><div id="cartContainer"></div></div></div><div class="grid" style="gap:16px;position:sticky;top:20px"><div class="card"><h3 style="margin-top:0">Стороны</h3><label class="field"><span>Арендодатель</span><select><option selected="" value="cmqge2pkv001vt9e8f0kv0hr9">Индивидуальный предприниматель «MLrental»</option></select></label><label class="field"><span>Арендатор</span><select><option selected="" value="">— выберите —</option><option value="cmqge2pl1001wt9e8wxnbw9w6">Товарищество с ограниченной ответственностью «Invictus Samal»</option></select></label><p class="muted" style="font-size:12px;margin:4px 0 0">Реквизиты редактируются на странице «Реквизиты».</p></div><div class="card"><h3 style="margin-top:0">Скидка и налог</h3><div class="grid cols-2"><label class="field"><span>Скидка на оборудование, %</span><input id="discountInput" class="num" max="100" min="0" type="number" value="30"/></label><label class="field"><span>Налог, %</span><input id="taxInput" class="num" max="100" min="0" type="number" value="10"/></label></div><p class="muted" style="font-size:12px;margin:10px 0 0">Скидка применяется ко всему, кроме «Логистика, Тех персонал».</p></div><div class="card"><h3 style="margin-top:0">Итоги</h3><div class="totals"><div class="row"><span class="muted">Оборудование</span><span>0<!-- --> ₸</span></div><div class="row"><span class="muted">Логистика, тех. персонал</span><span>0<!-- --> ₸</span></div><div class="row"><span class="muted">Сумма до скидки</span><span>0<!-- --> ₸</span></div><div class="row"><span class="muted">Скидка <!-- -->30<!-- -->%</span><span>−<!-- -->0<!-- --> ₸</span></div><div class="row"><span class="muted">После скидки</span><span>0<!-- --> ₸</span></div><div class="row"><span class="muted">Налог <!-- -->10<!-- -->%</span><span>0<!-- --> ₸</span></div><div class="row big"><span>Итого</span><span>0<!-- --> ₸</span></div></div></div><div class="card"><h3 style="margin-top:0">Документы</h3><label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:8px"><input style="width:auto" type="checkbox"/>Подпись Арендодателя</label><label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:14px"><input style="width:auto" type="checkbox"/>Печать (М.П.)</label><div class="grid" style="gap:8px"><button class="btn btn-primary" disabled="">Договор → PDF</button><button class="btn" disabled="">Смета → PDF</button><button class="btn btn-green" onclick="saveQuote()">Сохранить в базу</button></div></div></div></div>
+<div class="toolbar" style="margin-bottom:6px">
+    <h1 class="page-title" style="margin:0" id="pageTitle">Новая смета / договор</h1>
+    <div class="spacer"></div>
+    <a class="btn" href="/quotes">← К списку</a>
+</div>
+<p class="page-sub">Добавьте позиции, задайте даты и скидку — затем сохраните и выгрузите документы.</p>
+
+<div class="grid quote-layout" style="grid-template-columns:1fr 360px;align-items:start">
+    <div class="grid" style="gap:16px">
+        <div class="card">
+            <h3 style="margin-top:0">Параметры</h3>
+            <div class="grid cols-2">
+                <label class="field"><span>Дата договора</span><input id="qDate" type="date"/></label>
+                <label class="field"><span>Название сметы / мероприятие</span><input id="qTitle" placeholder="Презентация / концерт / …"/></label>
+            </div>
+            <label class="field"><span>Адрес проведения</span><input id="qAddress" placeholder="Город, площадка"/></label>
+            <div class="grid cols-3">
+                <label class="field"><span>Аренда с</span><input id="rentStart" type="date"/></label>
+                <label class="field"><span>Аренда по</span><input id="rentEnd" type="date"/></label>
+                <label class="field"><span>Дата монтажа/оплаты</span><input id="qSetup" type="date"/></label>
+            </div>
+            <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Выберите даты — система проверит, не занято ли оборудование в других договорах.</p>
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0">Каталог — добавить позиции</h3>
+            <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:10px" oninput="renderCatalog()"/>
+            <div id="catalogContainer"></div>
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0">Позиции сметы</h3>
+            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену можно менять прямо здесь — она сохранится в этой смете.</p>
+            <p class="muted" id="cartEmpty">Пока пусто — добавьте позиции из каталога выше.</p>
+            <div id="cartContainer"></div>
+        </div>
+    </div>
+
+    <div class="grid quote-side" style="gap:16px;position:sticky;top:20px">
+        <div class="card">
+            <h3 style="margin-top:0">Арендатор (клиент)</h3>
+            <label class="field"><span>Компания</span>
+                <select id="companySelect"><option value="">— выберите —</option></select>
+            </label>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">Клиенты добавляются в разделе «Клиенты».</p>
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0">Скидка и налог</h3>
+            <div class="grid cols-2">
+                <label class="field"><span>Скидка на оборудование, %</span><input id="discountInput" class="num" max="100" min="0" type="number" value="0"/></label>
+                <label class="field"><span>Налог, %</span><input id="taxInput" class="num" max="100" min="0" type="number" value="0"/></label>
+            </div>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">Скидка применяется ко всему, кроме «Логистика, Персонал, Расходники».</p>
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0">Итоги</h3>
+            <div class="totals">
+                <div class="row"><span class="muted">Оборудование</span><span id="tEq">0 ₸</span></div>
+                <div class="row"><span class="muted">Логистика, тех. персонал</span><span id="tFixed">0 ₸</span></div>
+                <div class="row"><span class="muted">Сумма до скидки</span><span id="tBase">0 ₸</span></div>
+                <div class="row"><span class="muted" id="tDiscountLabel">Скидка 0%</span><span id="tDiscount">−0 ₸</span></div>
+                <div class="row"><span class="muted">После скидки</span><span id="tAfter">0 ₸</span></div>
+                <div class="row"><span class="muted" id="tTaxLabel">Налог 0%</span><span id="tTax">0 ₸</span></div>
+                <div class="row big"><span>Итого</span><span id="tGrand">0 ₸</span></div>
+            </div>
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0">Документы</h3>
+            <div class="grid" style="gap:8px">
+                <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить</button>
+                <button class="btn btn-primary" onclick="downloadDoc('estimate')">Смета → Word</button>
+                <button class="btn btn-primary" onclick="downloadDoc('contract')">Договор → Word</button>
+            </div>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">Для договора нужен выбранный клиент. Документ формируется в формате .docx (Word).</p>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
 <style>
+.cat-row-conflict { background: var(--danger-soft) !important; }
 .conflict-icon {
-    color: red;
-    font-weight: bold;
+    color: #fff;
+    font-weight: 800;
     cursor: pointer;
     margin-left: 8px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
-    background: #fee2e2;
+    width: 18px;
+    height: 18px;
+    background: var(--danger);
     border-radius: 50%;
     font-size: 12px;
+    flex: none;
 }
 .conflict-tooltip {
     display: none;
     position: absolute;
-    background: white;
-    border: 1px solid red;
-    padding: 8px;
-    border-radius: 4px;
+    left: 0;
+    top: 100%;
+    background: var(--surface);
+    border: 1px solid var(--danger);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 10px;
     z-index: 1000;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    font-size: 12px;
-    color: black;
-    white-space: pre-wrap;
+    box-shadow: var(--shadow-md);
+    font-size: 12.5px;
+    white-space: pre-line;
+    min-width: 260px;
+    max-width: 360px;
 }
 .cat-name { position: relative; }
+.price-input {
+    width: 90px;
+    padding: 5px 8px;
+    text-align: right;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+}
+@media (max-width: 1024px) {
+    .quote-layout { grid-template-columns: 1fr !important; }
+    .quote-side { position: static !important; }
+}
 </style>
 <script>
+const QUOTE_ID = {{ quote_id or 'null' }};
 let equipment = [];
 let folders = [];
-let cart = [];
-let conflictsData = {}; // { eq_id: { booked, conflicts: [] } }
+let companies = [];
+let cart = [];               // {id, name, category, price, stock_price, qty, days}
+let conflictsData = {};      // { eq_id: { booked, conflicts: [] } }
+let savedDealId = QUOTE_ID;
 
+function fmt(n) { return Math.round(n).toLocaleString('ru-RU'); }
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
-async function loadCatalog() {
+async function loadAll() {
     try {
-        const [resEq, resFold] = await Promise.all([
-            fetch('/api/equipment?t=' + new Date().getTime()),
-            fetch('/api/folders?t=' + new Date().getTime())
+        const [resEq, resFold, resComp] = await Promise.all([
+            fetch('/api/equipment'), fetch('/api/folders'), fetch('/api/companies')
         ]);
-        if (!resEq.ok || !resFold.ok) {
-            alert('Failed to fetch data: ' + resEq.status + ' ' + resFold.status);
-            return;
-        }
         equipment = await resEq.json();
         folders = await resFold.json();
+        companies = await resComp.json();
+
+        const sel = document.getElementById('companySelect');
+        companies.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name;
+            sel.appendChild(opt);
+        });
+
         renderCatalog();
+        if (QUOTE_ID) await loadQuote();
     } catch (e) {
-        alert('Error loading catalog: ' + e.message);
-        console.error(e);
+        console.error('Ошибка загрузки данных:', e);
     }
 }
 
+async function loadQuote() {
+    const res = await fetch('/api/deals/' + QUOTE_ID);
+    if (!res.ok) return;
+    const deal = await res.json();
+    document.getElementById('pageTitle').textContent = 'Смета №CRM-' + deal.id;
+    document.getElementById('qTitle').value = deal.title || '';
+    document.getElementById('qAddress').value = deal.event_address || '';
+    document.getElementById('rentStart').value = deal.setup_date || '';
+    document.getElementById('rentEnd').value = deal.event_date || '';
+    document.getElementById('discountInput').value = deal.discount_percentage || 0;
+    document.getElementById('companySelect').value = deal.company_id || '';
+    (deal.items || []).forEach(it => {
+        const eq = equipment.find(e => e.id === it.equipment_id);
+        cart.push({
+            id: it.equipment_id,
+            name: it.name,
+            category: eq ? eq.category : '',
+            price: it.price,
+            stock_price: it.stock_price,
+            qty: it.quantity,
+            days: it.days,
+        });
+    });
+    renderCart();
+    checkAvailability();
+}
+
+// ---------- Каталог ----------
 
 function renderCatalog() {
     const container = document.getElementById('catalogContainer');
+    const search = (document.getElementById('catalogSearch').value || '').toLowerCase();
     container.innerHTML = '';
-    
-    // Group by folder
+
     const grouped = {};
     equipment.forEach(eq => {
+        if (search && !eq.name.toLowerCase().includes(search)) return;
         const fname = eq.folder ? eq.folder.name : (eq.category || 'Без категории');
-        if(!grouped[fname]) grouped[fname] = [];
-        grouped[fname].push(eq);
+        (grouped[fname] = grouped[fname] || []).push(eq);
     });
-    
+
     for (const [fname, items] of Object.entries(grouped)) {
         const groupDiv = document.createElement('div');
         groupDiv.className = 'cat-group';
-        
-        const headDiv = document.createElement('div');
-        headDiv.className = 'cat-head';
-        headDiv.innerHTML = `<span>${fname}</span>`;
-        groupDiv.appendChild(headDiv);
-        
+        groupDiv.innerHTML = `<div class="cat-head"><span>${esc(fname)}</span></div>`;
+
         const table = document.createElement('table');
         table.className = 'data catalog-table';
         const tbody = document.createElement('tbody');
-        
+
         items.forEach(item => {
             const tr = document.createElement('tr');
-            
-            // Check conflicts
+            const c = conflictsData[item.id];
             let conflictHtml = '';
-            let conflictTooltipHtml = '';
-            if (conflictsData[item.id]) {
-                const c = conflictsData[item.id];
-                // if booked >= stock (or if we just want to warn if booked > 0)
-                if (c.booked > 0) {
-                    const tooltipText = c.conflicts.map(x => `Договор: ${x.deal_title}\nДаты: ${x.dates}\nКол-во: ${x.qty}`).join('\n\n');
-                    conflictHtml = `<span class="conflict-icon" onmouseenter="this.nextElementSibling.style.display='block'" onmouseleave="this.nextElementSibling.style.display='none'">!</span>
-                    <div class="conflict-tooltip">Забронировано: ${c.booked} шт.\nНа складе: ${item.stock_quantity}\n\n${tooltipText}</div>`;
-                }
+            if (c && c.booked > 0) {
+                tr.className = 'cat-row-conflict';
+                const lines = c.conflicts.map(x =>
+                    `Товар зарезервирован в договоре № ${x.contract_no}` +
+                    (x.until ? ` до ${x.until}` : '') + ` (${x.qty} шт.)` +
+                    (x.deal_title ? `\n«${x.deal_title}»` : '')
+                ).join('\n\n');
+                const free = Math.max(0, item.stock_quantity - c.booked);
+                conflictHtml = `<span class="conflict-icon"
+                        onmouseenter="this.nextElementSibling.style.display='block'"
+                        onmouseleave="this.nextElementSibling.style.display='none'"
+                        onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'block' ? 'none' : 'block'">!</span>
+                    <div class="conflict-tooltip">${esc(lines)}\n\nНа складе: ${item.stock_quantity} шт. Свободно на выбранные даты: ${free} шт.</div>`;
             }
-            
             tr.innerHTML = `
-                <td class="cat-name">${item.name} ${conflictHtml}</td>
-                <td class="num muted cat-price">${item.price} ₸</td>
+                <td class="cat-name">${esc(item.name)} ${conflictHtml}</td>
+                <td class="num muted cat-price">${fmt(item.price)} ₸</td>
                 <td class="num" style="width:60px">
                     <button class="btn btn-sm btn-primary" onclick="addToCart(${item.id})">+</button>
-                </td>
-            `;
+                </td>`;
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -120,60 +251,51 @@ function renderCatalog() {
     }
 }
 
+// ---------- Проверка брони по датам ----------
+
 async function checkAvailability() {
     const start = document.getElementById('rentStart').value;
     const end = document.getElementById('rentEnd').value;
+    const hint = document.getElementById('availHint');
     if (!start || !end) return;
-    
+
     const res = await fetch(`/api/equipment/availability?start_date=${start}&end_date=${end}`);
     const data = await res.json();
     conflictsData = {};
     data.forEach(d => { conflictsData[d.equipment_id] = d; });
     renderCatalog();
+
+    const nConflicts = Object.keys(conflictsData).length;
+    hint.textContent = nConflicts
+        ? `⚠ На выбранные даты частично занято ${nConflicts} позиций — они подсвечены красным, наведите на значок «!»`
+        : '✓ Всё оборудование свободно на выбранные даты.';
+    hint.style.color = nConflicts ? 'var(--danger)' : 'var(--success)';
 }
 
 document.getElementById('rentStart').addEventListener('change', checkAvailability);
 document.getElementById('rentEnd').addEventListener('change', checkAvailability);
+
+// ---------- Корзина ----------
 
 function addToCart(id) {
     const item = equipment.find(e => e.id === id);
     if (!item) return;
 
     const existing = cart.find(c => c.id === id);
-    const currentQtyInCart = existing ? existing.qty : 0;
-    const newQty = currentQtyInCart + 1;
+    const newQty = (existing ? existing.qty : 0) + 1;
 
-    if (conflictsData[id]) {
-        const c = conflictsData[id];
+    const c = conflictsData[id];
+    if (c) {
         const available = item.stock_quantity - c.booked;
         if (newQty > available) {
-            let conflictMsgs = [];
-            c.conflicts.forEach(x => {
-                let [startStr, endStr] = x.dates.split(" - ");
-                let endFormatted = endStr || startStr;
-                // Reformat date from YYYY-MM-DD to DD.MM.YYYY if possible
-                if (endFormatted && endFormatted.includes("-")) {
-                    const parts = endFormatted.split("-");
-                    if (parts.length === 3) {
-                        endFormatted = `${parts[2]}.${parts[1]}.${parts[0]}`;
-                    }
-                }
-                
-                let dealName = x.deal_title.toLowerCase().includes('договор') || x.deal_title.toLowerCase().includes('сделк') 
-                    ? x.deal_title 
-                    : `сделке «${x.deal_title}»`;
-                conflictMsgs.push(`- в ${dealName} до ${endFormatted} (${x.qty} шт.)`);
-            });
-            
-            alert(`Внимание! Товар «${item.name}»\n\nНа складе всего: ${item.stock_quantity} шт.\nСвободно на эти даты: ${available > 0 ? available : 0} шт.\n\nЗанято:\n${conflictMsgs.join('\n')}`);
+            const msgs = c.conflicts.map(x =>
+                `— зарезервирован в договоре № ${x.contract_no}` + (x.until ? ` до ${x.until}` : '') + ` (${x.qty} шт.)`);
+            alert(`Внимание! «${item.name}»\n\nНа складе всего: ${item.stock_quantity} шт.\nСвободно на эти даты: ${Math.max(0, available)} шт.\n\n${msgs.join('\n')}`);
         }
     }
 
-    if (existing) {
-        existing.qty += 1;
-    } else {
-        cart.push({ ...item, qty: 1, days: 1 });
-    }
+    if (existing) existing.qty += 1;
+    else cart.push({ id: item.id, name: item.name, category: item.category, price: item.price, stock_price: item.price, qty: 1, days: 1 });
     renderCart();
 }
 
@@ -184,176 +306,176 @@ function removeFromCart(id) {
 
 function updateCartItem(id, field, val) {
     const item = cart.find(c => c.id === id);
-    if(item) {
-        item[field] = parseInt(val) || 1;
+    if (item) {
+        item[field] = Math.max(1, parseInt(val) || 1);
         renderCart();
     }
+}
+
+async function updateCartPrice(id, val) {
+    const item = cart.find(c => c.id === id);
+    if (!item) return;
+    const newPrice = parseFloat(val);
+    if (isNaN(newPrice) || newPrice < 0) { renderCart(); return; }
+    item.price = newPrice;
+
+    // Предложить обновить цену на складе, чтобы не заходить каждый раз в «Склад»
+    if (newPrice !== item.stock_price) {
+        const ok = confirm(`Поменять цену на товар «${item.name}» и на складе?\n\nБыло: ${fmt(item.stock_price)} ₸ → станет: ${fmt(newPrice)} ₸\n\nOK — обновить на складе, Отмена — цена изменится только в этой смете.`);
+        if (ok) {
+            try {
+                const res = await fetch(`/api/equipment/${id}/price`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ price: newPrice })
+                });
+                if (res.ok) {
+                    item.stock_price = newPrice;
+                    const eq = equipment.find(e => e.id === id);
+                    if (eq) eq.price = newPrice;
+                    renderCatalog();
+                }
+            } catch (e) { console.error(e); }
+        }
+    }
+    renderCart();
 }
 
 function renderCart() {
     const container = document.getElementById('cartContainer');
     const empty = document.getElementById('cartEmpty');
     container.innerHTML = '';
-    
+
     if (cart.length === 0) {
         empty.style.display = 'block';
         calculateTotals();
         return;
     }
     empty.style.display = 'none';
-    
+
     const table = document.createElement('table');
     table.className = 'data';
     const tbody = document.createElement('tbody');
-    
+
     cart.forEach(item => {
+        const changed = item.price !== item.stock_price;
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${item.name}</td>
-            <td class="num"><input type="number" class="num" style="width:50px; padding:4px;" value="${item.qty}" min="1" onchange="updateCartItem(${item.id}, 'qty', this.value)"> шт</td>
-            <td class="num"><input type="number" class="num" style="width:50px; padding:4px;" value="${item.days}" min="1" onchange="updateCartItem(${item.id}, 'days', this.value)"> дн</td>
-            <td class="num">${item.price * item.qty * item.days} ₸</td>
-            <td style="width:30px"><button class="btn btn-sm" style="color:red;border:none;background:none;" onclick="removeFromCart(${item.id})">×</button></td>
-        `;
+            <td>${esc(item.name)}${changed ? ' <span class="muted" style="font-size:11px">(цена изменена)</span>' : ''}</td>
+            <td class="num"><input type="number" class="num" style="width:52px;padding:4px" value="${item.qty}" min="1" onchange="updateCartItem(${item.id}, 'qty', this.value)"> шт</td>
+            <td class="num"><input type="number" class="num" style="width:52px;padding:4px" value="${item.days}" min="1" onchange="updateCartItem(${item.id}, 'days', this.value)"> дн</td>
+            <td class="num"><input type="number" class="price-input" value="${item.price}" min="0" onchange="updateCartPrice(${item.id}, this.value)"> ₸</td>
+            <td class="num" style="white-space:nowrap"><strong>${fmt(item.price * item.qty * item.days)} ₸</strong></td>
+            <td style="width:30px"><button class="btn btn-sm" style="color:var(--danger);border:none;background:none" onclick="removeFromCart(${item.id})">×</button></td>`;
         tbody.appendChild(tr);
     });
     table.appendChild(tbody);
     container.appendChild(table);
-    
     calculateTotals();
 }
 
+// ---------- Итоги ----------
+
+const FIXED_CATS = ["Логистика, Тех персонал", "Логистика", "Персонал", "Расходники"];
+
 function calculateTotals() {
-    let eqTotal = 0;
-    let fixedTotal = 0;
-    
+    let eqTotal = 0, fixedTotal = 0;
     cart.forEach(item => {
-        const isFixed = ["Логистика, Тех персонал", "Логистика", "Персонал", "Расходники"].includes(item.category);
         const sum = item.price * item.qty * item.days;
-        if (isFixed) fixedTotal += sum;
+        if (FIXED_CATS.includes(item.category)) fixedTotal += sum;
         else eqTotal += sum;
     });
-    
+
     const discountPercent = parseFloat(document.getElementById('discountInput').value) || 0;
     const taxPercent = parseFloat(document.getElementById('taxInput').value) || 0;
-    
     const discountSum = (eqTotal * discountPercent) / 100;
     const afterDiscount = eqTotal - discountSum + fixedTotal;
     const taxSum = (afterDiscount * taxPercent) / 100;
-    const grandTotal = afterDiscount + taxSum;
-    
-    // Update DOM totals
-    const rows = document.querySelectorAll('.totals .row span:last-child');
-    const labelRows = document.querySelectorAll('.totals .row span:first-child');
-    if(rows.length >= 7) {
-        rows[0].innerText = `${eqTotal.toLocaleString('ru-RU')} ₸`;
-        rows[1].innerText = `${fixedTotal.toLocaleString('ru-RU')} ₸`;
-        rows[2].innerText = `${(eqTotal + fixedTotal).toLocaleString('ru-RU')} ₸`;
-        rows[3].innerText = `−${discountSum.toLocaleString('ru-RU')} ₸`;
-        rows[4].innerText = `${afterDiscount.toLocaleString('ru-RU')} ₸`;
-        rows[5].innerText = `${taxSum.toLocaleString('ru-RU')} ₸`;
-        rows[6].innerText = `${grandTotal.toLocaleString('ru-RU')} ₸`;
-        
-        if (labelRows.length >= 7) {
-            labelRows[3].innerText = `Скидка ${discountPercent}%`;
-            labelRows[5].innerText = `Налог ${taxPercent}%`;
-        }
-    }
+
+    document.getElementById('tEq').textContent = fmt(eqTotal) + ' ₸';
+    document.getElementById('tFixed').textContent = fmt(fixedTotal) + ' ₸';
+    document.getElementById('tBase').textContent = fmt(eqTotal + fixedTotal) + ' ₸';
+    document.getElementById('tDiscount').textContent = '−' + fmt(discountSum) + ' ₸';
+    document.getElementById('tDiscountLabel').textContent = `Скидка ${discountPercent}%`;
+    document.getElementById('tAfter').textContent = fmt(afterDiscount) + ' ₸';
+    document.getElementById('tTax').textContent = fmt(taxSum) + ' ₸';
+    document.getElementById('tTaxLabel').textContent = `Налог ${taxPercent}%`;
+    document.getElementById('tGrand').textContent = fmt(afterDiscount + taxSum) + ' ₸';
 }
 
-// Add event listener to recalculate totals when discount/tax inputs change
-document.querySelectorAll('.card input.num[type="number"]').forEach(inp => {
-    inp.addEventListener('input', calculateTotals);
-});
+document.getElementById('discountInput').addEventListener('input', calculateTotals);
+document.getElementById('taxInput').addEventListener('input', calculateTotals);
 
-loadCatalog();
+// ---------- Сохранение и документы ----------
 
-{% if quote_id %}
-    // Load quote data
-    async function fetchQuoteData() {
-        try {
-            const res = await fetch('/api/deals/{{ quote_id }}');
-            if (res.ok) {
-                const deal = await res.json();
-                
-                // Populate inputs
-                const dateInputs = document.querySelectorAll('input[type="date"]');
-                if (dateInputs.length >= 3) {
-                    dateInputs[1].value = deal.setup_date || '';
-                    dateInputs[2].value = deal.event_date || '';
-                }
-                
-                const textInputs = document.querySelectorAll('.card input');
-                // Title
-                if (textInputs[1]) textInputs[1].value = deal.title || '';
-                // Event address
-                if (textInputs[3]) textInputs[3].value = deal.event_address || '';
-                
-                // Populate cart
-                if (deal.items && deal.items.length > 0) {
-                    deal.items.forEach(it => {
-                        const eq = equipment.find(e => e.id === it.equipment_id);
-                        if (eq) {
-                            cart.push({ ...eq, qty: it.quantity, days: it.days });
-                        }
-                    });
-                    renderCart();
-                }
-            }
-        } catch(e) { console.error(e); }
-    }
-    
-    // Call it after loadCatalog completes
-    const oldRenderCatalog = renderCatalog;
-    renderCatalog = function() {
-        oldRenderCatalog();
-        fetchQuoteData();
-    }
-{% endif %}
-
-
-
-async function saveQuote() {
-    if (cart.length === 0) {
-        alert('Добавьте позиции в смету');
-        return;
-    }
+async function saveQuote(silent) {
+    if (cart.length === 0) { alert('Добавьте позиции в смету'); return null; }
     const start = document.getElementById('rentStart').value;
     const end = document.getElementById('rentEnd').value;
-    if (!start || !end) {
-        alert('Укажите даты аренды (Аренда с и Аренда по)');
-        return;
-    }
-    
-    const payload = {
-        title: "Смета от " + new Date().toLocaleDateString('ru-RU'),
-        company_id: null,
-        pipeline_id: 1,
-        setup_date: start,
-        event_date: end,
-        event_address: "",
-        discount_percentage: 0,
-        items_json: JSON.stringify(cart)
-    };
-    
+    if (!start || !end) { alert('Укажите даты аренды («Аренда с» и «Аренда по»)'); return null; }
+
+    const title = document.getElementById('qTitle').value || ('Смета от ' + new Date().toLocaleDateString('ru-RU'));
+    const companyId = parseInt(document.getElementById('companySelect').value) || null;
+    const discount = parseFloat(document.getElementById('discountInput').value) || 0;
+    const address = document.getElementById('qAddress').value || '';
+
     try {
-        const response = await fetch('/api/deals', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (response.ok) {
-            alert('Смета успешно сохранена!');
-            window.location.href = '/quotes'; // Redirect to quotes list
+        if (savedDealId) {
+            // Обновляем существующую смету
+            await fetch(`/api/deals/${savedDealId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, setup_date: start, event_date: end, event_address: address, company_id: companyId })
+            });
+            await fetch(`/api/deals/${savedDealId}/items`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    discount_percentage: discount,
+                    items: cart.map(c => ({ equipment_id: c.id, quantity: c.qty, days: c.days, price: c.price }))
+                })
+            });
         } else {
-            alert('Ошибка при сохранении');
+            const response = await fetch('/api/deals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title,
+                    company_id: companyId,
+                    pipeline_id: 1,
+                    setup_date: start,
+                    event_date: end,
+                    event_address: address,
+                    discount_percentage: discount,
+                    items_json: JSON.stringify(cart.map(c => ({ id: c.id, qty: c.qty, days: c.days, price: c.price })))
+                })
+            });
+            if (!response.ok) throw new Error('save failed');
+            const data = await response.json();
+            savedDealId = data.id;
+            history.replaceState(null, '', '/quotes/' + savedDealId);
+            document.getElementById('pageTitle').textContent = 'Смета №CRM-' + savedDealId;
         }
-    } catch(e) {
-        alert('Ошибка при сохранении');
+        if (!silent) alert('Смета сохранена!');
+        return savedDealId;
+    } catch (e) {
+        console.error(e);
+        alert('Ошибка при сохранении сметы');
+        return null;
     }
 }
 
+async function downloadDoc(kind) {
+    const id = await saveQuote(true);
+    if (!id) return;
+    if (kind === 'contract' && !document.getElementById('companySelect').value) {
+        alert('Для договора выберите клиента (арендатора)');
+        return;
+    }
+    window.location.href = `/api/deals/${id}/${kind === 'contract' ? 'contract' : 'estimate'}`;
+}
 
+document.getElementById('qDate').value = new Date().toISOString().slice(0, 10);
+loadAll();
 </script>
-
 {% endblock %}

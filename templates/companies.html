@@ -69,6 +69,7 @@
                     <div class="form-group"><label>Действует на основании</label><input type="text" id="comp_based_on" value="Устава"></div>
                     <div class="form-group"><label>Телефон</label><input type="text" id="comp_phone"></div>
                     <div class="form-group"><label>Email</label><input type="email" id="comp_email"></div>
+                    <div class="form-group"><label>Instagram (username, без @)</label><input type="text" id="comp_instagram" placeholder="например: intro_show_almaty"></div>
                     <div class="form-group"><label>Юридический адрес</label><input type="text" id="comp_address"></div>
                     <div class="form-group"><label>Наименование Банка</label><input type="text" id="comp_bank_name"></div>
                     <div class="form-group"><label>БИК</label><input type="text" id="comp_bik"></div>
@@ -89,6 +90,10 @@
                         <svg viewBox="0 0 32 32" width="20" height="20" fill="currentColor"><path d="M16 2.01A14.02 14.02 0 0 0 2 16.03a13.9 13.9 0 0 0 1.86 6.96L2 29.99l7.15-1.85A13.9 13.9 0 0 0 16 30.01a14.02 14.02 0 0 0 14-13.98A14.02 14.02 0 0 0 16 2.01zM16 27.64c-1.92 0-3.8-.52-5.46-1.5l-.39-.23-4.06 1.05 1.07-3.96-.25-.4A11.58 11.58 0 0 1 4.36 16.03a11.66 11.66 0 0 1 11.64-11.64 11.66 11.66 0 0 1 11.64 11.64A11.66 11.66 0 0 1 16 27.64zm6.38-8.7c-.35-.18-2.07-1.02-2.39-1.14-.32-.11-.55-.18-.78.18-.23.35-.9 1.14-1.11 1.38-.2.23-.41.25-.76.08a9.4 9.4 0 0 1-2.76-1.7 10.4 10.4 0 0 1-1.92-2.39c-.21-.36 0-.54.16-.72.15-.15.35-.41.52-.61.18-.21.23-.36.35-.59.12-.23.06-.44-.03-.61-.09-.18-.78-1.89-1.07-2.59-.28-.68-.57-.59-.78-.6h-.66c-.23 0-.61.09-.93.44s-1.22 1.2-1.22 2.92c0 1.73 1.25 3.4 1.43 3.63.17.24 2.48 3.78 6 5.3 3.51 1.52 3.51 1.01 4.15.95.64-.06 2.07-.84 2.36-1.66.29-.81.29-1.5.21-1.65-.09-.14-.32-.23-.67-.41z"></path></svg>
                         Написать в WhatsApp
                     </a>
+                    <a href="#" id="ig_link" target="_blank" style="display:none; align-items:center; gap:0.5rem; text-decoration:none; color:white; width:fit-content; background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888); padding:0.5rem 1rem; border-radius:var(--r-sm); font-weight:bold;">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"></rect><circle cx="12" cy="12" r="4"></circle><circle cx="17.5" cy="6.5" r="0.7" fill="currentColor"></circle></svg>
+                        Написать в Instagram Direct
+                    </a>
                     <a href="#" id="tg_link" class="btn btn-info" style="display:inline-flex; align-items:center; gap:0.5rem; text-decoration:none; color:white; width: fit-content; background: #0088cc; border:none;">
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.223-.548.223l.188-2.85 5.18-4.686c.223-.195-.054-.306-.346-.112l-6.4 4.027-2.76-.864c-.6-.188-.612-.6.126-.89l10.78-4.155c.498-.184.94.11.78.335z"/></svg>
                         Скопировать ссылку на бота
@@ -96,6 +101,23 @@
                     <div id="tg_status" style="font-size: 0.85rem; color: #28a745; display: none;">✅ Telegram подключен</div>
                 </div>
                 
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
+                    <h4 style="margin:0;">Контакты компании</h4>
+                    <button type="button" class="btn btn-sm" onclick="openContactForm()">+ Контакт</button>
+                </div>
+                <div id="company_contacts_list" style="margin-bottom:1.5rem;"></div>
+                <div id="contact_form" style="display:none;background:var(--bg-2);padding:1rem;border-radius:var(--r-md);margin-bottom:1.5rem;">
+                    <input type="hidden" id="ct_id">
+                    <div class="form-group"><label>ФИО *</label><input type="text" id="ct_name"></div>
+                    <div class="form-group"><label>Должность</label><input type="text" id="ct_position" placeholder="Директор, менеджер…"></div>
+                    <div class="form-group"><label>Телефон</label><input type="text" id="ct_phone"></div>
+                    <div class="form-group"><label>Email</label><input type="email" id="ct_email"></div>
+                    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="saveContact()">Сохранить</button>
+                        <button type="button" class="btn btn-sm" onclick="document.getElementById('contact_form').style.display='none'">Отмена</button>
+                    </div>
+                </div>
+
                 <h4 style="margin-top:0;">Сделки с клиентом</h4>
                 <div id="company_deals_list">
                     <!-- Сделки -->
@@ -157,6 +179,7 @@
             document.getElementById('comp_bik').value = c.bik || '';
             document.getElementById('comp_kbe').value = c.kbe || '';
             document.getElementById('comp_req').value = c.requisites || '';
+            document.getElementById('comp_instagram').value = c.instagram || '';
 
             document.getElementById('modal_title').innerText = 'Редактировать Клиента';
             document.getElementById('btn_delete').style.display = 'block';
@@ -169,11 +192,21 @@
             if(waPhone) {
                 waLink.onclick = function(e) {
                     e.preventDefault();
-                    window.open(`https://web.whatsapp.com/send?phone=${waPhone}`, 'WhatsApp', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+                    window.open(`https://wa.me/${waPhone}`, '_blank');
                 };
                 waLink.style.display = 'inline-flex';
             } else {
                 waLink.style.display = 'none';
+            }
+
+            // Instagram Direct link
+            const igLink = document.getElementById('ig_link');
+            const igUser = (c.instagram || '').replace(/^@/, '').trim();
+            if (igUser) {
+                igLink.href = `https://ig.me/m/${igUser}`;
+                igLink.style.display = 'inline-flex';
+            } else {
+                igLink.style.display = 'none';
             }
             
             // Telegram Bot Link
@@ -195,6 +228,8 @@
                 tgStatus.style.display = 'none';
             }
             
+            renderContacts(data.contacts || []);
+
             const dealsList = document.getElementById('company_deals_list');
             dealsList.innerHTML = '';
             if (data.deals && data.deals.length > 0) {
@@ -216,6 +251,80 @@
             document.getElementById('companyModal').style.display = 'flex';
         }
 
+        // ---------- Контакты компании (как в Битрикс24) ----------
+
+        function escHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        let currentContacts = [];
+
+        function renderContacts(contacts) {
+            currentContacts = contacts;
+            const list = document.getElementById('company_contacts_list');
+            list.innerHTML = '';
+            if (!contacts.length) {
+                list.innerHTML = '<div style="color:var(--muted);font-size:0.9rem;">Контакты не добавлены.</div>';
+                return;
+            }
+            contacts.forEach(ct => {
+                const waPhone = formatPhoneForWA(ct.phone);
+                list.innerHTML += `
+                    <div class="history-item" style="align-items:flex-start;">
+                        <div>
+                            <div style="font-weight:bold;">${escHtml(ct.name)}${ct.position ? ` <span style="font-weight:normal;color:var(--muted);font-size:0.85rem;">— ${escHtml(ct.position)}</span>` : ''}</div>
+                            <div style="font-size:0.85rem;color:var(--text-2);">
+                                ${ct.phone ? `📞 ${escHtml(ct.phone)}` : ''} ${ct.email ? ` ✉ ${escHtml(ct.email)}` : ''}
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:6px;flex:none;">
+                            ${waPhone ? `<a class="btn btn-sm" title="WhatsApp" target="_blank" href="https://wa.me/${waPhone}">💬</a>` : ''}
+                            <button type="button" class="btn btn-sm" onclick="openContactForm(${ct.id})">✎</button>
+                            <button type="button" class="btn btn-sm" style="color:var(--danger)" onclick="deleteContact(${ct.id})">×</button>
+                        </div>
+                    </div>`;
+            });
+        }
+
+        function openContactForm(contactId) {
+            const ct = currentContacts.find(c => c.id === contactId) || {};
+            document.getElementById('ct_id').value = ct.id || '';
+            document.getElementById('ct_name').value = ct.name || '';
+            document.getElementById('ct_position').value = ct.position || '';
+            document.getElementById('ct_phone').value = ct.phone || '';
+            document.getElementById('ct_email').value = ct.email || '';
+            document.getElementById('contact_form').style.display = 'block';
+        }
+
+        async function saveContact() {
+            const companyId = document.getElementById('comp_id').value;
+            const ctId = document.getElementById('ct_id').value;
+            const payload = {
+                name: document.getElementById('ct_name').value.trim(),
+                position: document.getElementById('ct_position').value.trim(),
+                phone: document.getElementById('ct_phone').value.trim(),
+                email: document.getElementById('ct_email').value.trim(),
+                company_id: parseInt(companyId),
+            };
+            if (!payload.name) { alert('Укажите ФИО контакта'); return; }
+            if (ctId) {
+                await fetch(`/api/contacts/${ctId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+            } else {
+                await fetch('/api/contacts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+            }
+            document.getElementById('contact_form').style.display = 'none';
+            const res = await fetch(`/api/contacts?company_id=${companyId}`);
+            renderContacts(await res.json());
+        }
+
+        async function deleteContact(id) {
+            if (!confirm('Удалить контакт?')) return;
+            await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
+            const companyId = document.getElementById('comp_id').value;
+            const res = await fetch(`/api/contacts?company_id=${companyId}`);
+            renderContacts(await res.json());
+        }
+
         function openCompanyModal() {
             document.getElementById('comp_id').value = '';
             document.getElementById('comp_name').value = '';
@@ -229,6 +338,7 @@
             document.getElementById('comp_bik').value = '';
             document.getElementById('comp_kbe').value = '';
             document.getElementById('comp_req').value = '';
+            document.getElementById('comp_instagram').value = '';
             
             document.getElementById('modal_title').innerText = 'Новый Клиент';
             document.getElementById('btn_delete').style.display = 'none';
@@ -249,7 +359,8 @@
                 email: document.getElementById('comp_email').value, requisites: document.getElementById('comp_req').value,
                 based_on: document.getElementById('comp_based_on').value, address: document.getElementById('comp_address').value,
                 bank_name: document.getElementById('comp_bank_name').value, kbe: document.getElementById('comp_kbe').value,
-                bik: document.getElementById('comp_bik').value
+                bik: document.getElementById('comp_bik').value,
+                instagram: document.getElementById('comp_instagram').value.replace(/^@/, '').trim()
             };
             
             if (id) {

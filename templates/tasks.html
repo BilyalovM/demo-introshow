@@ -3,5 +3,234 @@
 {% block title %}Задачи - Intro Show{% endblock %}
 
 {% block content %}
-<h1 class="page-title">Задачи</h1><p class="page-sub">Звонки, follow-up и отправка КП — всё в одном списке.</p><div class="card" style="margin-bottom:20px"><div style="display:flex;gap:10px"><input placeholder="Добавить задачу…" value=""/><button class="btn btn-primary"><svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="16"><path d="M12 5v14M5 12h14"></path></svg> Добавить</button></div></div><div class="grid cols-2" style="align-items:start"><div class="card"><h3 class="section-title" style="margin-bottom:12px">В работе · <!-- -->3</h3><div class="feed-item" style="align-items:center"><button class="icon-btn" style="width:28px;height:28px;border-radius:9px;background:var(--surface);color:var(--muted)"></button><div style="flex:1"><div style="font-weight:600;font-size:14px;text-decoration:none;color:var(--text)">Отправить КП для TechConf Astana</div><div class="muted" style="font-size:12.5px">Нурлан Оспанов</div></div><span class="chip">16 июн.</span></div><div class="feed-item" style="align-items:center"><button class="icon-btn" style="width:28px;height:28px;border-radius:9px;background:var(--surface);color:var(--muted)"></button><div style="flex:1"><div style="font-weight:600;font-size:14px;text-decoration:none;color:var(--text)">Позвонить Айгерим по бюджету презентации</div><div class="muted" style="font-size:12.5px">Айгерим Сапарова</div></div><span class="chip">17 июн.</span></div><div class="feed-item" style="align-items:center"><button class="icon-btn" style="width:28px;height:28px;border-radius:9px;background:var(--surface);color:var(--muted)"></button><div style="flex:1"><div style="font-weight:600;font-size:14px;text-decoration:none;color:var(--text)">Подтвердить логистику грузовой машины</div><div class="muted" style="font-size:12.5px">Общая задача</div></div><span class="chip">18 июн.</span></div></div><div class="card"><h3 class="section-title" style="margin-bottom:12px">Выполнено · <!-- -->1</h3><div class="feed-item" style="align-items:center"><button class="icon-btn" style="width:28px;height:28px;border-radius:9px;background:var(--success);color:#fff"><svg fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="15"><path d="M20 6 9 17l-5-5"></path></svg></button><div style="flex:1"><div style="font-weight:600;font-size:14px;text-decoration:line-through;color:var(--muted)">Выставить счёт по свадьбе Lumiere</div><div class="muted" style="font-size:12.5px">Общая задача</div></div><span class="chip">15 июн.</span></div></div></div>
+<div class="toolbar" style="margin-bottom:6px">
+    <h1 class="page-title" style="margin:0">Задачи</h1>
+    <div class="spacer"></div>
+    <button class="btn btn-primary" onclick="openTaskForm()">+ Новая задача</button>
+</div>
+<p class="page-sub">Планируйте работу как в Битрикс24: ответственные, крайние сроки, приоритеты и привязка к сделкам.</p>
+
+<div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+    <button class="btn btn-sm task-filter active" data-filter="all" onclick="setFilter('all', this)">Все</button>
+    <button class="btn btn-sm task-filter" data-filter="mine" onclick="setFilter('mine', this)">Мои</button>
+    <button class="btn btn-sm task-filter" data-filter="overdue" onclick="setFilter('overdue', this)">Просроченные <span id="overdue-count" class="chip" style="margin-left:4px"></span></button>
+</div>
+
+<div class="tasks-board">
+    <div class="task-col" data-status="open">
+        <div class="task-col-head" style="border-color:#3b82f6">Новые <span id="cnt-open" class="muted"></span></div>
+        <div class="task-col-body" id="col-open"></div>
+    </div>
+    <div class="task-col" data-status="in_progress">
+        <div class="task-col-head" style="border-color:#f59e0b">Выполняются <span id="cnt-in_progress" class="muted"></span></div>
+        <div class="task-col-body" id="col-in_progress"></div>
+    </div>
+    <div class="task-col" data-status="deferred">
+        <div class="task-col-head" style="border-color:#8b5cf6">Отложены <span id="cnt-deferred" class="muted"></span></div>
+        <div class="task-col-body" id="col-deferred"></div>
+    </div>
+    <div class="task-col" data-status="done">
+        <div class="task-col-head" style="border-color:#10b981">Завершены <span id="cnt-done" class="muted"></span></div>
+        <div class="task-col-body" id="col-done"></div>
+    </div>
+</div>
+
+<!-- Модалка создания/редактирования задачи -->
+<div id="task-modal" class="task-modal-overlay">
+    <div class="task-modal">
+        <button onclick="closeTaskForm()" style="position:absolute; top:12px; right:16px; background:transparent; border:none; font-size:24px; cursor:pointer; color:var(--muted);">&times;</button>
+        <h3 style="margin-top:0" id="task-modal-title">Новая задача</h3>
+        <input type="hidden" id="tk_id">
+        <label class="field"><span>Название задачи *</span><input id="tk_title" placeholder="Например: Позвонить клиенту и согласовать смету"></label>
+        <label class="field"><span>Описание</span><textarea id="tk_desc" rows="3" placeholder="Детали задачи…"></textarea></label>
+        <div class="grid cols-2">
+            <label class="field"><span>Ответственный</span><select id="tk_assignee"></select></label>
+            <label class="field"><span>Крайний срок</span><input id="tk_due" type="date"></label>
+        </div>
+        <div class="grid cols-2">
+            <label class="field"><span>Приоритет</span>
+                <select id="tk_priority">
+                    <option value="low">Низкий</option>
+                    <option value="normal" selected>Обычный</option>
+                    <option value="high">🔥 Высокий</option>
+                </select>
+            </label>
+            <label class="field"><span>Привязать к сделке</span><select id="tk_deal"><option value="">— без сделки —</option></select></label>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+            <button class="btn btn-primary" style="flex:1" onclick="saveTask()">Сохранить</button>
+            <button class="btn" onclick="closeTaskForm()">Отмена</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<style>
+.tasks-board { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; align-items:start; }
+.task-col { background: var(--bg-2); border-radius: 14px; padding: 10px; min-height: 200px; }
+.task-col-head { font-weight: 800; font-size: 13px; padding: 8px 10px 10px; border-top: 3px solid; border-radius: 4px 4px 0 0; margin-bottom: 6px; }
+.task-col-body { display:flex; flex-direction:column; gap:8px; min-height: 60px; }
+.task-card { background: var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px 12px; cursor:grab; box-shadow: var(--shadow-xs); }
+.task-card.dragging { opacity: 0.5; }
+.task-col.drag-over { outline: 2px dashed var(--primary); outline-offset: -4px; }
+.task-title { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; line-height: 1.35; }
+.task-meta { font-size: 11.5px; color: var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.task-due-overdue { color: var(--danger); font-weight: 700; }
+.task-priority-high { border-left: 3px solid var(--danger); }
+.task-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding: 16px; }
+.task-modal-overlay.active { display:flex; }
+.task-modal { background: var(--surface); border-radius: 16px; padding: 24px; width: 520px; max-width: 100%; max-height: 90vh; overflow-y:auto; position:relative; box-shadow: var(--shadow-lg); }
+.task-filter.active { background: var(--primary); color:#fff; border-color: var(--primary); }
+@media (max-width: 1024px) { .tasks-board { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .tasks-board { grid-template-columns: 1fr; } }
+</style>
+<script>
+const CURRENT_USER = "{{ (request.state.user.full_name or request.state.user.username) if request.state.user else '' }}";
+let allTasks = [];
+let usersList = [];
+let dealsList = [];
+let currentFilter = 'all';
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtDate(d) {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); }
+    catch (e) { return d; }
+}
+
+async function loadRefs() {
+    try {
+        const [uRes, dRes] = await Promise.all([fetch('/api/users/names'), fetch('/api/deals')]);
+        usersList = uRes.ok ? await uRes.json() : [];
+        dealsList = dRes.ok ? await dRes.json() : [];
+        document.getElementById('tk_assignee').innerHTML =
+            usersList.map(u => `<option value="${esc(u.full_name)}" ${u.full_name === CURRENT_USER ? 'selected' : ''}>${esc(u.full_name)}</option>`).join('');
+        document.getElementById('tk_deal').innerHTML = '<option value="">— без сделки —</option>' +
+            dealsList.map(d => `<option value="${d.id}">№${d.id} ${esc(d.title)}</option>`).join('');
+    } catch (e) { console.error(e); }
+}
+
+async function loadTasks() {
+    const res = await fetch('/api/tasks');
+    allTasks = await res.json();
+    render();
+}
+
+function passesFilter(t) {
+    if (currentFilter === 'mine') return t.assignee === CURRENT_USER;
+    if (currentFilter === 'overdue') return t.overdue;
+    return true;
+}
+
+function render() {
+    const statuses = ['open', 'in_progress', 'deferred', 'done'];
+    const overdueCount = allTasks.filter(t => t.overdue).length;
+    document.getElementById('overdue-count').textContent = overdueCount || '';
+
+    statuses.forEach(st => {
+        const col = document.getElementById('col-' + st);
+        const tasks = allTasks.filter(t => t.status === st && passesFilter(t));
+        document.getElementById('cnt-' + st).textContent = tasks.length ? `· ${tasks.length}` : '';
+        col.innerHTML = '';
+        if (!tasks.length) {
+            col.innerHTML = '<div class="muted" style="font-size:12px; text-align:center; padding:12px 0;">Пусто</div>';
+            return;
+        }
+        tasks.forEach(t => {
+            const card = document.createElement('div');
+            card.className = 'task-card' + (t.priority === 'high' ? ' task-priority-high' : '');
+            card.draggable = true;
+            card.dataset.taskId = t.id;
+            card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', t.id); card.classList.add('dragging'); });
+            card.addEventListener('dragend', () => card.classList.remove('dragging'));
+            card.addEventListener('click', () => openTaskForm(t.id));
+            card.innerHTML = `
+                <div class="task-title" style="${t.status === 'done' ? 'text-decoration:line-through;color:var(--muted);' : ''}">${t.priority === 'high' ? '🔥 ' : ''}${esc(t.title)}</div>
+                <div class="task-meta">
+                    <span>👤 ${esc(t.assignee || '—')}</span>
+                    ${t.due_date ? `<span class="${t.overdue ? 'task-due-overdue' : ''}">⏰ ${fmtDate(t.due_date)}${t.overdue ? ' (просрочено)' : ''}</span>` : ''}
+                    ${t.deal_id ? `<a href="/crm" style="color:var(--primary)" onclick="event.stopPropagation()">🔗 №${t.deal_id}</a>` : ''}
+                </div>`;
+            col.appendChild(card);
+        });
+    });
+}
+
+// Drag & drop между колонками
+document.querySelectorAll('.task-col').forEach(col => {
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('drag-over'); });
+    col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+    col.addEventListener('drop', async e => {
+        e.preventDefault();
+        col.classList.remove('drag-over');
+        const taskId = parseInt(e.dataTransfer.getData('text/plain'));
+        const newStatus = col.dataset.status;
+        const task = allTasks.find(t => t.id === taskId);
+        if (!task || task.status === newStatus) return;
+        task.status = newStatus;
+        render();
+        await fetch(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+        loadTasks();
+    });
+});
+
+function setFilter(f, btn) {
+    currentFilter = f;
+    document.querySelectorAll('.task-filter').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    render();
+}
+
+function openTaskForm(taskId) {
+    const t = allTasks.find(x => x.id === taskId);
+    document.getElementById('task-modal-title').textContent = t ? 'Задача №' + t.id : 'Новая задача';
+    document.getElementById('tk_id').value = t ? t.id : '';
+    document.getElementById('tk_title').value = t ? t.title : '';
+    document.getElementById('tk_desc').value = t ? (t.description || '') : '';
+    document.getElementById('tk_due').value = t ? (t.due_date || '') : '';
+    document.getElementById('tk_priority').value = t ? (t.priority || 'normal') : 'normal';
+    document.getElementById('tk_deal').value = t && t.deal_id ? t.deal_id : '';
+    if (t && t.assignee) document.getElementById('tk_assignee').value = t.assignee;
+    document.getElementById('task-modal').classList.add('active');
+}
+
+function closeTaskForm() {
+    document.getElementById('task-modal').classList.remove('active');
+}
+
+async function saveTask() {
+    const id = document.getElementById('tk_id').value;
+    const payload = {
+        title: document.getElementById('tk_title').value.trim(),
+        description: document.getElementById('tk_desc').value.trim() || null,
+        assignee: document.getElementById('tk_assignee').value || null,
+        due_date: document.getElementById('tk_due').value || null,
+        priority: document.getElementById('tk_priority').value,
+        deal_id: parseInt(document.getElementById('tk_deal').value) || null,
+    };
+    if (!payload.title) { alert('Укажите название задачи'); return; }
+    if (id) {
+        await fetch(`/api/tasks/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    } else {
+        await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    }
+    closeTaskForm();
+    loadTasks();
+}
+
+document.getElementById('task-modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('task-modal')) closeTaskForm();
+});
+
+loadRefs();
+loadTasks();
+</script>
 {% endblock %}

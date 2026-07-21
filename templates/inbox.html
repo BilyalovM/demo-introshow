@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}WhatsApp Inbox - Intro Show{% endblock %}
+{% block title %}Чаты - Intro Show{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -10,12 +10,12 @@
     }
     .chat-container {
         display: flex;
-        height: calc(100vh - 69px);
+        height: calc(100dvh - 69px);
         background-color: var(--background);
         color: var(--text);
     }
     .chat-sidebar {
-        width: 300px;
+        width: 320px;
         background-color: var(--surface);
         border-right: 1px solid var(--border);
         display: flex;
@@ -28,34 +28,59 @@
         background-color: var(--surface);
         font-size: 16px;
     }
+    .channel-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+    }
+    .channel-tab {
+        flex: 1;
+        text-align: center;
+        padding: 6px 4px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: var(--background);
+        color: var(--text);
+        transition: all 0.15s;
+    }
+    .channel-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .chat-list {
         overflow-y: auto;
         flex: 1;
     }
     .chat-item {
-        padding: 15px;
+        padding: 13px 15px;
         border-bottom: 1px solid var(--border);
         cursor: pointer;
         display: flex;
-        flex-direction: column;
+        gap: 10px;
+        align-items: center;
     }
-    .chat-item:hover {
-        background-color: var(--background);
-    }
+    .chat-item:hover { background-color: var(--background); }
     .chat-item.active {
         background-color: var(--background);
         border-left: 4px solid var(--primary);
     }
-    .chat-item-name {
-        font-weight: bold;
-        margin-bottom: 5px;
+    .channel-dot {
+        width: 34px; height: 34px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        color: #fff; font-size: 11px; font-weight: 700; flex-shrink: 0;
     }
+    .channel-dot.whatsapp { background: linear-gradient(135deg, #34d399, #10b981); }
+    .channel-dot.telegram { background: linear-gradient(135deg, #38bdf8, #0284c7); }
+    .channel-dot.instagram { background: linear-gradient(135deg, #f472b6, #d946ef); }
+    .chat-item-name { font-weight: bold; margin-bottom: 3px; font-size: 13.5px; }
     .chat-item-preview {
         font-size: 12px;
         color: var(--text-muted, #888);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        max-width: 210px;
     }
     .chat-main {
         flex: 1;
@@ -69,6 +94,7 @@
         border-bottom: 1px solid var(--border);
         font-weight: bold;
         font-size: 16px;
+        display: flex; align-items: center; justify-content: space-between;
     }
     .chat-messages {
         flex: 1;
@@ -84,6 +110,8 @@
         border-radius: 8px;
         font-size: 14px;
         line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
     }
     .message.received {
         align-self: flex-start;
@@ -94,6 +122,12 @@
         align-self: flex-end;
         background-color: var(--primary);
         color: white;
+    }
+    .message .msg-meta {
+        display: block;
+        font-size: 10.5px;
+        opacity: 0.7;
+        margin-top: 4px;
     }
     .chat-input-area {
         padding: 15px;
@@ -120,24 +154,57 @@
         cursor: pointer;
         font-weight: bold;
     }
-    .send-btn:hover {
-        opacity: 0.9;
+    .send-btn:hover { opacity: 0.9; }
+    .inbox-empty {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        flex: 1; color: var(--text-muted, #888); font-size: 14px; text-align: center; padding: 24px; gap: 8px;
     }
+
+    /* Мобильная адаптация чатов: список ↔ диалог */
+    @media (max-width: 768px) {
+        .chat-container {
+            height: calc(100dvh - 58px - var(--bottom-nav-h, 64px) - env(safe-area-inset-bottom) - env(safe-area-inset-top));
+            position: relative;
+        }
+        .chat-sidebar {
+            width: 100%;
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+        }
+        .chat-container.chat-open .chat-sidebar { display: none; }
+        .chat-main { width: 100%; }
+        .message { max-width: 85%; }
+        .chat-back-btn { display: inline-flex !important; }
+    }
+    .chat-back-btn { display: none; margin-right: 8px; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="chat-container">
     <div class="chat-sidebar">
-        <div class="chat-header">WhatsApp Диалоги</div>
-        <div class="chat-list" id="chat-list">
-            <!-- Rendered by JS -->
+        <div class="chat-header">Диалоги с клиентами</div>
+        <div class="channel-tabs">
+            <div class="channel-tab active" data-channel="" onclick="setChannel(this)">Все</div>
+            <div class="channel-tab" data-channel="whatsapp" onclick="setChannel(this)">WhatsApp</div>
+            <div class="channel-tab" data-channel="telegram" onclick="setChannel(this)">Telegram</div>
+            <div class="channel-tab" data-channel="instagram" onclick="setChannel(this)">Instagram</div>
         </div>
+        <div class="chat-list" id="chat-list"></div>
     </div>
     <div class="chat-main">
-        <div class="chat-main-header" id="chat-title">Выберите чат</div>
+        <div class="chat-main-header">
+            <button class="btn btn-sm chat-back-btn" onclick="backToChatList()">←</button>
+            <span id="chat-title">Выберите чат</span>
+            <span id="chat-channel-label" class="muted" style="font-size:12px;font-weight:normal"></span>
+            <a id="chat-deal-link" href="/crm" class="btn btn-sm" style="display:none; margin-left:auto;">Открыть сделку →</a>
+        </div>
         <div class="chat-messages" id="messages-container">
-            <!-- Rendered by JS -->
+            <div class="inbox-empty" id="inbox-empty">
+                <strong>Здесь появятся переписки из WhatsApp, Telegram и Instagram</strong>
+                <span>Подключите каналы в разделе «Настройки». Входящим клиентам автоматически отвечает AI чат-бот по своей базе знаний и графику работы.</span>
+            </div>
         </div>
         <div class="chat-input-area" id="chat-input-area" style="display: none;">
             <input type="text" id="chat-input" class="chat-input" placeholder="Введите сообщение..." onkeypress="handleKeyPress(event)">
@@ -149,122 +216,134 @@
 
 {% block extra_scripts %}
 <script>
-    const chatsData = {
-        'aigerim': {
-            name: 'Айгерим Сапарова',
-            preview: 'Отлично! Подготовлю смету с крышей 8×8...',
-            messages: [
-                { type: 'received', text: 'Здравствуйте! Подскажите, свободна ли дата 21 мая для аренды звука и света?' },
-                { type: 'sent', text: 'Добрый день! Да, 21 мая свободно. Какое именно оборудование вас интересует?' },
-                { type: 'received', text: 'Нам нужно озвучить зал на 300 человек и поставить сценический свет.' },
-                { type: 'sent', text: 'Понял вас. Можем предложить комплект с линейными массивами и 8 световыми головами.' },
-                { type: 'received', text: 'Всё супер, согласовываем бюджет, вернусь сегодня' },
-                { type: 'sent', text: 'Отлично! Подготовлю смету с крышей 8×8, линиями JBL и световым комплектом' }
-            ]
-        },
-        'timur': {
-            name: 'Тимур Ахметов',
-            preview: 'Когда сможете прислать КП?',
-            messages: [
-                { type: 'received', text: 'Привет! Мы делаем корпоратив на 150 человек.' },
-                { type: 'sent', text: 'Привет! Отлично, какая площадка?' },
-                { type: 'received', text: 'Ресторан Almaty Hall. Нам нужен базовый звук и проектор.' },
-                { type: 'sent', text: 'Без проблем, пришлю вам варианты.' },
-                { type: 'received', text: 'Когда сможете прислать КП?' }
-            ]
-        },
-        'nurlan': {
-            name: 'Нурлан Оспанов',
-            preview: '🎤 Голосовое сообщение',
-            messages: [
-                { type: 'received', text: 'Салам! Есть в аренду Pioneer CDJ-3000?' },
-                { type: 'sent', text: 'Привет! Да, есть. На какую дату?' },
-                { type: 'received', text: 'На эту субботу. Сможете привезти на Медеу?' },
-                { type: 'sent', text: 'Да, доставка будет стоить 5000 тг.' },
-                { type: 'received', text: '🎤 [Голосовое сообщение 0:14]' }
-            ]
-        },
-        'eventsolution': {
-            name: 'ТОО "Event Solution"',
-            preview: 'Нам нужно звуковое оборудование на 500 человек.',
-            messages: [
-                { type: 'received', text: 'Добрый день. Это агентство Event Solution.' },
-                { type: 'sent', text: 'Здравствуйте! Слушаем вас.' },
-                { type: 'received', text: 'Нам нужно звуковое оборудование на 500 человек. Конференция в отеле Rixos.' }
-            ]
-        }
-    };
+    let chats = [];
+    let activeChat = null; // {channel, chat_id}
+    let currentChannel = '';
+    let pollTimer = null;
 
-    let activeChatId = null;
+    function escapeHtml(text) {
+        if (!text) return '';
+        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                   .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    const channelNames = { whatsapp: 'WhatsApp', telegram: 'Telegram', instagram: 'Instagram' };
+    const channelShort = { whatsapp: 'WA', telegram: 'TG', instagram: 'IG' };
+
+    function setChannel(el) {
+        document.querySelectorAll('.channel-tab').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        currentChannel = el.getAttribute('data-channel');
+        loadChats();
+    }
+
+    async function loadChats() {
+        try {
+            const url = currentChannel ? `/api/inbox/chats?channel=${currentChannel}` : '/api/inbox/chats';
+            const res = await fetch(url);
+            chats = await res.json();
+            renderSidebar();
+        } catch (e) { console.error(e); }
+    }
 
     function renderSidebar() {
         const list = document.getElementById('chat-list');
         list.innerHTML = '';
-        for (const [id, chat] of Object.entries(chatsData)) {
+        if (chats.length === 0) {
+            list.innerHTML = '<div class="muted" style="padding:16px;font-size:12.5px">Диалогов пока нет.</div>';
+            return;
+        }
+        chats.forEach(chat => {
+            const isActive = activeChat && activeChat.channel === chat.channel && activeChat.chat_id === chat.chat_id;
             const div = document.createElement('div');
-            div.className = `chat-item ${id === activeChatId ? 'active' : ''}`;
-            div.onclick = () => selectChat(id);
+            div.className = `chat-item ${isActive ? 'active' : ''}`;
+            div.onclick = () => selectChat(chat);
             div.innerHTML = `
-                <div class="chat-item-name">${chat.name}</div>
-                <div class="chat-item-preview">${chat.preview}</div>
+                <div class="channel-dot ${chat.channel}">${channelShort[chat.channel] || '?'}</div>
+                <div style="min-width:0">
+                    <div class="chat-item-name">${escapeHtml(chat.name || chat.chat_id)}</div>
+                    <div class="chat-item-preview">${escapeHtml(chat.last_message)}</div>
+                </div>
             `;
             list.appendChild(div);
-        }
-    }
-
-    function selectChat(id) {
-        activeChatId = id;
-        renderSidebar();
-        
-        const chat = chatsData[id];
-        document.getElementById('chat-title').innerText = chat.name;
-        document.getElementById('chat-input-area').style.display = 'flex';
-        
-        const container = document.getElementById('messages-container');
-        container.innerHTML = '';
-        chat.messages.forEach(msg => {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = `message ${msg.type}`;
-            msgDiv.textContent = msg.text;
-            container.appendChild(msgDiv);
         });
-        container.scrollTop = container.scrollHeight;
     }
 
-    function sendMessage() {
-        if (!activeChatId) return;
+    function backToChatList() {
+        document.querySelector('.chat-container').classList.remove('chat-open');
+    }
+
+    async function selectChat(chat) {
+        activeChat = chat;
+        renderSidebar();
+        document.querySelector('.chat-container').classList.add('chat-open');
+        document.getElementById('chat-title').innerText = chat.name || chat.chat_id;
+        document.getElementById('chat-channel-label').innerText = channelNames[chat.channel] || chat.channel;
+        document.getElementById('chat-input-area').style.display = 'flex';
+        // Ссылка на сделку CRM, привязанную к этому чату
+        const dealLink = document.getElementById('chat-deal-link');
+        if (chat.deal_id) {
+            dealLink.style.display = 'inline-flex';
+            dealLink.title = chat.deal_title || '';
+            dealLink.textContent = `Сделка №${chat.deal_id} →`;
+        } else {
+            dealLink.style.display = 'none';
+        }
+        await loadMessages();
+    }
+
+    async function loadMessages() {
+        if (!activeChat) return;
+        try {
+            const res = await fetch(`/api/inbox/messages?channel=${activeChat.channel}&chat_id=${encodeURIComponent(activeChat.chat_id)}`);
+            const messages = await res.json();
+            const container = document.getElementById('messages-container');
+            container.innerHTML = '';
+            messages.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `message ${msg.direction === 'in' ? 'received' : 'sent'}`;
+                const who = msg.direction === 'in' ? '' : (msg.is_bot ? '🤖 AI Бот · ' : (msg.sender_name ? msg.sender_name + ' · ' : ''));
+                div.innerHTML = `${escapeHtml(msg.text)}<span class="msg-meta">${who}${msg.created_at.slice(11, 16)}</span>`;
+                container.appendChild(div);
+            });
+            container.scrollTop = container.scrollHeight;
+        } catch (e) { console.error(e); }
+    }
+
+    async function sendMessage() {
+        if (!activeChat) return;
         const input = document.getElementById('chat-input');
         const text = input.value.trim();
-        if (text) {
-            chatsData[activeChatId].messages.push({ type: 'sent', text: text });
-            chatsData[activeChatId].preview = text;
-            
-            const container = document.getElementById('messages-container');
-            const msgDiv = document.createElement('div');
-            msgDiv.className = 'message sent';
-            msgDiv.textContent = text;
-            container.appendChild(msgDiv);
-            
-            input.value = '';
-            container.scrollTop = container.scrollHeight;
-            renderSidebar();
-        }
-    }
-    
-    function handleKeyPress(e) {
-        if (e.key === 'Enter') {
-            sendMessage();
-        }
+        if (!text) return;
+        input.value = '';
+        try {
+            const res = await fetch('/api/inbox/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channel: activeChat.channel, chat_id: activeChat.chat_id, text })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                alert(data.error || 'Не удалось отправить сообщение');
+            } else if (!data.delivered) {
+                alert('Сообщение сохранено, но канал недоступен (проверьте подключение в Настройках).');
+            }
+            await loadMessages();
+            await loadChats();
+        } catch (e) { console.error(e); }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const requestedChat = urlParams.get('chat');
-        if (requestedChat && chatsData[requestedChat]) {
-            selectChat(requestedChat);
-        } else {
-            selectChat('aigerim'); // default
-        }
+    function handleKeyPress(e) {
+        if (e.key === 'Enter') sendMessage();
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadChats();
+        // Автообновление раз в 10 секунд
+        pollTimer = setInterval(async () => {
+            await loadChats();
+            if (activeChat) await loadMessages();
+        }, 10000);
     });
 </script>
 {% endblock %}

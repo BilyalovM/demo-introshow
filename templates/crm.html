@@ -392,6 +392,48 @@
         font-size: 12.5px;
         padding: 12px 0;
     }
+
+    /* Мобильная адаптация CRM */
+    @media (max-width: 1024px) {
+        .deal-slider {
+            width: 100vw !important;
+            right: -100vw !important;
+        }
+        .deal-slider.active {
+            right: 0 !important;
+        }
+        .slider-deal-title-input {
+            width: 100%;
+        }
+    }
+    @media (max-width: 768px) {
+        .slider-body {
+            flex-direction: column !important;
+        }
+        .slider-left, .slider-right {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        .crm-main-layout {
+            flex-direction: column;
+        }
+        #crm-sidebar-area {
+            width: 100% !important;
+            margin-left: 0 !important;
+            margin-top: 16px;
+        }
+        .kanban-board {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .kanban-column {
+            min-width: 260px;
+        }
+        .slider-actions-group {
+            gap: 8px;
+            margin-right: 8px;
+        }
+    }
 </style>
 {% endblock %}
 
@@ -497,9 +539,16 @@
                             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
                         </svg>
                     </a>
-                    <a id="deal-chat-btn" class="slider-action-icon" title="Написать в WhatsApp/Telegram" href="/inbox?chat=aigerim">
+                    <a id="deal-chat-btn" class="slider-action-icon" title="Написать в WhatsApp" href="#" target="_blank" style="color:#25D366;">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                        </svg>
+                    </a>
+                    <a id="deal-ig-btn" class="slider-action-icon" title="Написать в Instagram Direct" href="#" target="_blank" style="color:#d946ef; display:none;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="2" width="20" height="20" rx="5"></rect>
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <circle cx="17.5" cy="6.5" r="0.5" fill="currentColor"></circle>
                         </svg>
                     </a>
                     <a id="deal-email-btn" class="slider-action-icon" title="Отправить Email" href="#">
@@ -521,7 +570,11 @@
     <div class="slider-tabs-row">
         <div id="tab-btn-info" class="slider-tab-item active" onclick="switchSliderTab('info')">Общие (Параметры)</div>
         <div id="tab-btn-products" class="slider-tab-item" onclick="switchSliderTab('products')">Товары (Смета)</div>
+        <div id="tab-btn-chat" class="slider-tab-item" onclick="switchSliderTab('chat')" style="display:none;">💬 Чат с клиентом</div>
     </div>
+
+    <!-- Баннер «клиент ранее обращался» -->
+    <div id="prev-deal-banner" style="display:none; margin: 0 24px; padding: 10px 14px; background: var(--warning-soft); border: 1px solid var(--warning); border-radius: 8px; font-size: 13px;"></div>
 
     <div class="slider-body">
         <div class="slider-left">
@@ -586,6 +639,31 @@
                         </div>
                     </div>
 
+                    <!-- Card 3: Дополнительные поля (как в Битрикс24) -->
+                    <div class="slider-info-card">
+                        <div class="slider-info-card-header">
+                            <span>Дополнительные поля</span>
+                            <button type="button" class="btn btn-sm" onclick="openAddFieldForm(event)" style="font-size:11.5px; padding: 3px 10px;">+ Добавить поле</button>
+                        </div>
+                        <div class="slider-info-card-body" id="custom-fields-body">
+                            <div class="muted" style="font-size:12.5px" id="no-custom-fields">Дополнительных полей пока нет. Нажмите «+ Добавить поле», чтобы создать своё поле (как в Битрикс24).</div>
+                        </div>
+                        <div id="add-field-form" style="display:none; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--bg-2);">
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <input type="text" id="new-field-name" placeholder="Название поля (например: Источник лида)" style="flex:2; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                                <select id="new-field-type" style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                                    <option value="string">Текст</option>
+                                    <option value="number">Число</option>
+                                    <option value="date">Дата</option>
+                                    <option value="link">Ссылка</option>
+                                    <option value="boolean">Да/Нет</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-green" onclick="createCustomField()">Создать</button>
+                            </div>
+                            <div class="muted" style="font-size:11.5px; margin-top:6px;">Поле появится во всех сделках.</div>
+                        </div>
+                    </div>
+
                     <button type="submit" class="btn btn-primary" style="width: 100%;">Сохранить изменения</button>
                 </form>
             </div>
@@ -621,6 +699,16 @@
                 </div>
                 <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
             </div>
+
+            <!-- Tab Content: Chat with client (messenger dialog linked to deal) -->
+            <div id="tab-content-chat" class="tab-pane">
+                <div id="deal-chat-header" class="muted" style="font-size:12.5px; margin-bottom:10px;"></div>
+                <div id="deal-chat-messages" style="display:flex; flex-direction:column; gap:8px; max-height: 420px; overflow-y:auto; padding: 4px; background: var(--bg-2); border-radius: 10px; margin-bottom: 12px; min-height: 120px;"></div>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="deal-chat-input" placeholder="Написать клиенту…" style="flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text);" onkeypress="if(event.key==='Enter') sendDealChatMessage()">
+                    <button class="btn btn-primary" onclick="sendDealChatMessage()">Отправить</button>
+                </div>
+            </div>
         </div>
         
         <div class="slider-right">
@@ -651,7 +739,13 @@
                 
                 <!-- Task Pane -->
                 <div id="act-pane-task" class="activity-pane">
-                    <div class="activity-placeholder-text">Поставить задачу менеджеру или исполнителю</div>
+                    <input type="text" id="deal-task-title" placeholder="Что нужно сделать? (например: Позвонить клиенту)" style="width:100%; box-sizing:border-box; font-size:12.5px; margin-bottom:8px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                    <div style="display:flex; gap:8px; margin-bottom:8px;">
+                        <input type="date" id="deal-task-due" style="flex:1; font-size:12.5px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                        <select id="deal-task-assignee" style="flex:1; font-size:12.5px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);"></select>
+                    </div>
+                    <button class="btn btn-sm btn-primary" style="width:100%" onclick="addDealTask()">Поставить задачу</button>
+                    <div id="deal-tasks-list" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;"></div>
                 </div>
             </div>
 
@@ -695,7 +789,7 @@
 <script>
     // Global error logger for diagnostics
     window.onerror = function(message, source, lineno, colno, error) {
-        alert("JS Error: " + message + " at line " + lineno + ":" + colno);
+        console.error("JS Error:", message, "at", lineno + ":" + colno);
         return false;
     };
 
@@ -703,6 +797,7 @@
     let crmStages = [];
     let crmCompanies = [];
     let crmEquipment = [];
+    let crmCustomFields = []; // определения дополнительных полей (как в Битрикс24)
     let currentView = 'kanban'; // 'kanban' or 'list'
     let currentDealProducts = []; // items in active slider deal
 
@@ -720,6 +815,10 @@
             // Load equipment catalog
             const equipRes = await fetch('/api/equipment');
             crmEquipment = await equipRes.json();
+
+            // Load custom field definitions
+            const cfRes = await fetch('/api/custom-fields');
+            crmCustomFields = await cfRes.json();
 
             // Load deals
             await loadDeals();
@@ -834,8 +933,9 @@
                 card.addEventListener('dragstart', dragStart);
                 card.addEventListener('click', () => openDealSlider(deal.id));
 
+                const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣' }[deal.chat_channel] || '';
                 card.innerHTML = `
-                    <h4 class="deal-title-link" style="margin:0 0 6px 0; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--primary);">${deal.title}</h4>
+                    <h4 class="deal-title-link" style="margin:0 0 6px 0; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--primary);">${chIcon ? chIcon + ' ' : ''}${deal.title}</h4>
                     <p style="font-size:12px; margin:0 0 10px 0; color:var(--text-2);">${deal.company_name}</p>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
                         <span class="sum" style="font-size:13.5px; font-weight:800; color:var(--primary); margin:0;">${deal.final_sum.toLocaleString()} ₸</span>
@@ -1076,8 +1176,43 @@
             // Set quick actions
             const callBtn = document.getElementById('deal-call-btn');
             const chatBtn = document.getElementById('deal-chat-btn');
+            const igBtn = document.getElementById('deal-ig-btn');
             if (callBtn) callBtn.href = data.company_phone ? 'tel:' + data.company_phone : '#';
-            if (chatBtn) chatBtn.href = data.company_phone ? 'https://wa.me/' + data.company_phone.replace(/[^0-9]/g, '') : '#';
+            if (chatBtn) {
+                let waPhone = (data.company_phone || '').replace(/[^0-9]/g, '');
+                if (waPhone.startsWith('8')) waPhone = '7' + waPhone.slice(1);
+                chatBtn.href = waPhone ? 'https://wa.me/' + waPhone : '#';
+                chatBtn.style.display = waPhone ? 'flex' : 'none';
+            }
+            if (igBtn) {
+                const igUser = (data.company_instagram || '').replace(/^@/, '').trim();
+                igBtn.href = igUser ? 'https://ig.me/m/' + igUser : '#';
+                igBtn.style.display = igUser ? 'flex' : 'none';
+            }
+
+            // Render custom fields (Bitrix24-style)
+            renderCustomFields(data.custom_values || {});
+
+            // Чат с клиентом (если сделка привязана к мессенджеру)
+            const chatTabBtn = document.getElementById('tab-btn-chat');
+            if (data.chat_channel && data.chat_id) {
+                activeDealChat = { channel: data.chat_channel, chat_id: data.chat_id };
+                chatTabBtn.style.display = 'block';
+                document.getElementById('deal-chat-header').textContent =
+                    'Канал: ' + (CHANNEL_ICONS[data.chat_channel] || data.chat_channel) + ' • Диалог привязан к этой сделке';
+            } else {
+                activeDealChat = null;
+                chatTabBtn.style.display = 'none';
+            }
+
+            // Баннер «клиент ранее обращался»
+            const banner = document.getElementById('prev-deal-banner');
+            if (data.prev_deal) {
+                banner.style.display = 'block';
+                banner.innerHTML = `⚠ Клиент ранее обращался к нам: <a href="#" style="color:var(--primary); font-weight:700; text-decoration:underline;" onclick="event.preventDefault(); openDealSlider(${data.prev_deal.id})">сделка №${data.prev_deal.id} «${escapeHtml(data.prev_deal.title)}»</a>`;
+            } else {
+                banner.style.display = 'none';
+            }
 
             // Set current products
             currentDealProducts = data.items || [];
@@ -1112,11 +1247,59 @@
     }
 
     function switchSliderTab(tabName) {
-        document.getElementById('tab-btn-info').classList.toggle('active', tabName === 'info');
-        document.getElementById('tab-btn-products').classList.toggle('active', tabName === 'products');
-        
-        document.getElementById('tab-content-info').classList.toggle('active', tabName === 'info');
-        document.getElementById('tab-content-products').classList.toggle('active', tabName === 'products');
+        ['info', 'products', 'chat'].forEach(t => {
+            const btn = document.getElementById('tab-btn-' + t);
+            const pane = document.getElementById('tab-content-' + t);
+            if (btn) btn.classList.toggle('active', tabName === t);
+            if (pane) pane.classList.toggle('active', tabName === t);
+        });
+        if (tabName === 'chat') loadDealChat();
+    }
+
+    // ---- Чат с клиентом внутри сделки (диалог мессенджера) ----
+    let activeDealChat = null; // {channel, chat_id}
+
+    const CHANNEL_ICONS = { whatsapp: '🟢 WhatsApp', telegram: '🔵 Telegram', instagram: '🟣 Instagram' };
+
+    async function loadDealChat() {
+        if (!activeDealChat) return;
+        const box = document.getElementById('deal-chat-messages');
+        try {
+            const res = await fetch(`/api/inbox/messages?channel=${activeDealChat.channel}&chat_id=${encodeURIComponent(activeDealChat.chat_id)}`);
+            const messages = await res.json();
+            box.innerHTML = '';
+            if (!messages.length) {
+                box.innerHTML = '<div class="muted" style="font-size:12.5px; padding:12px; text-align:center;">Сообщений пока нет.</div>';
+                return;
+            }
+            messages.forEach(m => {
+                const isIn = m.direction === 'in';
+                const bubble = document.createElement('div');
+                bubble.style.cssText = `max-width:75%; padding:8px 12px; border-radius:12px; font-size:13px; line-height:1.45; white-space:pre-wrap; word-break:break-word;`
+                    + (isIn
+                        ? 'align-self:flex-start; background:var(--surface); border:1px solid var(--border);'
+                        : 'align-self:flex-end; background:var(--primary-soft); border:1px solid transparent;');
+                bubble.innerHTML = `<div style="font-size:11px; color:var(--muted); margin-bottom:2px;">${escapeHtml(isIn ? (m.sender_name || 'Клиент') : (m.is_bot ? '🤖 AI Бот' : (m.sender_name || 'Менеджер')))} • ${escapeHtml(m.created_at.slice(11, 16))}</div>${escapeHtml(m.text)}`;
+                box.appendChild(bubble);
+            });
+            box.scrollTop = box.scrollHeight;
+        } catch (e) { console.error(e); }
+    }
+
+    async function sendDealChatMessage() {
+        if (!activeDealChat) return;
+        const input = document.getElementById('deal-chat-input');
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        try {
+            await fetch('/api/inbox/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channel: activeDealChat.channel, chat_id: activeDealChat.chat_id, text })
+            });
+            await loadDealChat();
+        } catch (e) { console.error(e); }
     }
 
     function switchActivityTab(tabName) {
@@ -1129,6 +1312,7 @@
         document.getElementById('act-pane-comment').classList.toggle('active', tabName === 'comment');
         document.getElementById('act-pane-message').classList.toggle('active', tabName === 'message');
         document.getElementById('act-pane-task').classList.toggle('active', tabName === 'task');
+        if (tabName === 'task') loadDealTasks();
     }
 
     function drawStagesProgressBar(currentStageId) {
@@ -1237,6 +1421,21 @@
                 body: JSON.stringify({ stage: stageVal })
             });
 
+            // 3. Save custom field values
+            const fieldValues = [];
+            document.querySelectorAll('.cf-input').forEach(input => {
+                const fieldId = parseInt(input.getAttribute('data-field-id'));
+                let value = input.type === 'checkbox' ? (input.checked ? 'Да' : 'Нет') : input.value;
+                fieldValues.push({ field_id: fieldId, value: value });
+            });
+            if (fieldValues.length > 0) {
+                await fetch(`/api/deals/${activeDealId}/fields`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fields: fieldValues })
+                });
+            }
+
             // Reload board and reopen to refresh
             await loadDeals();
             renderCrm();
@@ -1246,6 +1445,99 @@
             console.error(err);
             alert('Не удалось сохранить изменения');
         }
+    }
+
+    // ---- Дополнительные поля (Bitrix24-style custom fields) ----
+    function renderCustomFields(customValues) {
+        const body = document.getElementById('custom-fields-body');
+        body.innerHTML = '';
+
+        if (crmCustomFields.length === 0) {
+            body.innerHTML = `<div class="muted" style="font-size:12.5px">Дополнительных полей пока нет. Нажмите «+ Добавить поле», чтобы создать своё поле (как в Битрикс24).</div>`;
+            return;
+        }
+
+        crmCustomFields.forEach(field => {
+            const value = customValues[field.id] !== undefined ? customValues[field.id] : (customValues[String(field.id)] || '');
+            const label = document.createElement('label');
+            label.className = 'field';
+
+            let inputHtml = '';
+            if (field.field_type === 'number') {
+                inputHtml = `<input type="number" class="cf-input" data-field-id="${field.id}" value="${escapeHtml(value)}">`;
+            } else if (field.field_type === 'date') {
+                inputHtml = `<input type="date" class="cf-input" data-field-id="${field.id}" value="${escapeHtml(value)}">`;
+            } else if (field.field_type === 'boolean') {
+                const checked = value === 'Да' ? 'checked' : '';
+                inputHtml = `<input type="checkbox" class="cf-input" data-field-id="${field.id}" ${checked} style="width:18px; height:18px; accent-color:var(--primary);">`;
+            } else if (field.field_type === 'link') {
+                inputHtml = `<input type="url" class="cf-input" data-field-id="${field.id}" value="${escapeHtml(value)}" placeholder="https://...">`;
+            } else {
+                inputHtml = `<input type="text" class="cf-input" data-field-id="${field.id}" value="${escapeHtml(value)}">`;
+            }
+
+            label.innerHTML = `
+                <span style="display:flex; justify-content:space-between; align-items:center;">
+                    ${escapeHtml(field.name)}
+                    <button type="button" title="Удалить поле из всех сделок" onclick="deleteCustomFieldDef(${field.id})" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:12px;">✕</button>
+                </span>
+                ${inputHtml}
+            `;
+            body.appendChild(label);
+        });
+    }
+
+    function openAddFieldForm(e) {
+        if (e) e.preventDefault();
+        const form = document.getElementById('add-field-form');
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        if (form.style.display === 'block') document.getElementById('new-field-name').focus();
+    }
+
+    async function createCustomField() {
+        const name = document.getElementById('new-field-name').value.trim();
+        const fieldType = document.getElementById('new-field-type').value;
+        if (!name) { alert('Введите название поля'); return; }
+
+        try {
+            const res = await fetch('/api/custom-fields', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, field_type: fieldType })
+            });
+            if (res.ok) {
+                document.getElementById('new-field-name').value = '';
+                document.getElementById('add-field-form').style.display = 'none';
+                const cfRes = await fetch('/api/custom-fields');
+                crmCustomFields = await cfRes.json();
+                // Перерисовываем с текущими значениями сделки
+                if (activeDealId) {
+                    const dealRes = await fetch(`/api/deals/${activeDealId}`);
+                    const dealData = await dealRes.json();
+                    renderCustomFields(dealData.custom_values || {});
+                }
+            } else {
+                alert('Не удалось создать поле');
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    async function deleteCustomFieldDef(fieldId) {
+        if (!confirm('Удалить это поле из всех сделок?')) return;
+        try {
+            const res = await fetch(`/api/custom-fields/${fieldId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                alert(data.error || 'Не удалось удалить поле');
+                return;
+            }
+            crmCustomFields = crmCustomFields.filter(f => f.id !== fieldId);
+            if (activeDealId) {
+                const dealRes = await fetch(`/api/deals/${activeDealId}`);
+                const dealData = await dealRes.json();
+                renderCustomFields(dealData.custom_values || {});
+            }
+        } catch (e) { console.error(e); }
     }
 
     // Draw Products in Edit Table
@@ -1267,7 +1559,7 @@
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td style="font-weight:600;">${prod.name}</td>
-                <td>${price.toLocaleString()} ₸</td>
+                <td><input type="number" min="0" value="${price}" style="width:90px;" onchange="updateProductPrice(${index}, this.value)"> ₸</td>
                 <td><input type="number" min="1" value="${qty}" onchange="updateProductField(${index}, 'quantity', this.value)"></td>
                 <td><input type="number" min="1" value="${days}" onchange="updateProductField(${index}, 'days', this.value)"></td>
                 <td style="font-weight:700;">${total.toLocaleString()} ₸</td>
@@ -1280,6 +1572,31 @@
     // Local changes in products tab
     function updateProductField(index, field, value) {
         currentDealProducts[index][field] = parseInt(value) || 1;
+        drawProductRows();
+        recalculateSliderTotal();
+    }
+
+    // Изменение цены в смете сделки + предложение обновить цену на складе
+    async function updateProductPrice(index, value) {
+        const prod = currentDealProducts[index];
+        const newPrice = parseFloat(value);
+        if (isNaN(newPrice) || newPrice < 0) { drawProductRows(); return; }
+        prod.price = newPrice;
+
+        const stockPrice = prod.stock_price !== undefined ? prod.stock_price : null;
+        if (stockPrice !== null && newPrice !== stockPrice) {
+            const ok = confirm(`Поменять цену на товар «${prod.name}» и на складе?\n\nБыло: ${stockPrice.toLocaleString()} ₸ → станет: ${newPrice.toLocaleString()} ₸\n\nOK — обновить на складе, Отмена — цена изменится только в этой сделке.`);
+            if (ok) {
+                try {
+                    const res = await fetch(`/api/equipment/${prod.equipment_id}/price`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ price: newPrice })
+                    });
+                    if (res.ok) prod.stock_price = newPrice;
+                } catch (e) { console.error(e); }
+            }
+        }
         drawProductRows();
         recalculateSliderTotal();
     }
@@ -1306,8 +1623,10 @@
                 equipment_id: equip.id,
                 name: equip.name,
                 price: equip.price,
+                stock_price: equip.price,
                 quantity: 1,
-                days: 1
+                days: 1,
+                category_type: ["Логистика", "Персонал", "Расходники"].includes(equip.category) ? 'fixed' : 'equipment'
             });
         }
 
@@ -1350,7 +1669,8 @@
         const itemsPayload = currentDealProducts.map(p => ({
             equipment_id: p.equipment_id,
             quantity: p.quantity,
-            days: p.days
+            days: p.days,
+            price: p.price
         }));
 
         try {
@@ -1376,6 +1696,59 @@
         } catch (err) {
             console.error(err);
         }
+    }
+
+    // ---- Задачи, привязанные к сделке ----
+    let crmUsers = [];
+
+    async function loadDealTasks() {
+        if (!activeDealId) return;
+        try {
+            if (!crmUsers.length) {
+                const uRes = await fetch('/api/users/names');
+                if (uRes.ok) crmUsers = await uRes.json();
+                const sel = document.getElementById('deal-task-assignee');
+                sel.innerHTML = '<option value="">Ответственный: я</option>' +
+                    crmUsers.map(u => `<option value="${escapeHtml(u.full_name)}">${escapeHtml(u.full_name)}</option>`).join('');
+            }
+            const res = await fetch(`/api/tasks?deal_id=${activeDealId}`);
+            const tasks = await res.json();
+            const list = document.getElementById('deal-tasks-list');
+            list.innerHTML = tasks.length ? '' : '';
+            tasks.forEach(t => {
+                const div = document.createElement('div');
+                div.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 8px; background:var(--bg-2); border-radius:8px;';
+                div.innerHTML = `
+                    <input type="checkbox" ${t.status === 'done' ? 'checked' : ''} style="accent-color:var(--success);"
+                        onchange="toggleDealTask(${t.id}, this.checked)">
+                    <span style="flex:1; ${t.status === 'done' ? 'text-decoration:line-through; color:var(--muted);' : ''}">${escapeHtml(t.title)}</span>
+                    ${t.due_date ? `<span style="color:${t.overdue ? 'var(--danger)' : 'var(--muted)'}; font-size:11px;">${escapeHtml(t.due_date)}</span>` : ''}`;
+                list.appendChild(div);
+            });
+        } catch (e) { console.error(e); }
+    }
+
+    async function addDealTask() {
+        const title = document.getElementById('deal-task-title').value.trim();
+        if (!title || !activeDealId) return;
+        const due = document.getElementById('deal-task-due').value || null;
+        const assignee = document.getElementById('deal-task-assignee').value || null;
+        await fetch('/api/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, due_date: due, assignee, deal_id: activeDealId })
+        });
+        document.getElementById('deal-task-title').value = '';
+        loadDealTasks();
+    }
+
+    async function toggleDealTask(taskId, done) {
+        await fetch(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: done ? 'done' : 'open' })
+        });
+        loadDealTasks();
     }
 
     // Add text note to history
@@ -1406,8 +1779,8 @@
     }
 
     function escapeHtml(text) {
-        if (!text) return '';
-        return text
+        if (text === null || text === undefined || text === '') return '';
+        return String(text)
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")

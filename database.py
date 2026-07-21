@@ -37,7 +37,11 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
-    role = Column(String, default="user") # admin or user
+    role = Column(String, default="user") # admin / manager / user
+    full_name = Column(String, nullable=True)
+    # Список разделов, доступных пользователю (JSON-массив ключей).
+    # null или пустой список = доступ ко всем разделам (для admin всегда всё).
+    permissions = Column(JSON, nullable=True)
 
 class Folder(Base):
     __tablename__ = "folders"
@@ -87,8 +91,26 @@ class Company(Base):
     kbe = Column(String)
     bik = Column(String)
     telegram_chat_id = Column(String, nullable=True)
+    instagram = Column(String, nullable=True)  # username в Instagram для перехода в Direct
 
     deals = relationship("Deal", back_populates="company")
+    contacts = relationship("Contact", back_populates="company")
+
+
+class Contact(Base):
+    """Контактные лица, привязанные к компаниям (как в Битрикс24)."""
+    __tablename__ = "contacts"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    position = Column(String, nullable=True)     # должность
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    comment = Column(String, nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    company = relationship("Company", back_populates="contacts")
+
 
 class Pipeline(Base):
     __tablename__ = "pipelines"
@@ -123,8 +145,15 @@ class Deal(Base):
     discount_percentage = Column(Float, default=0.0)
     final_sum = Column(Float, default=0.0)
     comment = Column(String)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
+    # Привязка к чату мессенджера (для автосозданных сделок из входящих сообщений)
+    chat_channel = Column(String, nullable=True)   # whatsapp / telegram / instagram
+    chat_id = Column(String, nullable=True)
+    prev_deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)  # прошлое обращение клиента
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     company = relationship("Company", back_populates="deals")
+    contact = relationship("Contact", foreign_keys=[contact_id])
     pipeline = relationship("Pipeline", back_populates="deals")
     stage_obj = relationship("Stage", back_populates="deals")
     items = relationship("DealItem", back_populates="deal")
@@ -137,6 +166,7 @@ class DealItem(Base):
     equipment_id = Column(Integer, ForeignKey("equipment.id"))
     quantity = Column(Integer, default=1)
     days = Column(Integer, default=1)
+    price = Column(Float, nullable=True)  # цена в этой смете; null = текущая цена склада
 
     deal = relationship("Deal", back_populates="items")
     equipment = relationship("Equipment")
@@ -185,6 +215,75 @@ class PushSubscription(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     deal = relationship("Deal", backref="push_subscriptions")
+
+class BotSettings(Base):
+    """Настройки AI чат-бота (одна строка). График работы, персона, каналы."""
+    __tablename__ = "bot_settings"
+    id = Column(Integer, primary_key=True, index=True)
+    enabled = Column(Boolean, default=True)
+    # {"mon": {"on": true, "start": "10:00", "end": "22:00"}, ...}
+    schedule = Column(JSON, nullable=True)
+    # {"whatsapp": true, "telegram": true, "instagram": true}
+    channels = Column(JSON, nullable=True)
+    persona = Column(String, nullable=True)          # описание "личности" бота
+    off_hours_message = Column(String, nullable=True) # автоответ вне графика
+    timezone = Column(String, default="Asia/Almaty")
+
+
+class KnowledgeItem(Base):
+    """База знаний чат-бота — по ней он отвечает клиентам."""
+    __tablename__ = "knowledge_items"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    content = Column(String)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ChatMessage(Base):
+    """Единая лента сообщений всех мессенджеров (WhatsApp / Telegram / Instagram)."""
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    channel = Column(String, index=True)   # whatsapp / telegram / instagram
+    chat_id = Column(String, index=True)   # идентификатор чата в канале
+    sender_name = Column(String, nullable=True)
+    direction = Column(String)             # in / out
+    text = Column(String)
+    is_bot = Column(Boolean, default=False)  # ответ отправлен ботом
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class Task(Base):
+    """Задачи сотрудников — логика как в Битрикс24."""
+    __tablename__ = "tasks"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    description = Column(String, nullable=True)
+    assignee = Column(String, nullable=True)    # ответственный (username)
+    created_by = Column(String, nullable=True)  # постановщик
+    due_date = Column(String, nullable=True)    # YYYY-MM-DD или YYYY-MM-DDTHH:MM
+    priority = Column(String, default="normal") # low / normal / high
+    status = Column(String, default="open")     # open / in_progress / done / deferred
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="tasks")
+
+
+class Invoice(Base):
+    """Счета для обмена с 1С."""
+    __tablename__ = "invoices"
+    id = Column(Integer, primary_key=True, index=True)
+    number = Column(String, unique=True, index=True)
+    date = Column(String)
+    company_bin = Column(String, index=True)
+    company_name = Column(String, nullable=True)
+    amount = Column(Float, default=0.0)
+    status = Column(String, default="new")  # new / paid / cancelled
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)
+    external_id = Column(String, nullable=True)  # идентификатор документа в 1С
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)

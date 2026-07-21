@@ -1,7 +1,8 @@
 import os
 from docxtpl import DocxTemplate
 from docx import Document
-from docx.shared import Inches
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from num2words import num2words
 from typing import Dict, Any
 
@@ -65,4 +66,75 @@ def generate_contract(context: Dict[str, Any], template_path: str, output_path: 
                         
         append_doc.save(output_path)
     
+    return output_path
+
+
+def _fmt_money(v: float) -> str:
+    return f"{v:,.0f}".replace(",", " ") + " ₸"
+
+
+def generate_estimate_docx(context: Dict[str, Any], output_path: str) -> str:
+    """Генерирует смету (.docx) с таблицей позиций и итогами."""
+    doc = Document()
+
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title.add_run(f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}")
+    run.bold = True
+    run.font.size = Pt(16)
+
+    meta_lines = []
+    if context.get("company_name"):
+        meta_lines.append(f"Заказчик: {context['company_name']}")
+    if context.get("event_name"):
+        meta_lines.append(f"Мероприятие: {context['event_name']}")
+    if context.get("event_address"):
+        meta_lines.append(f"Адрес: {context['event_address']}")
+    if context.get("rent_period"):
+        meta_lines.append(f"Период аренды: {context['rent_period']}")
+    for line in meta_lines:
+        doc.add_paragraph(line)
+
+    items = context.get("items", [])
+    table = doc.add_table(rows=1, cols=6)
+    table.style = "Table Grid"
+    headers = ["№", "Наименование", "Цена", "Кол-во", "Дней", "Сумма"]
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = h
+        for p in cell.paragraphs:
+            for r in p.runs:
+                r.bold = True
+
+    for idx, item in enumerate(items, 1):
+        row = table.add_row().cells
+        row[0].text = str(idx)
+        row[1].text = str(item.get("name", ""))
+        row[2].text = _fmt_money(item.get("price", 0))
+        row[3].text = str(item.get("quantity", 1))
+        row[4].text = str(item.get("days", 1))
+        row[5].text = _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0)))
+
+    doc.add_paragraph("")
+    totals = [
+        ("Оборудование (со скидкой)", context.get("equipment_total", 0)),
+        ("Логистика и персонал", context.get("fixed_total", 0)),
+    ]
+    if context.get("discount_percentage"):
+        totals.insert(0, (f"Скидка на оборудование: {context['discount_percentage']:.0f}%", None))
+    for label, value in totals:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p.add_run(label + (f": {_fmt_money(value)}" if value is not None else ""))
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = p.add_run(f"ИТОГО: {_fmt_money(context.get('grand_total', 0))}")
+    run.bold = True
+    run.font.size = Pt(14)
+
+    p = doc.add_paragraph(get_rubles_text(context.get("grand_total", 0)))
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    doc.save(output_path)
     return output_path

@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 import requests
-import google.generativeai as genai
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,16 +29,16 @@ CONTRACT_TEMPLATE_PATH = os.path.join(TEMPLATES_DIR, "contract_template.docx")
 os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
-if os.getenv("GEMINI_API_KEY"):
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
 from document_generator import generate_contract, get_rubles_text
 import notifications
+import auth
+import chatbot
 
 # Initialize the database
 init_db()
@@ -97,12 +97,47 @@ with Session(engine) as session:
     except Exception:
         session.rollback()
 
+    # 4b. New columns: instagram for companies, permissions/full_name for users
+    for ddl in [
+        "ALTER TABLE companies ADD COLUMN instagram VARCHAR",
+        "ALTER TABLE users ADD COLUMN full_name VARCHAR",
+        "ALTER TABLE users ADD COLUMN permissions JSON",
+        # Цена позиции в смете (может отличаться от цены склада)
+        "ALTER TABLE deal_items ADD COLUMN price FLOAT",
+        # Привязка сделки к контакту, чату мессенджера и прошлому обращению
+        "ALTER TABLE deals ADD COLUMN contact_id INTEGER",
+        "ALTER TABLE deals ADD COLUMN chat_channel VARCHAR",
+        "ALTER TABLE deals ADD COLUMN chat_id VARCHAR",
+        "ALTER TABLE deals ADD COLUMN prev_deal_id INTEGER",
+        "ALTER TABLE deals ADD COLUMN created_at DATETIME",
+        # Задачи в стиле Битрикс24
+        "ALTER TABLE tasks ADD COLUMN description VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN created_by VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN priority VARCHAR DEFAULT 'normal'",
+        "ALTER TABLE tasks ADD COLUMN completed_at DATETIME",
+    ]:
+        try:
+            session.execute(text(ddl))
+            session.commit()
+        except Exception:
+            session.rollback()
+
+    # 4c. Стадии «в работе» для проверки брони оборудования:
+    # если ни одна стадия не помечена, помечаем стандартные.
+    try:
+        active_cnt = session.query(Stage).filter(Stage.is_active_rent == True).count()  # noqa: E712
+        if active_cnt == 0:
+            for st in session.query(Stage).all():
+                if any(k in (st.name or "") for k in ("Предоплата", "Монтаж", "Мероприятие")):
+                    st.is_active_rent = True
+            session.commit()
+    except Exception:
+        session.rollback()
+
     # 5. Create default admin user
     try:
         if session.query(User).count() == 0:
-            import hashlib
-            default_password = hashlib.sha256("admin".encode()).hexdigest()
-            admin_user = User(username="admin", hashed_password=default_password, role="admin")
+            admin_user = User(username="admin", hashed_password=auth.get_password_hash("admin"), role="admin", full_name="Администратор")
             session.add(admin_user)
             session.commit()
     except Exception:
@@ -188,6 +223,7 @@ class CompanyCreate(BaseModel):
     bank_name: str = ""
     kbe: str = ""
     bik: str = ""
+    instagram: str = ""
 
 class CustomFieldCreate(BaseModel):
     name: str
@@ -211,17 +247,65 @@ class StageCreate(BaseModel):
     order_index: int
     is_active_rent: Optional[bool] = False
 
-import hashlib
+verify_password = auth.verify_password
+get_password_hash = auth.get_password_hash
 
-def verify_password(plain_password, hashed_password):
-    return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
-def get_password_hash(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def get_user_from_request(request: Request, db: Session):
+    """Достаёт пользователя из подписанного cookie session_token."""
+    token = request.cookies.get("session_token")
+    username = auth.get_username_from_token(token)
+    if not username:
+        return None
+    return db.query(User).filter(User.username == username).first()
+
 
 def get_current_user(request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).first()
-    return user
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        # Объект из middleware привязан к другой сессии — перечитываем в текущей
+        return db.query(User).filter(User.id == user.id).first()
+    return get_user_from_request(request, db)
+
+
+# Пути, доступные без авторизации
+PUBLIC_PATH_PREFIXES = (
+    "/static", "/uploads", "/login", "/api/login",
+    "/api/tg/webhook", "/api/wa/webhook", "/api/ig/webhook",
+    "/tracking/", "/api/push/", "/api/1c/", "/favicon", "/docs", "/openapi.json",
+)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if any(path == p.rstrip("/") or path.startswith(p) for p in PUBLIC_PATH_PREFIXES):
+        return await call_next(request)
+
+    db = SessionLocal()
+    try:
+        user = get_user_from_request(request, db)
+        if not user:
+            if path.startswith("/api/"):
+                return JSONResponse(status_code=401, content={"error": "Не авторизован"})
+            return RedirectResponse("/login")
+
+        # Проверка доступа к разделу по правам сотрудника
+        section = auth.section_for_path(path)
+        if section and not auth.user_can_access(user, section):
+            if path.startswith("/api/"):
+                return JSONResponse(status_code=403, content={"error": "Нет доступа к разделу"})
+            return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>Доступ к разделу запрещён. Обратитесь к администратору.</h3>", status_code=403)
+
+        request.state.user = user
+        request.state.user_sections = [
+            key for key in auth.SECTIONS if auth.user_can_access(user, key)
+        ]
+    finally:
+        db.close()
+
+    return await call_next(request)
+
 
 # -----------------
 # FRONTEND ROUTES
@@ -232,24 +316,91 @@ async def read_login(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/api/login")
-async def login(response: Response, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.hashed_password):
-        return JSONResponse(status_code=400, content={"error": "Invalid username or password"})
-    
-    # Very simple session: just use username as token for now (since we don't have JWT configured)
-    response.set_cookie(key="session_token", value=user.username, httponly=True)
-    return {"status": "success"}
+        return JSONResponse(status_code=400, content={"error": "Неверный логин или пароль"})
+
+    # Прозрачная миграция старых SHA-256 хэшей на PBKDF2
+    if auth.is_legacy_hash(user.hashed_password):
+        user.hashed_password = get_password_hash(password)
+        db.commit()
+
+    response = JSONResponse(content={"status": "success"})
+    response.set_cookie(
+        key="session_token",
+        value=auth.create_session_token(user.username),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return response
 
 @app.post("/api/logout")
-async def logout(response: Response):
+async def logout():
+    response = JSONResponse(content={"status": "success"})
     response.delete_cookie("session_token")
-    return {"status": "success"}
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
-async def read_dashboard(request: Request, user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("index.html", {"request": request, "active_page": "dashboard"})
+async def read_dashboard(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deals = db.query(Deal).all()
+    stages = {s.id: s for s in db.query(Stage).all()}
+
+    def stage_name(d):
+        st = stages.get(d.stage)
+        return st.name if st else ""
+
+    won_deals = [d for d in deals if "Успешно" in stage_name(d)]
+    lost_deals = [d for d in deals if "проиграна" in stage_name(d).lower()]
+    active_deals = [d for d in deals if d not in won_deals and d not in lost_deals]
+
+    revenue = sum(d.final_sum or 0 for d in won_deals)
+    in_work_sum = sum(d.final_sum or 0 for d in active_deals)
+
+    # Воронка по стадиям (основная воронка)
+    funnel = []
+    pipeline = db.query(Pipeline).first()
+    if pipeline:
+        for st in sorted(pipeline.stages, key=lambda s: s.order_index):
+            st_deals = [d for d in deals if d.stage == st.id]
+            funnel.append({
+                "name": st.name,
+                "count": len(st_deals),
+                "sum": sum(d.final_sum or 0 for d in st_deals),
+            })
+    max_count = max((f["count"] for f in funnel), default=0) or 1
+
+    # Активные диалоги (уникальные чаты за последние 7 дней)
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    active_chats = db.query(ChatMessage.channel, ChatMessage.chat_id)\
+        .filter(ChatMessage.created_at >= week_ago).distinct().count()
+
+    recent_deals = db.query(Deal).order_by(Deal.id.desc()).limit(5).all()
+    recent_messages = db.query(ChatMessage).order_by(ChatMessage.id.desc()).limit(6).all()
+
+    stats = {
+        "revenue": revenue,
+        "in_work_sum": in_work_sum,
+        "deals_total": len(deals),
+        "deals_active": len(active_deals),
+        "deals_won": len(won_deals),
+        "companies_count": db.query(Company).count(),
+        "equipment_count": db.query(Equipment).count(),
+        "active_chats": active_chats,
+        "funnel": funnel,
+        "max_count": max_count,
+    }
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "active_page": "dashboard",
+        "stats": stats,
+        "recent_deals": recent_deals,
+        "recent_messages": recent_messages,
+        "stage_names": {sid: s.name for sid, s in stages.items()},
+        "user": user,
+    })
 
 @app.get("/quotes/new", response_class=HTMLResponse)
 def read_quotes_new(request: Request, user: User = Depends(get_current_user)):
@@ -273,8 +424,148 @@ async def read_tasks(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("tasks.html", {"request": request, "active_page": "tasks"})
 
 @app.get("/analytics", response_class=HTMLResponse)
-async def read_analytics(request: Request, user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("analytics.html", {"request": request, "active_page": "analytics"})
+async def read_analytics(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deals = db.query(Deal).all()
+    stages = {s.id: s for s in db.query(Stage).all()}
+
+    def stage_name(d):
+        st = stages.get(d.stage)
+        return st.name if st else ""
+
+    won = [d for d in deals if "Успешно" in stage_name(d)]
+    lost = [d for d in deals if "проиграна" in stage_name(d).lower()]
+    active = [d for d in deals if d not in won and d not in lost]
+    closed_count = len(won) + len(lost)
+    win_rate = round(len(won) / closed_count * 100) if closed_count else 0
+
+    # Выручка по месяцам (по датам мероприятий выигранных сделок)
+    monthly = {}
+    for d in won:
+        date_str = d.event_date or ""
+        month = date_str[:7] if "-" in date_str else ""
+        if month:
+            monthly[month] = monthly.get(month, 0) + (d.final_sum or 0)
+    monthly_rows = sorted(monthly.items())[-8:]
+    max_month = max((v for _, v in monthly_rows), default=0) or 1
+
+    funnel = []
+    pipeline = db.query(Pipeline).first()
+    if pipeline:
+        for st in sorted(pipeline.stages, key=lambda s: s.order_index):
+            st_deals = [d for d in deals if d.stage == st.id]
+            funnel.append({
+                "name": st.name,
+                "count": len(st_deals),
+                "sum": sum(d.final_sum or 0 for d in st_deals),
+            })
+    max_count = max((f["count"] for f in funnel), default=0) or 1
+
+    # Статистика сообщений по каналам за 30 дней
+    month_ago = datetime.utcnow() - timedelta(days=30)
+    msg_stats = []
+    for channel, label in [("whatsapp", "WhatsApp"), ("telegram", "Telegram"), ("instagram", "Instagram")]:
+        incoming = db.query(ChatMessage).filter(ChatMessage.channel == channel, ChatMessage.direction == "in", ChatMessage.created_at >= month_ago).count()
+        outgoing = db.query(ChatMessage).filter(ChatMessage.channel == channel, ChatMessage.direction == "out", ChatMessage.created_at >= month_ago).count()
+        bot_replies = db.query(ChatMessage).filter(ChatMessage.channel == channel, ChatMessage.is_bot == True, ChatMessage.created_at >= month_ago).count()
+        msg_stats.append({"label": label, "incoming": incoming, "outgoing": outgoing, "bot": bot_replies})
+
+    return templates.TemplateResponse("analytics.html", {
+        "request": request,
+        "active_page": "analytics",
+        "revenue": sum(d.final_sum or 0 for d in won),
+        "in_work_sum": sum(d.final_sum or 0 for d in active),
+        "won_count": len(won),
+        "lost_count": len(lost),
+        "win_rate": win_rate,
+        "monthly_rows": monthly_rows,
+        "max_month": max_month,
+        "funnel": funnel,
+        "max_count": max_count,
+        "msg_stats": msg_stats,
+    })
+
+
+# -- Задачи --
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = "normal"
+    deal_id: Optional[int] = None
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    deal_id: Optional[int] = None
+
+def _task_to_dict(t: Task) -> dict:
+    today = datetime.today().strftime("%Y-%m-%d")
+    overdue = bool(t.due_date and t.status not in ("done",) and t.due_date[:10] < today)
+    return {
+        "id": t.id, "title": t.title, "description": t.description,
+        "assignee": t.assignee, "created_by": t.created_by,
+        "due_date": t.due_date, "priority": t.priority or "normal",
+        "status": t.status, "deal_id": t.deal_id,
+        "deal_title": t.deal.title if t.deal else None,
+        "overdue": overdue,
+        "created_at": t.created_at.strftime("%d.%m.%Y") if t.created_at else "",
+        "completed_at": t.completed_at.strftime("%d.%m.%Y %H:%M") if t.completed_at else None,
+    }
+
+@app.get("/api/tasks")
+def get_tasks(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = db.query(Task)
+    if deal_id:
+        query = query.filter(Task.deal_id == deal_id)
+    tasks = query.order_by(Task.status, Task.due_date).all()
+    return [_task_to_dict(t) for t in tasks]
+
+@app.post("/api/tasks")
+def create_task(t: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    task = Task(
+        title=t.title,
+        description=t.description,
+        assignee=t.assignee or (user.full_name or user.username),
+        created_by=user.full_name or user.username,
+        due_date=t.due_date,
+        priority=t.priority or "normal",
+        deal_id=t.deal_id,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    if task.deal_id:
+        db.add(DealHistory(deal_id=task.deal_id, action_text=f"Создана задача: {task.title}"))
+        db.commit()
+    return {"id": task.id, "status": "success"}
+
+@app.put("/api/tasks/{task_id}")
+def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    for field in ("title", "description", "assignee", "due_date", "priority", "deal_id"):
+        value = getattr(t, field)
+        if value is not None:
+            setattr(task, field, value)
+    if t.status is not None:
+        task.status = t.status
+        task.completed_at = datetime.utcnow() if t.status == "done" else None
+    db.commit()
+    return {"status": "success"}
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        db.delete(task)
+        db.commit()
+    return {"status": "success"}
 
 @app.get("/companies", response_class=HTMLResponse)
 async def read_companies(request: Request, user: User = Depends(get_current_user)):
@@ -291,12 +582,36 @@ def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_us
     if user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     users = db.query(User).all()
-    return [{"id": u.id, "username": u.username, "role": u.role} for u in users]
+    return [{
+        "id": u.id,
+        "username": u.username,
+        "full_name": u.full_name,
+        "role": u.role,
+        "permissions": u.permissions,
+    } for u in users]
+
+@app.get("/api/users/names")
+def get_user_names(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Список сотрудников (для выбора ответственного) — доступен всем авторизованным."""
+    return [{"username": u.username, "full_name": u.full_name or u.username} for u in db.query(User).all()]
+
+@app.get("/api/users/sections")
+def get_user_sections(user: User = Depends(get_current_user)):
+    """Справочник разделов системы для настройки прав."""
+    return auth.SECTIONS
 
 class UserCreate(BaseModel):
     username: str
     password: str
     role: str = "user"
+    full_name: Optional[str] = None
+    permissions: Optional[List[str]] = None
+
+class UserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
+    full_name: Optional[str] = None
+    permissions: Optional[List[str]] = None
 
 @app.post("/api/users")
 def create_user(u: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -309,8 +624,35 @@ def create_user(u: UserCreate, db: Session = Depends(get_db), current_user: User
     if existing:
         return JSONResponse(status_code=400, content={"error": "Пользователь уже существует"})
         
-    new_user = User(username=u.username, hashed_password=get_password_hash(u.password), role=u.role)
+    new_user = User(
+        username=u.username,
+        hashed_password=get_password_hash(u.password),
+        role=u.role,
+        full_name=u.full_name,
+        permissions=u.permissions,
+    )
     db.add(new_user)
+    db.commit()
+    return {"status": "success"}
+
+@app.put("/api/users/{user_id}")
+def update_user(user_id: int, u: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        return JSONResponse(status_code=404, content={"error": "Пользователь не найден"})
+    if u.password:
+        target.hashed_password = get_password_hash(u.password)
+    if u.role is not None:
+        # Нельзя снять роль админа с самого себя (чтобы не потерять доступ)
+        if target.id == current_user.id and u.role != "admin":
+            return JSONResponse(status_code=400, content={"error": "Нельзя снять роль администратора с самого себя"})
+        target.role = u.role
+    if u.full_name is not None:
+        target.full_name = u.full_name
+    if u.permissions is not None:
+        target.permissions = u.permissions
     db.commit()
     return {"status": "success"}
 
@@ -418,55 +760,77 @@ class AISettingsUpdate(BaseModel):
 class TGTokenUpdate(BaseModel):
     token: str
 
+
+def save_env_key(key: str, value: str):
+    """Сохраняет пару KEY=VALUE в .env и в переменные окружения процесса."""
+    env_path = ENV_PATH
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            lines = f.readlines()
+
+    with open(env_path, "w") as f:
+        key_found = False
+        for line in lines:
+            if line.startswith(f"{key}="):
+                f.write(f"{key}={value}\n")
+                key_found = True
+            else:
+                f.write(line)
+        if not key_found:
+            f.write(f"{key}={value}\n")
+
+    os.environ[key] = value
+
+
 @app.post("/api/settings/telegram")
 def update_tg_settings(settings: TGTokenUpdate, user: User = Depends(get_current_user)):
     if user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
-        
-    env_path = ENV_PATH
-    lines = []
-    if os.path.exists(env_path):
-        with open(env_path, "r") as f:
-            lines = f.readlines()
-            
-    with open(env_path, "w") as f:
-        key_found = False
-        for line in lines:
-            if line.startswith("TG_BOT_TOKEN="):
-                f.write(f"TG_BOT_TOKEN={settings.token}\n")
-                key_found = True
-            else:
-                f.write(line)
-        if not key_found:
-            f.write(f"TG_BOT_TOKEN={settings.token}\n")
-            
-    os.environ["TG_BOT_TOKEN"] = settings.token
-    # Also update notifications module memory if needed
+    save_env_key("TG_BOT_TOKEN", settings.token)
     notifications.TG_TOKEN = settings.token
     return {"status": "success"}
 
 @app.post("/api/settings/ai")
-def update_ai_settings(settings: AISettingsUpdate):
-    env_path = ENV_PATH
-    lines = []
-    if os.path.exists(env_path):
-        with open(env_path, "r") as f:
-            lines = f.readlines()
-            
-    with open(env_path, "w") as f:
-        key_found = False
-        for line in lines:
-            if line.startswith("GEMINI_API_KEY="):
-                f.write(f"GEMINI_API_KEY={settings.api_key}\n")
-                key_found = True
-            else:
-                f.write(line)
-        if not key_found:
-            f.write(f"GEMINI_API_KEY={settings.api_key}\n")
-            
-    os.environ["GEMINI_API_KEY"] = settings.api_key
-    genai.configure(api_key=settings.api_key)
+def update_ai_settings(settings: AISettingsUpdate, user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    save_env_key("GEMINI_API_KEY", settings.api_key)
     return {"status": "success"}
+
+class IGSettingsUpdate(BaseModel):
+    page_token: str = ""
+    verify_token: str = ""
+
+@app.post("/api/settings/instagram")
+def update_ig_settings(settings: IGSettingsUpdate, user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if settings.page_token:
+        save_env_key("IG_PAGE_TOKEN", settings.page_token)
+    if settings.verify_token:
+        save_env_key("IG_VERIFY_TOKEN", settings.verify_token)
+    return {"status": "success"}
+
+class OneCSettingsUpdate(BaseModel):
+    api_key: str
+
+@app.post("/api/settings/1c")
+def update_1c_settings(settings: OneCSettingsUpdate, user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    save_env_key("ONEC_API_KEY", settings.api_key)
+    return {"status": "success"}
+
+@app.get("/api/settings/status")
+def get_settings_status(user: User = Depends(get_current_user)):
+    """Статус подключённых интеграций (без раскрытия самих ключей)."""
+    return {
+        "telegram": bool(os.getenv("TG_BOT_TOKEN")),
+        "gemini": bool(os.getenv("GEMINI_API_KEY")),
+        "instagram": bool(os.getenv("IG_PAGE_TOKEN")),
+        "onec": bool(os.getenv("ONEC_API_KEY")),
+    }
 
 @app.post("/api/equipment")
 def create_equipment(item: EquipmentCreate, db: Session = Depends(get_db)):
@@ -484,6 +848,19 @@ def update_equipment(equip_id: int, item: EquipmentCreate, db: Session = Depends
             setattr(db_equip, k, v)
         db.commit()
     return {"status": "success"}
+
+class PriceUpdate(BaseModel):
+    price: float
+
+@app.put("/api/equipment/{equip_id}/price")
+def update_equipment_price(equip_id: int, upd: PriceUpdate, db: Session = Depends(get_db)):
+    """Быстрое обновление цены на складе (из сметы)."""
+    db_equip = db.query(Equipment).filter(Equipment.id == equip_id).first()
+    if not db_equip:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    db_equip.price = upd.price
+    db.commit()
+    return {"status": "success", "price": db_equip.price}
 
 @app.delete("/api/equipment/{equip_id}")
 def delete_equipment(equip_id: int, db: Session = Depends(get_db)):
@@ -545,9 +922,14 @@ def get_company_detail(company_id: int, db: Session = Depends(get_db)):
             "id": db_comp.id, "name": db_comp.name, "bin": db_comp.bin, "director_name": db_comp.director_name,
             "phone": db_comp.phone, "email": db_comp.email, "requisites": db_comp.requisites,
             "based_on": db_comp.based_on, "address": db_comp.address, "bank_name": db_comp.bank_name,
-            "kbe": db_comp.kbe, "bik": db_comp.bik
+            "kbe": db_comp.kbe, "bik": db_comp.bik,
+            "instagram": db_comp.instagram, "telegram_chat_id": db_comp.telegram_chat_id
         },
-        "deals": deals_data
+        "deals": deals_data,
+        "contacts": [{
+            "id": c.id, "name": c.name, "position": c.position,
+            "phone": c.phone, "email": c.email, "comment": c.comment,
+        } for c in db_comp.contacts],
     }
 
 @app.put("/api/companies/{company_id}")
@@ -575,6 +957,69 @@ def delete_company(company_id: int, db: Session = Depends(get_db)):
     db.delete(db_comp)
     db.commit()
     return {"status": "success"}
+
+# -- Контакты (контактные лица компаний, как в Битрикс24) --
+
+class ContactCreate(BaseModel):
+    name: str
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    comment: Optional[str] = None
+    company_id: Optional[int] = None
+
+class ContactUpdate(BaseModel):
+    name: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    comment: Optional[str] = None
+    company_id: Optional[int] = None
+
+
+@app.get("/api/contacts")
+def get_contacts(company_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = db.query(Contact)
+    if company_id:
+        query = query.filter(Contact.company_id == company_id)
+    return [{
+        "id": c.id, "name": c.name, "position": c.position,
+        "phone": c.phone, "email": c.email, "comment": c.comment,
+        "company_id": c.company_id,
+        "company_name": c.company.name if c.company else None,
+    } for c in query.order_by(Contact.name).all()]
+
+
+@app.post("/api/contacts")
+def create_contact(c: ContactCreate, db: Session = Depends(get_db)):
+    contact = Contact(**c.dict())
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return {"id": contact.id, "status": "success"}
+
+
+@app.put("/api/contacts/{contact_id}")
+def update_contact(contact_id: int, c: ContactUpdate, db: Session = Depends(get_db)):
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        return JSONResponse(status_code=404, content={"error": "Контакт не найден"})
+    for key, value in c.dict(exclude_unset=True).items():
+        setattr(contact, key, value)
+    db.commit()
+    return {"status": "success"}
+
+
+@app.delete("/api/contacts/{contact_id}")
+def delete_contact(contact_id: int, db: Session = Depends(get_db)):
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if contact:
+        # Отвязываем контакт от сделок
+        db.query(Deal).filter(Deal.contact_id == contact_id).update({Deal.contact_id: None})
+        db.delete(contact)
+        db.commit()
+    return {"status": "success"}
+
 
 # -- WAHA (WhatsApp API) Proxies --
 WAHA_URL = "http://127.0.0.1:3000"
@@ -640,6 +1085,18 @@ def create_custom_field(cf: CustomFieldCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_cf)
     return db_cf
+
+@app.delete("/api/custom-fields/{field_id}")
+def delete_custom_field(field_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Только администратор может удалять поля"})
+    cf = db.query(CustomField).filter(CustomField.id == field_id).first()
+    if not cf:
+        return JSONResponse(status_code=404, content={"error": "Поле не найдено"})
+    db.query(DealFieldValue).filter(DealFieldValue.field_id == field_id).delete()
+    db.delete(cf)
+    db.commit()
+    return {"status": "success"}
 
 @app.get("/api/pipelines")
 def get_pipelines(db: Session = Depends(get_db)):
@@ -723,7 +1180,13 @@ def get_equipment_availability(start_date: str = None, end_date: str = None, db:
     # Let's just find deals that OVERLAP with the requested dates.
     # We will fetch all deals and filter in Python for safety since dates might be stored in different formats.
     
-    all_deals = db.query(Deal).all()
+    # Бронь считаем только по сделкам «в работе» (стадии с флагом is_active_rent,
+    # например «Предоплата внесена», «Монтаж / Мероприятие»)
+    active_stage_ids = [s.id for s in db.query(Stage).filter(Stage.is_active_rent == True).all()]  # noqa: E712
+    if active_stage_ids:
+        all_deals = db.query(Deal).filter(Deal.stage.in_(active_stage_ids)).all()
+    else:
+        all_deals = db.query(Deal).all()
     overlapping_deal_ids = []
     
     def parse_date(d_str):
@@ -760,17 +1223,62 @@ def get_equipment_availability(start_date: str = None, end_date: str = None, db:
         for item in items:
             deal_title = item.deal.title or f"Договор #{item.deal_id}"
             deal_dates = f"{item.deal.setup_date} - {item.deal.event_date}"
+            until = item.deal.event_date or item.deal.setup_date or ""
+            # DD.MM.YYYY для сообщений пользователю
+            try:
+                if until and "-" in until:
+                    p = until[:10].split("-")
+                    until = f"{p[2]}.{p[1]}.{p[0]}"
+            except Exception:
+                pass
             if item.equipment_id not in booked_items:
                 booked_items[item.equipment_id] = {"booked": 0, "conflicts": []}
             booked_items[item.equipment_id]["booked"] += item.quantity
             booked_items[item.equipment_id]["conflicts"].append({
                 "deal_id": item.deal_id,
                 "deal_title": deal_title,
+                "contract_no": f"CRM-{item.deal_id}",
+                "until": until,
                 "dates": deal_dates,
                 "qty": item.quantity
             })
             
     return [{"equipment_id": k, "booked": v["booked"], "conflicts": v["conflicts"]} for k, v in booked_items.items()]
+
+FIXED_CATEGORIES = ["Логистика", "Персонал", "Расходники"]
+
+
+def _item_price(di: DealItem) -> float:
+    """Цена позиции: сохранённая в смете, иначе текущая цена склада."""
+    if di.price is not None:
+        return di.price
+    return di.equipment.price if di.equipment else 0
+
+
+def _deal_calc_items(deal: Deal) -> list:
+    items = []
+    for di in deal.items:
+        eq = di.equipment
+        if not eq:
+            continue
+        cat_type = "fixed" if eq.category in FIXED_CATEGORIES else "equipment"
+        items.append({
+            "name": eq.name,
+            "price": _item_price(di),
+            "quantity": di.quantity,
+            "days": di.days,
+            "category_type": cat_type,
+            "photo_url": eq.photo_url,
+            "description": eq.description,
+        })
+    return items
+
+
+def _recalc_deal_sum(db: Session, deal: Deal) -> None:
+    result = calculate_estimate(_deal_calc_items(deal), deal.discount_percentage or 0)
+    deal.final_sum = result["grand_total"]
+    db.commit()
+
 
 @app.get("/api/deals")
 def get_deals(pipeline_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -789,7 +1297,8 @@ def get_deals(pipeline_id: Optional[int] = None, db: Session = Depends(get_db)):
             "pipeline_id": d.pipeline_id,
             "stage": d.stage,
             "event_date": d.event_date,
-            "final_sum": d.final_sum
+            "final_sum": d.final_sum,
+            "chat_channel": d.chat_channel,
         })
     return result
 
@@ -821,10 +1330,15 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db)):
         try:
             items_list = json.loads(deal.items_json)
             for it in items_list:
-                db_item = DealItem(deal_id=db_deal.id, equipment_id=it['id'], quantity=it['qty'], days=it['days'])
+                db_item = DealItem(
+                    deal_id=db_deal.id, equipment_id=it['id'],
+                    quantity=it['qty'], days=it['days'],
+                    price=it.get('price'),
+                )
                 db.add(db_item)
             db.commit()
-        except:
+            _recalc_deal_sum(db, db_deal)
+        except Exception:
             pass
 
     return {"id": db_deal.id}
@@ -882,12 +1396,25 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
             "quantity": i.quantity,
             "days": i.days,
             "name": i.equipment.name if i.equipment else "Unknown",
-            "price": i.equipment.price if i.equipment else 0,
-            "category_type": "fixed" if i.equipment and i.equipment.category in ["Логистика", "Персонал", "Расходники"] else "equipment"
+            "price": _item_price(i),
+            "stock_price": i.equipment.price if i.equipment else 0,
+            "category_type": "fixed" if i.equipment and i.equipment.category in FIXED_CATEGORIES else "equipment"
         })
 
     history = [{"action_text": h.action_text, "created_at": h.created_at.strftime("%Y-%m-%d %H:%M:%S")} for h in sorted(d.history, key=lambda x: x.created_at, reverse=True)]
     custom_values = {cv.field_id: cv.value for cv in d.custom_values}
+
+    prev_deal = None
+    if d.prev_deal_id:
+        pd = db.query(Deal).filter(Deal.id == d.prev_deal_id).first()
+        if pd:
+            prev_deal = {"id": pd.id, "title": pd.title}
+
+    contact = None
+    if d.contact_id:
+        c = db.query(Contact).filter(Contact.id == d.contact_id).first()
+        if c:
+            contact = {"id": c.id, "name": c.name, "phone": c.phone, "position": c.position}
 
     return {
         "id": d.id,
@@ -895,12 +1422,22 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
         "company_id": d.company_id,
         "company_name": d.company.name if d.company else "Unknown",
         "company_phone": d.company.phone if d.company else "",
+        "company_instagram": d.company.instagram if d.company else "",
+        "company_telegram": d.company.telegram_chat_id if d.company else "",
         "pipeline_id": d.pipeline_id,
         "stage": d.stage,
+        "setup_date": d.setup_date,
         "event_date": d.event_date,
         "event_address": d.event_address,
         "discount_percentage": d.discount_percentage,
         "final_sum": d.final_sum,
+        "comment": d.comment,
+        "created_at": d.created_at.strftime("%d.%m.%Y") if d.created_at else "",
+        "chat_channel": d.chat_channel,
+        "chat_id": d.chat_id,
+        "contact": contact,
+        "contact_id": d.contact_id,
+        "prev_deal": prev_deal,
         "items": items,
         "history": history,
         "custom_values": custom_values
@@ -925,29 +1462,15 @@ def update_deal_items(deal_id: int, update: DealItemsUpdate, db: Session = Depen
             deal_id=deal_id,
             equipment_id=i["equipment_id"],
             quantity=i["quantity"],
-            days=i["days"]
+            days=i["days"],
+            price=i.get("price"),
         )
         db.add(di)
         
     d.discount_percentage = update.discount_percentage
     db.commit()
-    
-    # Recalculate final sum
-    calc_items = []
-    for di in db.query(DealItem).filter(DealItem.deal_id == deal_id).all():
-        eq = di.equipment
-        cat_type = "fixed" if eq.category in ["Логистика", "Персонал", "Расходники"] else "equipment"
-        calc_items.append({
-            "name": eq.name,
-            "price": eq.price,
-            "quantity": di.quantity,
-            "days": di.days,
-            "category_type": cat_type
-        })
-        
-    result = calculate_estimate(calc_items, update.discount_percentage)
-    d.final_sum = result["grand_total"]
-    db.commit()
+    db.refresh(d)
+    _recalc_deal_sum(db, d)
     
     return {"status": "success", "final_sum": d.final_sum}
 
@@ -957,6 +1480,8 @@ class DealUpdate(BaseModel):
     setup_date: Optional[str] = None
     event_address: Optional[str] = None
     comment: Optional[str] = None
+    company_id: Optional[int] = None
+    contact_id: Optional[int] = None
 
 @app.put("/api/deals/{deal_id}")
 def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db)):
@@ -964,16 +1489,10 @@ def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db))
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     
-    if update.title is not None:
-        d.title = update.title
-    if update.event_date is not None:
-        d.event_date = update.event_date
-    if update.setup_date is not None:
-        d.setup_date = update.setup_date
-    if update.event_address is not None:
-        d.event_address = update.event_address
-    if update.comment is not None:
-        d.comment = update.comment
+    for field in ("title", "event_date", "setup_date", "event_address", "comment", "company_id", "contact_id"):
+        value = getattr(update, field)
+        if value is not None:
+            setattr(d, field, value)
         
     db.commit()
     return {"status": "success"}
@@ -1039,23 +1558,498 @@ def get_vapid_key():
     pub = os.getenv("VAPID_PUBLIC_KEY", "")
     return {"public_key": pub}
 
+CHANNEL_LABELS = {"whatsapp": "WhatsApp", "telegram": "Telegram", "instagram": "Instagram"}
+
+
+def _normalize_phone(value: str) -> str:
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _find_company_for_chat(db: Session, channel: str, chat_id: str):
+    if channel == "telegram":
+        comp = db.query(Company).filter(Company.telegram_chat_id == str(chat_id)).first()
+        if comp:
+            return comp
+    if channel == "whatsapp":
+        phone = _normalize_phone(chat_id.split("@")[0])
+        if phone:
+            for comp in db.query(Company).filter(Company.phone.isnot(None)).all():
+                if _normalize_phone(comp.phone) == phone:
+                    return comp
+    return None
+
+
+def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: str = None):
+    """Автосоздание сделки по входящему сообщению (логика Битрикс24).
+
+    - Есть открытая сделка, привязанная к этому чату — диалог продолжается в ней.
+    - Все сделки закрыты — создаётся новая со ссылкой на прошлое обращение.
+    - Сделок не было — создаётся новая на первой стадии воронки.
+    """
+    chat_id = str(chat_id)
+    closed_stage_ids = {
+        s.id for s in db.query(Stage).all()
+        if any(k in (s.name or "") for k in ("Успешно", "проигра", "Проигра"))
+    }
+
+    linked = (
+        db.query(Deal)
+        .filter(Deal.chat_channel == channel, Deal.chat_id == chat_id)
+        .order_by(Deal.id.desc())
+        .all()
+    )
+    for d in linked:
+        if d.stage not in closed_stage_ids:
+            return d  # открытая сделка уже есть — продолжаем диалог в ней
+
+    # Компания: ищем по номеру/чату, иначе создаём карточку клиента
+    company = _find_company_for_chat(db, channel, chat_id)
+    if not company:
+        label = CHANNEL_LABELS.get(channel, channel)
+        phone = ""
+        if channel == "whatsapp":
+            raw = chat_id.split("@")[0]
+            phone = f"+{raw}" if raw.isdigit() else ""
+        company = Company(
+            name=sender_name or f"Клиент {label}",
+            phone=phone,
+            bin="", director_name=sender_name or "", email="", requisites="",
+        )
+        if channel == "telegram":
+            company.telegram_chat_id = chat_id
+        db.add(company)
+        db.commit()
+        db.refresh(company)
+
+    pipeline = db.query(Pipeline).first()
+    first_stage = (
+        db.query(Stage)
+        .filter(Stage.pipeline_id == pipeline.id)
+        .order_by(Stage.order_index)
+        .first()
+    ) if pipeline else None
+
+    prev_deal = linked[0] if linked else None
+    label = CHANNEL_LABELS.get(channel, channel)
+    deal = Deal(
+        title=f"Заявка из {label} — {sender_name or chat_id}",
+        company_id=company.id,
+        pipeline_id=pipeline.id if pipeline else 1,
+        stage=first_stage.id if first_stage else 1,
+        event_date="",
+        chat_channel=channel,
+        chat_id=chat_id,
+        prev_deal_id=prev_deal.id if prev_deal else None,
+    )
+    db.add(deal)
+    db.commit()
+    db.refresh(deal)
+
+    db.add(DealHistory(deal_id=deal.id, action_text=f"Сделка создана автоматически: входящее сообщение в {label}"))
+    if prev_deal:
+        db.add(DealHistory(
+            deal_id=deal.id,
+            action_text=f"Клиент ранее обращался к нам: сделка №{prev_deal.id} «{prev_deal.title}»",
+        ))
+    db.commit()
+    return deal
+
+
 @app.post("/api/tg/webhook")
 def tg_webhook(update: dict, db: Session = Depends(get_db)):
     if "message" in update and "text" in update["message"]:
-        text = update["message"]["text"]
-        chat_id = update["message"]["chat"]["id"]
-        if text.startswith("/start company_"):
+        msg = update["message"]
+        text_msg = msg["text"]
+        chat_id = msg["chat"]["id"]
+        sender = (msg.get("from") or {}).get("first_name") or str(chat_id)
+
+        if text_msg.startswith("/start company_"):
             try:
-                company_id = int(text.split("_")[1])
+                company_id = int(text_msg.split("_")[1])
                 comp = db.query(Company).filter(Company.id == company_id).first()
                 if comp:
                     comp.telegram_chat_id = str(chat_id)
                     db.commit()
-                    import notifications
                     notifications.send_tg_message(str(chat_id), "Успешно! Теперь вы будете получать уведомления о заказах сюда.")
-            except:
+            except Exception:
                 pass
+        elif text_msg.startswith("/start"):
+            chatbot.save_message(db, "telegram", str(chat_id), "in", text_msg, sender_name=sender)
+        else:
+            # Обычное сообщение — сделка в CRM + AI чат-бот
+            try:
+                ensure_deal_for_chat(db, "telegram", str(chat_id), sender_name=sender)
+            except Exception as e:
+                print("ensure_deal_for_chat (tg) error:", e)
+            chatbot.handle_incoming(db, "telegram", str(chat_id), text_msg, sender_name=sender)
     return {"status": "ok"}
+
+
+class TGWebhookSetup(BaseModel):
+    url: str  # публичный https-адрес сервера, например https://crm.introshow.kz
+
+@app.post("/api/tg/set-webhook")
+def tg_set_webhook(setup: TGWebhookSetup, user: User = Depends(get_current_user)):
+    """Регистрирует вебхук Telegram-бота на этот сервер."""
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    token = os.getenv("TG_BOT_TOKEN", "")
+    if not token:
+        return JSONResponse(status_code=400, content={"error": "Сначала сохраните токен Telegram-бота"})
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": setup.url.rstrip("/") + "/api/tg/webhook"},
+            timeout=10,
+        )
+        return r.json()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# -- WhatsApp входящие (webhook от WAHA) --
+@app.post("/api/wa/webhook")
+def wa_webhook(event: dict, db: Session = Depends(get_db)):
+    """Приём входящих сообщений WhatsApp от WAHA.
+
+    В WAHA нужно указать webhook: http://<этот сервер>/api/wa/webhook (событие message).
+    """
+    if event.get("event") not in ("message", "message.any"):
+        return {"status": "ignored"}
+    payload = event.get("payload") or {}
+    if payload.get("fromMe"):
+        return {"status": "ignored"}
+    chat_id = payload.get("from") or ""
+    text_msg = payload.get("body") or ""
+    if not chat_id or not text_msg:
+        return {"status": "ignored"}
+    sender = ((payload.get("_data") or {}).get("notifyName")) or chat_id.split("@")[0]
+    try:
+        ensure_deal_for_chat(db, "whatsapp", chat_id, sender_name=sender)
+    except Exception as e:
+        print("ensure_deal_for_chat (wa) error:", e)
+    chatbot.handle_incoming(db, "whatsapp", chat_id, text_msg, sender_name=sender)
+    return {"status": "ok"}
+
+
+# -- Instagram Direct (Meta Graph API webhook) --
+@app.get("/api/ig/webhook")
+def ig_webhook_verify(request: Request):
+    """Верификация вебхука Meta (hub.challenge)."""
+    params = request.query_params
+    verify_token = os.getenv("IG_VERIFY_TOKEN", "")
+    if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == verify_token:
+        return Response(content=params.get("hub.challenge", ""), media_type="text/plain")
+    return JSONResponse(status_code=403, content={"error": "Verification failed"})
+
+@app.post("/api/ig/webhook")
+def ig_webhook(event: dict, db: Session = Depends(get_db)):
+    """Приём входящих сообщений Instagram Direct."""
+    try:
+        for entry in event.get("entry", []):
+            for messaging in entry.get("messaging", []):
+                message = messaging.get("message") or {}
+                if message.get("is_echo"):
+                    continue
+                sender_id = (messaging.get("sender") or {}).get("id")
+                text_msg = message.get("text")
+                if sender_id and text_msg:
+                    try:
+                        ensure_deal_for_chat(db, "instagram", str(sender_id), sender_name=f"IG {sender_id}")
+                    except Exception as e:
+                        print("ensure_deal_for_chat (ig) error:", e)
+                    chatbot.handle_incoming(db, "instagram", str(sender_id), text_msg, sender_name=f"IG {sender_id}")
+    except Exception as e:
+        print("IG webhook error:", e)
+    return {"status": "ok"}
+
+
+# -----------------
+# INBOX (единая лента чатов)
+# -----------------
+
+@app.get("/api/inbox/chats")
+def get_inbox_chats(channel: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(ChatMessage)
+    if channel:
+        query = query.filter(ChatMessage.channel == channel)
+    messages = query.order_by(ChatMessage.id.desc()).limit(1000).all()
+
+    chats = {}
+    for m in messages:
+        key = (m.channel, m.chat_id)
+        if key not in chats:
+            chats[key] = {
+                "channel": m.channel,
+                "chat_id": m.chat_id,
+                "name": m.sender_name if m.direction == "in" else m.chat_id,
+                "last_message": m.text,
+                "last_at": m.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        elif m.direction == "in" and m.sender_name and chats[key]["name"] == chats[key]["chat_id"]:
+            chats[key]["name"] = m.sender_name
+
+    # Привязка чатов к сделкам CRM (последняя сделка по чату)
+    for (ch, cid), chat in chats.items():
+        deal = (
+            db.query(Deal)
+            .filter(Deal.chat_channel == ch, Deal.chat_id == cid)
+            .order_by(Deal.id.desc())
+            .first()
+        )
+        if deal:
+            chat["deal_id"] = deal.id
+            chat["deal_title"] = deal.title
+    return list(chats.values())
+
+@app.get("/api/inbox/messages")
+def get_inbox_messages(channel: str, chat_id: str, db: Session = Depends(get_db)):
+    messages = db.query(ChatMessage)\
+        .filter(ChatMessage.channel == channel, ChatMessage.chat_id == chat_id)\
+        .order_by(ChatMessage.id).limit(500).all()
+    return [{
+        "id": m.id,
+        "direction": m.direction,
+        "text": m.text,
+        "sender_name": m.sender_name,
+        "is_bot": m.is_bot,
+        "created_at": m.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+    } for m in messages]
+
+class InboxSend(BaseModel):
+    channel: str
+    chat_id: str
+    text: str
+
+@app.post("/api/inbox/send")
+def inbox_send(msg: InboxSend, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    sender_fn = chatbot.SENDERS.get(msg.channel)
+    if not sender_fn:
+        return JSONResponse(status_code=400, content={"error": "Неизвестный канал"})
+    sent = sender_fn(msg.chat_id, msg.text)
+    chatbot.save_message(db, msg.channel, msg.chat_id, "out", msg.text,
+                         sender_name=(user.full_name or user.username), is_bot=False)
+    return {"status": "success", "delivered": sent}
+
+
+# -----------------
+# AI ЧАТ-БОТ: настройки, база знаний, тест
+# -----------------
+
+class BotSettingsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    schedule: Optional[dict] = None
+    channels: Optional[dict] = None
+    persona: Optional[str] = None
+    off_hours_message: Optional[str] = None
+    timezone: Optional[str] = None
+
+@app.get("/api/bot/settings")
+def get_bot_settings_api(db: Session = Depends(get_db)):
+    s = chatbot.get_bot_settings(db)
+    return {
+        "enabled": s.enabled,
+        "schedule": s.schedule or chatbot.DEFAULT_SCHEDULE,
+        "channels": s.channels or chatbot.DEFAULT_CHANNELS,
+        "persona": s.persona or chatbot.DEFAULT_PERSONA,
+        "off_hours_message": s.off_hours_message or chatbot.DEFAULT_OFF_HOURS,
+        "timezone": s.timezone or "Asia/Almaty",
+        "within_schedule_now": chatbot.is_within_schedule(s),
+        "ai_key_configured": bool(os.getenv("GEMINI_API_KEY")),
+    }
+
+@app.post("/api/bot/settings")
+def update_bot_settings_api(update: BotSettingsUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role not in ("admin", "manager"):
+        return JSONResponse(status_code=403, content={"error": "Недостаточно прав"})
+    s = chatbot.get_bot_settings(db)
+    if update.enabled is not None:
+        s.enabled = update.enabled
+    if update.schedule is not None:
+        s.schedule = update.schedule
+    if update.channels is not None:
+        s.channels = update.channels
+    if update.persona is not None:
+        s.persona = update.persona
+    if update.off_hours_message is not None:
+        s.off_hours_message = update.off_hours_message
+    if update.timezone is not None:
+        s.timezone = update.timezone
+    db.commit()
+    return {"status": "success"}
+
+class KnowledgeCreate(BaseModel):
+    title: str
+    content: str
+
+@app.get("/api/bot/knowledge")
+def get_knowledge(db: Session = Depends(get_db)):
+    items = db.query(KnowledgeItem).order_by(KnowledgeItem.id.desc()).all()
+    return [{"id": i.id, "title": i.title, "content": i.content,
+             "created_at": i.created_at.strftime("%Y-%m-%d %H:%M")} for i in items]
+
+@app.post("/api/bot/knowledge")
+def create_knowledge(item: KnowledgeCreate, db: Session = Depends(get_db)):
+    ki = KnowledgeItem(title=item.title, content=item.content)
+    db.add(ki)
+    db.commit()
+    db.refresh(ki)
+    return {"id": ki.id, "status": "success"}
+
+@app.post("/api/bot/knowledge/upload")
+async def upload_knowledge(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Загрузка текстового файла (.txt, .md, .csv) в базу знаний бота."""
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        content = raw.decode("cp1251", errors="replace")
+    ki = KnowledgeItem(title=file.filename or "Файл", content=content[:50000])
+    db.add(ki)
+    db.commit()
+    return {"id": ki.id, "status": "success"}
+
+@app.delete("/api/bot/knowledge/{item_id}")
+def delete_knowledge(item_id: int, db: Session = Depends(get_db)):
+    ki = db.query(KnowledgeItem).filter(KnowledgeItem.id == item_id).first()
+    if ki:
+        db.delete(ki)
+        db.commit()
+    return {"status": "success"}
+
+class BotTestRequest(BaseModel):
+    text: str
+
+@app.post("/api/bot/test")
+def test_bot(req: BotTestRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Тестовый диалог с ботом прямо из панели (не отправляется клиентам)."""
+    s = chatbot.get_bot_settings(db)
+    knowledge = chatbot._build_knowledge_text(db)
+    persona = s.persona or chatbot.DEFAULT_PERSONA
+    system_prompt = (
+        f"{persona}\n\nБАЗА ЗНАНИЙ КОМПАНИИ (отвечай строго на её основе):\n{knowledge}\n\n"
+        "Правила ответа: пиши на языке клиента, кратко (1-4 предложения), тепло и естественно. "
+        "Не используй markdown-разметку."
+    )
+    reply = chatbot.call_gemini(system_prompt, [], req.text)
+    if not reply:
+        return JSONResponse(status_code=502, content={
+            "error": "Не удалось получить ответ ИИ. Проверьте, что ключ Gemini API сохранён в Настройках."
+        })
+    return {"reply": reply}
+
+
+# -----------------
+# ИНТЕГРАЦИЯ С 1С (обмен данными по API-ключу)
+# -----------------
+
+def check_1c_key(request: Request) -> bool:
+    configured = os.getenv("ONEC_API_KEY", "")
+    provided = request.headers.get("X-API-Key", "")
+    return bool(configured) and provided == configured
+
+@app.get("/api/1c/counterparties")
+def onec_get_counterparties(request: Request, db: Session = Depends(get_db)):
+    """Выгрузка контрагентов для 1С."""
+    if not check_1c_key(request):
+        return JSONResponse(status_code=401, content={"error": "Неверный или отсутствующий X-API-Key"})
+    companies = db.query(Company).all()
+    return [{
+        "id": c.id, "name": c.name, "bin": c.bin, "director_name": c.director_name,
+        "phone": c.phone, "email": c.email, "address": c.address,
+        "bank_name": c.bank_name, "bik": c.bik, "kbe": c.kbe, "iban": c.requisites,
+    } for c in companies]
+
+class OneCCounterparty(BaseModel):
+    name: str
+    bin: str
+    director_name: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    address: Optional[str] = ""
+    bank_name: Optional[str] = ""
+    bik: Optional[str] = ""
+    kbe: Optional[str] = ""
+    iban: Optional[str] = ""
+
+@app.post("/api/1c/counterparties")
+def onec_upsert_counterparties(request: Request, items: List[OneCCounterparty], db: Session = Depends(get_db)):
+    """Загрузка/обновление контрагентов из 1С (сопоставление по БИН)."""
+    if not check_1c_key(request):
+        return JSONResponse(status_code=401, content={"error": "Неверный или отсутствующий X-API-Key"})
+    created, updated = 0, 0
+    for item in items:
+        comp = db.query(Company).filter(Company.bin == item.bin).first() if item.bin else None
+        if comp:
+            comp.name = item.name
+            comp.director_name = item.director_name or comp.director_name
+            comp.phone = item.phone or comp.phone
+            comp.email = item.email or comp.email
+            comp.address = item.address or comp.address
+            comp.bank_name = item.bank_name or comp.bank_name
+            comp.bik = item.bik or comp.bik
+            comp.kbe = item.kbe or comp.kbe
+            comp.requisites = item.iban or comp.requisites
+            updated += 1
+        else:
+            db.add(Company(
+                name=item.name, bin=item.bin, director_name=item.director_name or "",
+                phone=item.phone or "", email=item.email or "", address=item.address or "",
+                bank_name=item.bank_name or "", bik=item.bik or "", kbe=item.kbe or "",
+                requisites=item.iban or "", based_on="Устава",
+            ))
+            created += 1
+    db.commit()
+    return {"status": "success", "created": created, "updated": updated}
+
+@app.get("/api/1c/invoices")
+def onec_get_invoices(request: Request, db: Session = Depends(get_db)):
+    """Выгрузка счетов для 1С."""
+    if not check_1c_key(request):
+        return JSONResponse(status_code=401, content={"error": "Неверный или отсутствующий X-API-Key"})
+    invoices = db.query(Invoice).all()
+    return [{
+        "number": i.number, "date": i.date, "company_bin": i.company_bin,
+        "company_name": i.company_name, "amount": i.amount, "status": i.status,
+        "deal_id": i.deal_id, "external_id": i.external_id,
+    } for i in invoices]
+
+class OneCInvoice(BaseModel):
+    number: str
+    date: str
+    company_bin: Optional[str] = ""
+    company_name: Optional[str] = ""
+    amount: float = 0.0
+    status: str = "new"
+    deal_id: Optional[int] = None
+    external_id: Optional[str] = None
+
+@app.post("/api/1c/invoices")
+def onec_upsert_invoices(request: Request, items: List[OneCInvoice], db: Session = Depends(get_db)):
+    """Загрузка/обновление счетов из 1С (сопоставление по номеру)."""
+    if not check_1c_key(request):
+        return JSONResponse(status_code=401, content={"error": "Неверный или отсутствующий X-API-Key"})
+    created, updated = 0, 0
+    for item in items:
+        inv = db.query(Invoice).filter(Invoice.number == item.number).first()
+        if inv:
+            inv.date = item.date
+            inv.company_bin = item.company_bin
+            inv.company_name = item.company_name
+            inv.amount = item.amount
+            inv.status = item.status
+            inv.external_id = item.external_id or inv.external_id
+            updated += 1
+        else:
+            db.add(Invoice(
+                number=item.number, date=item.date, company_bin=item.company_bin,
+                company_name=item.company_name, amount=item.amount, status=item.status,
+                deal_id=item.deal_id, external_id=item.external_id,
+            ))
+            created += 1
+    db.commit()
+    return {"status": "success", "created": created, "updated": updated}
 
 @app.get("/api/deals/{deal_id}/contract")
 def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -1067,25 +2061,11 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
     if not comp:
         return JSONResponse(status_code=400, content={"error": "No company linked"})
 
-    calc_items = []
-    for di in d.items:
-        eq = di.equipment
-        cat_type = "fixed" if eq.category in ["Логистика", "Персонал", "Расходники"] else "equipment"
-        calc_items.append({
-            "name": eq.name,
-            "price": eq.price,
-            "quantity": di.quantity,
-            "days": di.days,
-            "category_type": cat_type,
-            "photo_url": eq.photo_url,
-            "description": eq.description
-        })
-        
-    result = calculate_estimate(calc_items, d.discount_percentage)
+    result = calculate_estimate(_deal_calc_items(d), d.discount_percentage)
     
     context = {
         "contract_number": f"CRM-{d.id}",
-        "contract_date": "Текущая дата",
+        "contract_date": datetime.today().strftime("%d.%m.%Y"),
         "company_name": comp.name,
         "director_name": comp.director_name,
         "iin_bin": comp.bin,
@@ -1118,6 +2098,52 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
         filename=f"Contract_{d.id}_{comp.name}.docx"
     )
 
+@app.get("/api/deals/{deal_id}/estimate")
+def download_deal_estimate(deal_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Скачивание сметы сделки в формате .docx."""
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+
+    result = calculate_estimate(_deal_calc_items(d), d.discount_percentage or 0)
+
+    rent_period = ""
+    if d.setup_date or d.event_date:
+        rent_period = f"{d.setup_date or '—'} — {d.event_date or '—'}"
+
+    context = {
+        "number": f"CRM-{d.id}",
+        "date": datetime.today().strftime("%d.%m.%Y"),
+        "company_name": d.company.name if d.company else "",
+        "event_name": d.title or "",
+        "event_address": d.event_address or "",
+        "rent_period": rent_period,
+        "items": result["items"],
+        "equipment_total": result["equipment_total"],
+        "fixed_total": result["fixed_total"],
+        "grand_total": result["grand_total"],
+        "discount_percentage": d.discount_percentage or 0,
+    }
+
+    from document_generator import generate_estimate_docx
+    fd, temp_path = tempfile.mkstemp(suffix=".docx")
+    os.close(fd)
+    generate_estimate_docx(context, temp_path)
+
+    def cleanup_file(path: str):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    background_tasks.add_task(cleanup_file, temp_path)
+    return FileResponse(
+        temp_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"Smeta_CRM-{d.id}.docx",
+    )
+
+
 @app.get("/api/deals/{deal_id}/contract-preview")
 async def get_deal_contract_preview(deal_id: int, db: Session = Depends(get_db)):
     d = db.query(Deal).filter(Deal.id == deal_id).first()
@@ -1128,14 +2154,7 @@ async def get_deal_contract_preview(deal_id: int, db: Session = Depends(get_db))
     if not comp:
         raise HTTPException(status_code=400, detail="Deal has no associated company")
         
-    items = []
-    if d.items_json:
-        try:
-            items = json.loads(d.items_json)
-        except Exception:
-            pass
-            
-    result = calculate_estimate(items, d.discount_percentage)
+    result = calculate_estimate(_deal_calc_items(d), d.discount_percentage)
     
     # Check equipment photos
     for item in result["items"]:
@@ -1161,7 +2180,7 @@ async def get_deal_contract_preview(deal_id: int, db: Session = Depends(get_db))
         "bank_name": comp.bank_name or "",
         "kbe": comp.kbe or "",
         "bik": comp.bik or "",
-        "event_name": d.event_name or "",
+        "event_name": d.title or "",
         "event_date": d.event_date or "",
         "event_address": d.event_address or "",
         "items": result["items"],

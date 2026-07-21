@@ -299,14 +299,6 @@
             }
         }
 
-        function addCustomField(key = '', value = '') {
-            const container = document.getElementById('customFieldsContainer');
-            const row = document.createElement('div');
-            row.style.display = 'flex'; row.style.gap = '0.5rem';
-            row.innerHTML = `<input type="text" placeholder="Поле" class="cf-key" value="${key}" style="flex: 1;"><input type="text" placeholder="Значение" class="cf-val" value="${value}" style="flex: 1;"><button type="button" onclick="this.parentElement.remove()" class="btn-danger" style="padding: 0.5rem;">✕</button>`;
-            container.appendChild(row);
-        }
-
         function openEquipModal(item = null) {
             document.getElementById('equipForm').reset();
             document.getElementById('customFieldsContainer').innerHTML = '';

@@ -64,13 +64,68 @@
         </div>
 
         <div class="card">
-            <h3 style="margin-top:0;">Интеграция Telegram</h3>
-            <p>Укажите токен бота для получения уведомлений и связи с клиентами.</p>
+            <h3 style="margin-top:0;">Интеграция Telegram <span id="tg_conn" class="status-badge offline">не подключено</span></h3>
+            <p>Укажите токен бота (@BotFather) — бот будет отвечать клиентам и слать уведомления.</p>
             <div style="margin-top: 1rem;">
                 <input type="text" id="tg_token" placeholder="123456789:ABCdefGHIjkl..." style="width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 1rem; background: var(--background); color: var(--text);">
                 <button onclick="saveTelegramToken()">Сохранить токен</button>
             </div>
             <p id="tg_status" style="color: #16a34a; margin-top: 0.5rem; display: none;">Сохранено!</p>
+            <hr style="border:none; border-top:1px solid var(--border); margin: 1.2rem 0;">
+            <p style="font-size:0.9rem;">Чтобы бот получал входящие сообщения, укажите публичный адрес сервера (https) и нажмите «Подключить вебхук».</p>
+            <div style="display:flex; gap:0.5rem;">
+                <input type="text" id="tg_webhook_url" placeholder="https://ваш-домен.kz" style="flex:1; padding: 0.6rem; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--text);">
+                <button onclick="setTgWebhook()">Подключить вебхук</button>
+            </div>
+            <p id="tg_webhook_status" style="font-size:0.85rem; margin-top:0.5rem; color:var(--text-light);"></p>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">AI Чат-бот (Google Gemini) <span id="ai_conn" class="status-badge offline">не подключено</span></h3>
+            <p>Ключ Gemini API нужен, чтобы чат-бот отвечал клиентам. Получить бесплатно: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--primary)">aistudio.google.com</a></p>
+            <div style="display:flex; gap:0.5rem; margin-top: 1rem;">
+                <input type="password" id="ai_key" placeholder="AIza..." style="flex:1; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--text);">
+                <button onclick="saveAiKey()">Сохранить</button>
+            </div>
+            <p id="ai_status" style="color: #16a34a; margin-top: 0.5rem; display: none;">Сохранено!</p>
+            <p style="font-size:0.9rem; margin-top:1rem;">График работы бота и его база знаний настраиваются в разделе <a href="/assistant" style="color:var(--primary)">AI Чат-бот</a>.</p>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">Интеграция Instagram Direct <span id="ig_conn" class="status-badge offline">не подключено</span></h3>
+            <p>Для приёма сообщений из Instagram нужен бизнес-аккаунт, привязанный к странице Facebook, и приложение Meta с продуктом «Messenger API for Instagram».</p>
+            <ol style="font-size: 0.9rem; margin: 0.8rem 0 1rem 1.2rem; line-height: 1.7; color: var(--text);">
+                <li>Создайте приложение на <a href="https://developers.facebook.com" target="_blank" style="color:var(--primary)">developers.facebook.com</a></li>
+                <li>Получите Page Access Token с правами instagram_manage_messages</li>
+                <li>Укажите Webhook URL: <code>https://ваш-домен/api/ig/webhook</code> и Verify Token (придумайте и вставьте ниже)</li>
+            </ol>
+            <div class="form-group" style="margin-bottom:0.8rem;">
+                <input type="password" id="ig_page_token" placeholder="Page Access Token (EAAG...)" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--text); box-sizing: border-box;">
+            </div>
+            <div style="display:flex; gap:0.5rem;">
+                <input type="text" id="ig_verify_token" placeholder="Verify Token (любая секретная строка)" style="flex:1; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--text);">
+                <button onclick="saveIgSettings()">Сохранить</button>
+            </div>
+            <p id="ig_status" style="color: #16a34a; margin-top: 0.5rem; display: none;">Сохранено!</p>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">Интеграция с 1С <span id="onec_conn" class="status-badge offline">не подключено</span></h3>
+            <p>Обмен данными с 1С по REST API: контрагенты и счета. Задайте API-ключ и используйте его в 1С в заголовке <code>X-API-Key</code>.</p>
+            <div style="display:flex; gap:0.5rem; margin-top: 1rem;">
+                <input type="text" id="onec_key" placeholder="Придумайте длинный секретный ключ" style="flex:1; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--text);">
+                <button onclick="saveOnecKey()">Сохранить</button>
+            </div>
+            <p id="onec_status" style="color: #16a34a; margin-top: 0.5rem; display: none;">Сохранено!</p>
+            <div style="margin-top: 1rem; font-size: 0.88rem; line-height: 1.7;">
+                <strong>Доступные методы:</strong>
+                <code style="display:block; background:var(--bg-2, #f1f5f9); padding:0.8rem; border-radius:6px; margin-top:0.5rem; font-family:monospace; font-size: 0.8rem;">
+                    GET&nbsp;&nbsp;/api/1c/counterparties — выгрузка контрагентов<br>
+                    POST /api/1c/counterparties — загрузка контрагентов (сопоставление по БИН)<br>
+                    GET&nbsp;&nbsp;/api/1c/invoices — выгрузка счетов<br>
+                    POST /api/1c/invoices — загрузка счетов (сопоставление по номеру)
+                </code>
+            </div>
         </div>
 
         <div class="card">
@@ -96,11 +151,11 @@
         <div class="card">
             <h3 style="margin-top:0;">Как запустить сервер WhatsApp?</h3>
             <p>Чтобы QR-код и интеграция работали, на этом компьютере/сервере должен быть установлен <strong>Docker</strong> и запущен контейнер WAHA.</p>
-            <p>Выполните в терминале команду (только один раз):</p>
+            <p>Выполните в терминале команду (только один раз). Параметр WHATSAPP_HOOK подключает входящие сообщения к CRM и AI чат-боту:</p>
             <code style="display:block; background:#f1f5f9; padding:1rem; border-radius:4px; font-family:monospace; word-break:break-all;">
-                docker run -it -p 3000:3000/tcp devlikeapro/waha
+                docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=http://host.docker.internal:8000/api/wa/webhook -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha
             </code>
-            <p style="font-size:0.9rem; margin-top:1rem; color:var(--text-light);">После успешного запуска WAHA на порту 3000 вы сможете отсканировать QR-код выше.</p>
+            <p style="font-size:0.9rem; margin-top:1rem; color:var(--text-light);">После успешного запуска WAHA на порту 3000 вы сможете отсканировать QR-код выше. Входящие сообщения появятся в разделе «Чаты», и на них ответит AI чат-бот.</p>
         </div>
     </div>
 
@@ -177,14 +232,100 @@
                     const status = document.getElementById('tg_status');
                     status.style.display = 'block';
                     setTimeout(() => status.style.display = 'none', 3000);
+                    loadIntegrationStatus();
                 }
             } catch (e) {
                 console.error(e);
             }
         }
 
+        async function setTgWebhook() {
+            const url = document.getElementById('tg_webhook_url').value.trim();
+            const statusEl = document.getElementById('tg_webhook_status');
+            if (!url) { statusEl.innerText = 'Укажите адрес сервера'; return; }
+            statusEl.innerText = 'Подключение...';
+            try {
+                const res = await fetch('/api/tg/set-webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await res.json();
+                statusEl.innerText = data.ok ? '✅ Вебхук подключён — бот принимает сообщения' : ('Ошибка: ' + (data.description || data.error || JSON.stringify(data)));
+            } catch (e) {
+                statusEl.innerText = 'Ошибка соединения';
+            }
+        }
+
+        async function saveAiKey() {
+            const api_key = document.getElementById('ai_key').value.trim();
+            if (!api_key) return;
+            const res = await fetch('/api/settings/ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ api_key })
+            });
+            if (res.ok) {
+                const st = document.getElementById('ai_status');
+                st.style.display = 'block';
+                setTimeout(() => st.style.display = 'none', 3000);
+                loadIntegrationStatus();
+            }
+        }
+
+        async function saveIgSettings() {
+            const page_token = document.getElementById('ig_page_token').value.trim();
+            const verify_token = document.getElementById('ig_verify_token').value.trim();
+            if (!page_token && !verify_token) return;
+            const res = await fetch('/api/settings/instagram', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ page_token, verify_token })
+            });
+            if (res.ok) {
+                const st = document.getElementById('ig_status');
+                st.style.display = 'block';
+                setTimeout(() => st.style.display = 'none', 3000);
+                loadIntegrationStatus();
+            }
+        }
+
+        async function saveOnecKey() {
+            const api_key = document.getElementById('onec_key').value.trim();
+            if (!api_key) return;
+            const res = await fetch('/api/settings/1c', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ api_key })
+            });
+            if (res.ok) {
+                const st = document.getElementById('onec_status');
+                st.style.display = 'block';
+                setTimeout(() => st.style.display = 'none', 3000);
+                loadIntegrationStatus();
+            }
+        }
+
+        async function loadIntegrationStatus() {
+            try {
+                const res = await fetch('/api/settings/status');
+                const s = await res.json();
+                const apply = (id, ok) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    el.className = 'status-badge ' + (ok ? 'online' : 'offline');
+                    el.innerText = ok ? 'подключено' : 'не подключено';
+                };
+                apply('tg_conn', s.telegram);
+                apply('ai_conn', s.gemini);
+                apply('ig_conn', s.instagram);
+                apply('onec_conn', s.onec);
+            } catch (e) { console.error(e); }
+        }
+
         window.onload = () => {
             checkStatus();
+            loadIntegrationStatus();
         };
     </script>
 {% endblock %}
