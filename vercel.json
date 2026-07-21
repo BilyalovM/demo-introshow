@@ -2,14 +2,14 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "functions": {
-    "app.py": {
-      "excludeFiles": "{venv/**,venv_latest/**,venv_new/**,FOR_UPLOAD/**,__pycache__/**,*.pyc,.DS_Store,uploads/.DS_Store,uvicorn.log,test_*.py,test_*.docx,test_output*.docx,test_table*.docx,temp*.js,*_test.js,fix_*.py,parse_*.py,inspect_*.py,patch_*.py,update_*.py,rewrite_*.py,scrape_*.py,seed_*.py,make_mockups.py,add_save_btn.py,append_quote.py,complete_save_quote.py,replace_name.py,load_quote_data.py,generate_template_docx.py,check_docxtpl.py,data.sqlite,database.db}"
+    "api/index.py": {
+      "excludeFiles": "{venv/**,venv_latest/**,venv_new/**,FOR_UPLOAD/**,__pycache__/**,*.pyc,uploads/**,uvicorn.log}"
     }
   },
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/app.py"
+      "destination": "/api/index"
     }
   ]
 }

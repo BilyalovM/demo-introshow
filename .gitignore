@@ -38,3 +38,5 @@ database.db
 !templates/contract_template.docx
 !contract_template.docx
 scrape_ainex.js
+.vercel
+.env*
