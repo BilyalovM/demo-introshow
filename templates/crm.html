@@ -416,13 +416,23 @@
         }
         .crm-main-layout {
             flex-direction: column;
+            /* stretch, иначе дочерний блок растягивается до ширины всех колонок
+               канбана и горизонтальная прокрутка не работает */
+            align-items: stretch;
+        }
+        #crm-content-area {
+            max-width: 100%;
         }
         #crm-sidebar-area {
             width: 100% !important;
             margin-left: 0 !important;
             margin-top: 16px;
         }
+        .crm-page {
+            padding: 16px 12px !important;
+        }
         .kanban-board {
+            max-width: 100%;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
         }
@@ -438,7 +448,7 @@
 {% endblock %}
 
 {% block content %}
-<div style="padding: 24px; box-sizing: border-box; width: 100%;">
+<div class="crm-page" style="padding: 24px; box-sizing: border-box; width: 100%;">
     <h1 class="page-title">CRM</h1>
     <p class="page-sub">Клиенты, сделки и этапы воронки. В работе: <span id="crm-total-sum-label" style="font-weight: 700; color: var(--primary);">0 ₸</span></p>
     

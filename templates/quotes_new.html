@@ -11,7 +11,7 @@
 <p class="page-sub">Добавьте позиции, задайте даты и скидку — затем сохраните и выгрузите документы.</p>
 
 <div class="grid quote-layout" style="grid-template-columns:1fr 360px;align-items:start">
-    <div class="grid" style="gap:16px">
+    <div class="grid quote-main" style="gap:16px">
         <div class="card">
             <h3 style="margin-top:0">Параметры</h3>
             <div class="grid cols-2">
@@ -126,9 +126,54 @@
     color: var(--text);
     font-family: inherit;
 }
+/* Каталог прокручивается внутри своей карточки, а не растягивает страницу */
+#catalogContainer {
+    max-height: 46vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Десктоп: левая часть (параметры/каталог/позиции) и правая (клиент/итоги)
+   прокручиваются независимо друг от друга */
+@media (min-width: 1025px) {
+    .quote-main,
+    .quote-side {
+        max-height: calc(100vh - 150px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-right: 4px;
+    }
+}
+
 @media (max-width: 1024px) {
     .quote-layout { grid-template-columns: 1fr !important; }
-    .quote-side { position: static !important; }
+    .quote-side { position: static !important; max-height: none; overflow: visible; }
+}
+
+/* Мобильный: позиции сметы — карточками, без горизонтального сжатия */
+@media (max-width: 768px) {
+    #catalogContainer { max-height: 52vh; }
+    table.cart-table, table.cart-table tbody { display: block; width: 100%; }
+    table.cart-table tr {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 10px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--border-2);
+    }
+    table.cart-table tr:hover { background: transparent; }
+    table.cart-table td { display: block; padding: 0; border: none !important; text-align: left; }
+    table.cart-table td.ct-name { grid-column: 1 / -1; font-weight: 600; line-height: 1.35; white-space: normal; }
+    table.cart-table td.ct-qty, table.cart-table td.ct-days { white-space: nowrap; }
+    table.cart-table td.ct-price { grid-column: 1 / 2; white-space: nowrap; }
+    table.cart-table td.ct-sum { grid-column: 2 / 3; text-align: right; align-self: center; white-space: nowrap; }
+    table.cart-table td.ct-del { grid-column: 1 / -1; text-align: right; }
+    table.cart-table td input { font-size: 16px; }
+    table.cart-table td.ct-qty input, table.cart-table td.ct-days input { width: 64px !important; }
+    table.cart-table td.ct-price input { width: 110px; }
+    table.cart-table td.ct-del .btn { min-height: 34px; font-size: 20px; }
+    .conflict-tooltip { position: fixed; left: 16px; right: 16px; top: auto; bottom: calc(var(--bottom-nav-h, 64px) + 20px); min-width: 0; max-width: none; }
 }
 </style>
 <script>
@@ -354,19 +399,19 @@ function renderCart() {
     empty.style.display = 'none';
 
     const table = document.createElement('table');
-    table.className = 'data';
+    table.className = 'data cart-table';
     const tbody = document.createElement('tbody');
 
     cart.forEach(item => {
         const changed = item.price !== item.stock_price;
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${esc(item.name)}${changed ? ' <span class="muted" style="font-size:11px">(цена изменена)</span>' : ''}</td>
-            <td class="num"><input type="number" class="num" style="width:52px;padding:4px" value="${item.qty}" min="1" onchange="updateCartItem(${item.id}, 'qty', this.value)"> шт</td>
-            <td class="num"><input type="number" class="num" style="width:52px;padding:4px" value="${item.days}" min="1" onchange="updateCartItem(${item.id}, 'days', this.value)"> дн</td>
-            <td class="num"><input type="number" class="price-input" value="${item.price}" min="0" onchange="updateCartPrice(${item.id}, this.value)"> ₸</td>
-            <td class="num" style="white-space:nowrap"><strong>${fmt(item.price * item.qty * item.days)} ₸</strong></td>
-            <td style="width:30px"><button class="btn btn-sm" style="color:var(--danger);border:none;background:none" onclick="removeFromCart(${item.id})">×</button></td>`;
+            <td class="ct-name">${esc(item.name)}${changed ? ' <span class="muted" style="font-size:11px">(цена изменена)</span>' : ''}</td>
+            <td class="num ct-qty"><input type="number" class="num" style="width:52px;padding:4px" value="${item.qty}" min="1" onchange="updateCartItem(${item.id}, 'qty', this.value)"> шт</td>
+            <td class="num ct-days"><input type="number" class="num" style="width:52px;padding:4px" value="${item.days}" min="1" onchange="updateCartItem(${item.id}, 'days', this.value)"> дн</td>
+            <td class="num ct-price"><input type="number" class="price-input" value="${item.price}" min="0" onchange="updateCartPrice(${item.id}, this.value)"> ₸</td>
+            <td class="num ct-sum" style="white-space:nowrap"><strong>${fmt(item.price * item.qty * item.days)} ₸</strong></td>
+            <td class="ct-del" style="width:30px"><button class="btn btn-sm" style="color:var(--danger);border:none;background:none" onclick="removeFromCart(${item.id})">×<span class="mobile-only" style="font-size:13px;margin-left:4px">удалить</span></button></td>`;
         tbody.appendChild(tr);
     });
     table.appendChild(tbody);
