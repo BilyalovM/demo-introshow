@@ -91,30 +91,49 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     background: var(--danger);
     border-radius: 50%;
     font-size: 12px;
     flex: none;
+    border: none;
+    padding: 0;
+    line-height: 1;
 }
-.conflict-tooltip {
+.conflict-icon:hover { filter: brightness(1.08); }
+/* Всплывашка вне overflow-контейнера каталога — иначе обрезается */
+#conflict-popover {
     display: none;
-    position: absolute;
-    left: 0;
-    top: 100%;
+    position: fixed;
+    z-index: 10050;
+    max-width: min(360px, calc(100vw - 24px));
     background: var(--surface);
     border: 1px solid var(--danger);
     color: var(--text);
-    padding: 10px 12px;
-    border-radius: 10px;
-    z-index: 1000;
-    box-shadow: var(--shadow-md);
-    font-size: 12.5px;
-    white-space: pre-line;
-    min-width: 260px;
-    max-width: 360px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg, 0 12px 32px rgba(15, 23, 42, 0.18));
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
+#conflict-popover.visible { display: block; }
+#conflict-popover .cp-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--danger);
+    font-size: 12.5px;
+}
+#conflict-popover-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 10040;
+    background: transparent;
+}
+#conflict-popover-backdrop.visible { display: block; }
 .cat-name { position: relative; }
 .price-input {
     width: 90px;
@@ -173,9 +192,17 @@
     table.cart-table td.ct-qty input, table.cart-table td.ct-days input { width: 64px !important; }
     table.cart-table td.ct-price input { width: 110px; }
     table.cart-table td.ct-del .btn { min-height: 34px; font-size: 20px; }
-    .conflict-tooltip { position: fixed; left: 16px; right: 16px; top: auto; bottom: calc(var(--bottom-nav-h, 64px) + 20px); min-width: 0; max-width: none; }
+    #conflict-popover {
+        left: 12px !important;
+        right: 12px !important;
+        max-width: none;
+        bottom: calc(var(--bottom-nav-h, 64px) + 16px);
+        top: auto !important;
+    }
 }
 </style>
+<div id="conflict-popover-backdrop" onclick="hideConflictPopover()"></div>
+<div id="conflict-popover" role="dialog" aria-live="polite"></div>
 <script>
 const QUOTE_ID = {{ quote_id or 'null' }};
 let equipment = [];
@@ -189,6 +216,42 @@ function fmt(n) { return Math.round(n).toLocaleString('ru-RU'); }
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+function hideConflictPopover() {
+    const pop = document.getElementById('conflict-popover');
+    const bd = document.getElementById('conflict-popover-backdrop');
+    if (pop) pop.classList.remove('visible');
+    if (bd) bd.classList.remove('visible');
+}
+
+function showConflictPopover(event, btn) {
+    event.preventDefault();
+    event.stopPropagation();
+    const pop = document.getElementById('conflict-popover');
+    const bd = document.getElementById('conflict-popover-backdrop');
+    if (!pop || !bd) return;
+    const tip = btn.getAttribute('data-tip') || '';
+    pop.innerHTML = `<div class="cp-title">⚠ Оборудование занято</div>${esc(tip)}`;
+    bd.classList.add('visible');
+    pop.classList.add('visible');
+
+    // Позиция рядом с кнопкой «!», с поправкой на края экрана
+    const rect = btn.getBoundingClientRect();
+    const margin = 12;
+    pop.style.left = '0px';
+    pop.style.top = '0px';
+    const pw = pop.offsetWidth;
+    const ph = pop.offsetHeight;
+    let left = rect.left;
+    let top = rect.bottom + 8;
+    if (left + pw > window.innerWidth - margin) left = window.innerWidth - pw - margin;
+    if (left < margin) left = margin;
+    if (top + ph > window.innerHeight - margin) top = Math.max(margin, rect.top - ph - 8);
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+}
+
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideConflictPopover(); });
 
 async function loadAll() {
     try {
@@ -271,16 +334,16 @@ function renderCatalog() {
             if (c && c.booked > 0) {
                 tr.className = 'cat-row-conflict';
                 const lines = c.conflicts.map(x =>
-                    `Товар зарезервирован в договоре № ${x.contract_no}` +
-                    (x.until ? ` до ${x.until}` : '') + ` (${x.qty} шт.)` +
-                    (x.deal_title ? `\n«${x.deal_title}»` : '')
-                ).join('\n\n');
+                    `• Договор № ${x.contract_no}` +
+                    (x.until ? ` до ${x.until}` : '') + ` — ${x.qty} шт.` +
+                    (x.deal_title ? `\n  «${x.deal_title}»` : '')
+                ).join('\n');
                 const free = Math.max(0, item.stock_quantity - c.booked);
-                conflictHtml = `<span class="conflict-icon"
-                        onmouseenter="this.nextElementSibling.style.display='block'"
-                        onmouseleave="this.nextElementSibling.style.display='none'"
-                        onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'block' ? 'none' : 'block'">!</span>
-                    <div class="conflict-tooltip">${esc(lines)}\n\nНа складе: ${item.stock_quantity} шт. Свободно на выбранные даты: ${free} шт.</div>`;
+                const tip = `Зарезервировано на выбранные даты:\n${lines}\n\nНа складе: ${item.stock_quantity} шт.\nСвободно: ${free} шт.`;
+                const tipAttr = tip.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+                conflictHtml = `<button type="button" class="conflict-icon" title="Подробности брони"
+                        data-tip="${tipAttr}"
+                        onclick="showConflictPopover(event, this)">!</button>`;
             }
             tr.innerHTML = `
                 <td class="cat-name">${esc(item.name)} ${conflictHtml}</td>

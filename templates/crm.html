@@ -2105,17 +2105,17 @@
     }
 
     // ---- Задачи, привязанные к сделке ----
-    let crmUsers = [];
-
     async function loadDealTasks() {
         if (!activeDealId) return;
         try {
             if (!crmUsers.length) {
                 const uRes = await fetch('/api/users/names');
                 if (uRes.ok) crmUsers = await uRes.json();
-                const sel = document.getElementById('deal-task-assignee');
+            }
+            const sel = document.getElementById('deal-task-assignee');
+            if (sel) {
                 sel.innerHTML = '<option value="">Ответственный: я</option>' +
-                    crmUsers.map(u => `<option value="${escapeHtml(u.full_name)}">${escapeHtml(u.full_name)}</option>`).join('');
+                    crmUsers.map(u => `<option value="${escapeHtml(u.username || u.full_name)}">${escapeHtml(u.full_name || u.username)}</option>`).join('');
             }
             const res = await fetch(`/api/tasks?deal_id=${activeDealId}`);
             const tasks = await res.json();
