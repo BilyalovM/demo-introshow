@@ -115,6 +115,7 @@
 {% block extra_scripts %}
 <script>
     let sections = {};
+    let flags = {};
     let usersCache = [];
 
     const roleNames = { admin: 'Администратор', manager: 'Менеджер', user: 'Сотрудник' };
@@ -126,13 +127,23 @@
 
     async function loadSections() {
         const res = await fetch('/api/users/sections');
-        sections = await res.json();
+        const data = await res.json();
+        // Поддержка старого формата {crm: "..."} и нового {sections, flags}
+        sections = data.sections || data;
+        flags = data.flags || {};
         const grid = document.getElementById('perm-grid');
         grid.innerHTML = '';
         for (const [key, label] of Object.entries(sections)) {
             const el = document.createElement('label');
             el.className = 'perm-item';
-            el.innerHTML = `<input type="checkbox" value="${key}" class="perm-cb"> ${label}`;
+            el.innerHTML = `<input type="checkbox" value="${key}" class="perm-cb"> ${escapeHtml(label)}`;
+            grid.appendChild(el);
+        }
+        for (const [key, label] of Object.entries(flags)) {
+            const el = document.createElement('label');
+            el.className = 'perm-item';
+            el.style.borderColor = 'var(--primary)';
+            el.innerHTML = `<input type="checkbox" value="${key}" class="perm-cb"> ${escapeHtml(label)}`;
             grid.appendChild(el);
         }
     }
@@ -145,7 +156,8 @@
     function permsSummary(u) {
         if (u.role === 'admin') return 'Все разделы';
         if (!u.permissions || u.permissions.length === 0) return 'Все разделы';
-        return u.permissions.map(p => sections[p] || p).join(', ');
+        const labels = { ...sections, ...flags };
+        return u.permissions.map(p => labels[p] || p).join(', ');
     }
 
     async function loadUsers() {

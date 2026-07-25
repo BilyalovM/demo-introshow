@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
@@ -115,6 +115,13 @@ with Session(engine) as session:
         "ALTER TABLE tasks ADD COLUMN created_by VARCHAR",
         "ALTER TABLE tasks ADD COLUMN priority VARCHAR DEFAULT 'normal'",
         "ALTER TABLE tasks ADD COLUMN completed_at DATETIME",
+        # CRM → ближе к Битрикс24
+        "ALTER TABLE deals ADD COLUMN assignee_id INTEGER",
+        "ALTER TABLE deals ADD COLUMN source VARCHAR",
+        "ALTER TABLE deals ADD COLUMN loss_reason VARCHAR",
+        "ALTER TABLE deals ADD COLUMN is_qualified BOOLEAN DEFAULT 0",
+        "ALTER TABLE deals ADD COLUMN is_archived BOOLEAN DEFAULT 0",
+        "ALTER TABLE contacts ADD COLUMN is_primary BOOLEAN DEFAULT 0",
     ]:
         try:
             session.execute(text(ddl))
@@ -200,16 +207,21 @@ class FolderCreate(BaseModel):
 class DealCreate(BaseModel):
     title: str
     company_id: Optional[int] = None
+    contact_id: Optional[int] = None
+    assignee_id: Optional[int] = None
     pipeline_id: Optional[int] = 1
     setup_date: Optional[str] = None
     event_date: str
     event_address: Optional[str] = None
     discount_percentage: float = 0.0
     items_json: Optional[str] = None
+    source: Optional[str] = "manual"
+    is_qualified: Optional[bool] = False
 
 class DealStageUpdate(BaseModel):
     stage: int
     pipeline_id: Optional[int] = None
+    loss_reason: Optional[str] = None
 
 class CompanyCreate(BaseModel):
     name: str
@@ -469,6 +481,44 @@ async def read_analytics(request: Request, db: Session = Depends(get_db), user: 
         bot_replies = db.query(ChatMessage).filter(ChatMessage.channel == channel, ChatMessage.is_bot == True, ChatMessage.created_at >= month_ago).count()
         msg_stats.append({"label": label, "incoming": incoming, "outgoing": outgoing, "bot": bot_replies})
 
+    # Разрезы по менеджерам / источникам / причинам отказа
+    users_map = {u.id: (u.full_name or u.username) for u in db.query(User).all()}
+    by_manager = {}
+    for d in deals:
+        if getattr(d, "is_archived", False):
+            continue
+        key = d.assignee_id or 0
+        label = users_map.get(key, "Без ответственного") if key else "Без ответственного"
+        row = by_manager.setdefault(label, {"name": label, "won_sum": 0, "won": 0, "lost": 0, "active": 0})
+        sn = stage_name(d)
+        if "Успешно" in sn:
+            row["won"] += 1
+            row["won_sum"] += d.final_sum or 0
+        elif "проигра" in sn.lower():
+            row["lost"] += 1
+        else:
+            row["active"] += 1
+    by_manager_rows = sorted(by_manager.values(), key=lambda x: -x["won_sum"])
+
+    by_source = {}
+    SOURCE_LABELS = {
+        "whatsapp": "WhatsApp", "telegram": "Telegram", "instagram": "Instagram",
+        "manual": "Вручную", "referral": "Рекомендация", "site": "Сайт", "other": "Другое",
+    }
+    for d in deals:
+        if getattr(d, "is_archived", False):
+            continue
+        src = d.source or ("manual" if not d.chat_channel else d.chat_channel)
+        label = SOURCE_LABELS.get(src, src or "—")
+        by_source[label] = by_source.get(label, 0) + 1
+    by_source_rows = sorted(by_source.items(), key=lambda x: -x[1])
+
+    loss_reasons = {}
+    for d in lost:
+        reason = (d.loss_reason or "Не указана").strip() or "Не указана"
+        loss_reasons[reason] = loss_reasons.get(reason, 0) + 1
+    loss_reason_rows = sorted(loss_reasons.items(), key=lambda x: -x[1])[:8]
+
     return templates.TemplateResponse("analytics.html", {
         "request": request,
         "active_page": "analytics",
@@ -482,6 +532,9 @@ async def read_analytics(request: Request, db: Session = Depends(get_db), user: 
         "funnel": funnel,
         "max_count": max_count,
         "msg_stats": msg_stats,
+        "by_manager_rows": by_manager_rows,
+        "by_source_rows": by_source_rows,
+        "loss_reason_rows": loss_reason_rows,
     })
 
 
@@ -593,12 +646,12 @@ def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_us
 @app.get("/api/users/names")
 def get_user_names(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Список сотрудников (для выбора ответственного) — доступен всем авторизованным."""
-    return [{"username": u.username, "full_name": u.full_name or u.username} for u in db.query(User).all()]
+    return [{"id": u.id, "username": u.username, "full_name": u.full_name or u.username} for u in db.query(User).all()]
 
 @app.get("/api/users/sections")
 def get_user_sections(user: User = Depends(get_current_user)):
-    """Справочник разделов системы для настройки прав."""
-    return auth.SECTIONS
+    """Справочник разделов и флагов прав для настройки доступа."""
+    return {"sections": auth.SECTIONS, "flags": auth.PERMISSION_FLAGS}
 
 class UserCreate(BaseModel):
     username: str
@@ -899,6 +952,32 @@ def create_company(comp: CompanyCreate, db: Session = Depends(get_db)):
     db.refresh(db_comp)
     return db_comp
 
+
+def _norm_phone_digits(value: str) -> str:
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+@app.get("/api/companies/check-duplicates")
+def check_company_duplicates(phone: Optional[str] = None, bin: Optional[str] = None, exclude_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Предупреждение о возможных дублях (не блокирует сохранение)."""
+    matches = []
+    phone_n = _norm_phone_digits(phone or "")
+    if phone_n:
+        for c in db.query(Company).filter(Company.phone.isnot(None)).all():
+            if exclude_id and c.id == exclude_id:
+                continue
+            if _norm_phone_digits(c.phone) == phone_n:
+                matches.append({"id": c.id, "name": c.name, "field": "phone", "value": c.phone})
+    if bin:
+        bin_s = bin.strip()
+        for c in db.query(Company).filter(Company.bin == bin_s).all():
+            if exclude_id and c.id == exclude_id:
+                continue
+            matches.append({"id": c.id, "name": c.name, "field": "bin", "value": c.bin})
+    return {"duplicates": matches, "has_duplicates": len(matches) > 0}
+
+
 @app.get("/api/companies/{company_id}")
 def get_company_detail(company_id: int, db: Session = Depends(get_db)):
     db_comp = db.query(Company).filter(Company.id == company_id).first()
@@ -967,6 +1046,7 @@ class ContactCreate(BaseModel):
     email: Optional[str] = None
     comment: Optional[str] = None
     company_id: Optional[int] = None
+    is_primary: Optional[bool] = False
 
 class ContactUpdate(BaseModel):
     name: Optional[str] = None
@@ -975,6 +1055,16 @@ class ContactUpdate(BaseModel):
     email: Optional[str] = None
     comment: Optional[str] = None
     company_id: Optional[int] = None
+    is_primary: Optional[bool] = None
+
+
+def _set_primary_contact(db: Session, contact: Contact):
+    if not contact.is_primary or not contact.company_id:
+        return
+    db.query(Contact).filter(
+        Contact.company_id == contact.company_id,
+        Contact.id != contact.id,
+    ).update({Contact.is_primary: False})
 
 
 @app.get("/api/contacts")
@@ -985,15 +1075,17 @@ def get_contacts(company_id: Optional[int] = None, db: Session = Depends(get_db)
     return [{
         "id": c.id, "name": c.name, "position": c.position,
         "phone": c.phone, "email": c.email, "comment": c.comment,
-        "company_id": c.company_id,
+        "company_id": c.company_id, "is_primary": bool(c.is_primary),
         "company_name": c.company.name if c.company else None,
-    } for c in query.order_by(Contact.name).all()]
+    } for c in query.order_by(Contact.is_primary.desc(), Contact.name).all()]
 
 
 @app.post("/api/contacts")
 def create_contact(c: ContactCreate, db: Session = Depends(get_db)):
     contact = Contact(**c.dict())
     db.add(contact)
+    db.flush()
+    _set_primary_contact(db, contact)
     db.commit()
     db.refresh(contact)
     return {"id": contact.id, "status": "success"}
@@ -1006,6 +1098,7 @@ def update_contact(contact_id: int, c: ContactUpdate, db: Session = Depends(get_
         return JSONResponse(status_code=404, content={"error": "Контакт не найден"})
     for key, value in c.dict(exclude_unset=True).items():
         setattr(contact, key, value)
+    _set_primary_contact(db, contact)
     db.commit()
     return {"status": "success"}
 
@@ -1098,21 +1191,53 @@ def delete_custom_field(field_id: int, db: Session = Depends(get_db), user: User
     db.commit()
     return {"status": "success"}
 
+class PipelineRename(BaseModel):
+    name: str
+
+
 @app.get("/api/pipelines")
 def get_pipelines(db: Session = Depends(get_db)):
     pipelines = db.query(Pipeline).all()
-    return [{"id": p.id, "name": p.name} for p in pipelines]
+    return [{"id": p.id, "name": p.name, "stages_count": len(p.stages)} for p in pipelines]
 
 @app.post("/api/pipelines")
-def create_pipeline(pl: PipelineCreate, db: Session = Depends(get_db)):
+def create_pipeline(pl: PipelineCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
     db_pl = Pipeline(name=pl.name)
     db.add(db_pl)
     db.commit()
     db.refresh(db_pl)
+    # Базовые стадии как у основной воронки
+    defaults = [
+        "Первичный контакт", "Согласование сметы", "Договор и счет",
+        "Предоплата внесена", "Монтаж / Мероприятие", "Успешно реализовано",
+        "Сделка проиграна",
+    ]
+    for i, name in enumerate(defaults):
+        db.add(Stage(
+            pipeline_id=db_pl.id, name=name, order_index=i + 1,
+            is_active_rent=any(k in name for k in ("Предоплата", "Монтаж", "Мероприятие")),
+        ))
+    db.commit()
     return {"id": db_pl.id, "name": db_pl.name}
 
+
+@app.put("/api/pipelines/{pipeline_id}")
+def rename_pipeline(pipeline_id: int, pl: PipelineRename, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    pipe = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipe:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    pipe.name = pl.name
+    db.commit()
+    return {"id": pipe.id, "name": pipe.name}
+
 @app.delete("/api/pipelines/{pipeline_id}")
-def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db)):
+def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
     pl = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
     if not pl:
         return {"error": "Pipeline not found"}
@@ -1280,43 +1405,139 @@ def _recalc_deal_sum(db: Session, deal: Deal) -> None:
     db.commit()
 
 
+def _default_assignee_id(db: Session) -> Optional[int]:
+    u = db.query(User).filter(User.role.in_(["admin", "manager"])).order_by(User.id).first()
+    return u.id if u else None
+
+
+def _user_crm_own_only(user: User) -> bool:
+    if not user or user.role == "admin":
+        return False
+    perms = user.permissions or []
+    return "crm_own_only" in perms
+
+
+def _deal_has_overdue_activity(db: Session, deal_id: int) -> bool:
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    acts = db.query(Activity).filter(
+        Activity.deal_id == deal_id,
+        Activity.status == "planned",
+        Activity.due_at.isnot(None),
+    ).all()
+    for a in acts:
+        due = (a.due_at or "")[:10]
+        if due and due < today:
+            return True
+    return False
+
+
+def _serialize_deal_card(d: Deal, db: Session) -> dict:
+    assignee_name = None
+    if d.assignee_id and d.assignee:
+        assignee_name = d.assignee.full_name or d.assignee.username
+    return {
+        "id": d.id,
+        "title": d.title,
+        "company_id": d.company_id,
+        "company_name": d.company.name if d.company else "Unknown",
+        "company_phone": d.company.phone if d.company else "",
+        "pipeline_id": d.pipeline_id,
+        "stage": d.stage,
+        "event_date": d.event_date,
+        "setup_date": d.setup_date,
+        "final_sum": d.final_sum or 0,
+        "chat_channel": d.chat_channel,
+        "assignee_id": d.assignee_id,
+        "assignee_name": assignee_name,
+        "contact_id": d.contact_id,
+        "source": d.source or d.chat_channel or "manual",
+        "loss_reason": d.loss_reason,
+        "is_qualified": bool(d.is_qualified),
+        "is_archived": bool(d.is_archived),
+        "has_overdue_activity": _deal_has_overdue_activity(db, d.id),
+    }
+
+
 @app.get("/api/deals")
-def get_deals(pipeline_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_deals(
+    request: Request,
+    pipeline_id: Optional[int] = None,
+    assignee: Optional[str] = None,
+    source: Optional[str] = None,
+    q: Optional[str] = None,
+    rent_from: Optional[str] = None,
+    rent_to: Optional[str] = None,
+    overdue_only: Optional[bool] = False,
+    include_archived: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     query = db.query(Deal)
+    if not include_archived:
+        query = query.filter((Deal.is_archived == False) | (Deal.is_archived.is_(None)))  # noqa: E712
     if pipeline_id:
         query = query.filter(Deal.pipeline_id == pipeline_id)
-    deals = query.all()
-    # Serialize for JSON
+    if _user_crm_own_only(user):
+        query = query.filter(Deal.assignee_id == user.id)
+    elif assignee == "me":
+        query = query.filter(Deal.assignee_id == user.id)
+    elif assignee and assignee.isdigit():
+        query = query.filter(Deal.assignee_id == int(assignee))
+    if source:
+        query = query.filter((Deal.source == source) | ((Deal.source.is_(None)) & (Deal.chat_channel == source)))
+    if rent_from:
+        query = query.filter(Deal.setup_date >= rent_from)
+    if rent_to:
+        query = query.filter(Deal.event_date <= rent_to)
+
+    deals = query.order_by(Deal.id.desc()).all()
     result = []
+    q_norm = (q or "").strip().lower()
     for d in deals:
-        comp_name = d.company.name if d.company else "Unknown"
-        result.append({
-            "id": d.id,
-            "title": d.title,
-            "company_name": comp_name,
-            "pipeline_id": d.pipeline_id,
-            "stage": d.stage,
-            "event_date": d.event_date,
-            "final_sum": d.final_sum,
-            "chat_channel": d.chat_channel,
-        })
+        card = _serialize_deal_card(d, db)
+        if overdue_only and not card["has_overdue_activity"]:
+            continue
+        if q_norm:
+            blob = " ".join([
+                card["title"] or "",
+                card["company_name"] or "",
+                card["company_phone"] or "",
+                str(card["id"]),
+            ]).lower()
+            if q_norm not in blob:
+                continue
+        result.append(card)
     return result
 
 @app.post("/api/deals")
-def create_deal(deal: DealCreate, db: Session = Depends(get_db)):
+def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     # Find first stage for the pipeline
     first_stage = db.query(Stage).filter(Stage.pipeline_id == deal.pipeline_id).order_by(Stage.order_index).first()
     stage_id = first_stage.id if first_stage else 1
 
+    contact_id = deal.contact_id
+    if not contact_id and deal.company_id:
+        primary = db.query(Contact).filter(
+            Contact.company_id == deal.company_id, Contact.is_primary == True  # noqa: E712
+        ).first()
+        if primary:
+            contact_id = primary.id
+
+    assignee_id = deal.assignee_id or user.id or _default_assignee_id(db)
+
     db_deal = Deal(
         title=deal.title,
         company_id=deal.company_id,
+        contact_id=contact_id,
+        assignee_id=assignee_id,
         pipeline_id=deal.pipeline_id,
         setup_date=deal.setup_date,
         event_date=deal.event_date,
         event_address=deal.event_address,
         discount_percentage=deal.discount_percentage,
-        stage=stage_id
+        stage=stage_id,
+        source=deal.source or "manual",
+        is_qualified=bool(deal.is_qualified),
     )
     db.add(db_deal)
     db.commit()
@@ -1346,47 +1567,55 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db)):
 @app.put("/api/deals/{deal_id}/stage")
 def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session = Depends(get_db)):
     db_deal = db.query(Deal).filter(Deal.id == deal_id).first()
-    if db_deal:
-        old_stage = db_deal.stage
-        old_pipeline = db_deal.pipeline_id
-        db_deal.stage = stage_update.stage
-        if stage_update.pipeline_id is not None:
-            db_deal.pipeline_id = stage_update.pipeline_id
-        
-        history_entry = DealHistory(deal_id=deal_id, action_text=f"Стадия изменена с {old_stage} на {stage_update.stage}")
-        db.add(history_entry)
-        db.commit()
-        
-        # Check if the new stage is "Монтаж / Мероприятие" (ID 5 by default) or name implies delivery
-        new_stage_obj = db.query(Stage).filter(Stage.id == stage_update.stage).first()
-        if new_stage_obj and ("Монтаж" in new_stage_obj.name or "доставлен" in new_stage_obj.name.lower()):
-            company = db_deal.company
-            if company:
-                msg = f"Здравствуйте, {company.director_name or company.name}! Ваш заказ '{db_deal.title}' перешел в статус: {new_stage_obj.name}. Оборудование доставлено/монтируется."
-                # 1. WhatsApp
-                if company.phone:
-                    notifications.send_wa_message(company.phone, msg)
-                # 2. Telegram
-                if company.telegram_chat_id:
-                    notifications.send_tg_message(company.telegram_chat_id, msg)
-                # 3. Web Push
-                for sub in db_deal.push_subscriptions:
-                    sub_info = {
-                        "endpoint": sub.endpoint,
-                        "keys": {
-                            "p256dh": sub.p256dh,
-                            "auth": sub.auth
-                        }
-                    }
-                    notifications.send_web_push(sub_info, msg)
-                    
+    if not db_deal:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+
+    new_stage_obj = db.query(Stage).filter(Stage.id == stage_update.stage).first()
+    if new_stage_obj and "проигра" in (new_stage_obj.name or "").lower():
+        if not (stage_update.loss_reason or db_deal.loss_reason):
+            return JSONResponse(status_code=400, content={"error": "Укажите причину отказа"})
+        if stage_update.loss_reason:
+            db_deal.loss_reason = stage_update.loss_reason
+
+    old_stage = db_deal.stage
+    old_name = ""
+    old_st = db.query(Stage).filter(Stage.id == old_stage).first()
+    if old_st:
+        old_name = old_st.name
+    db_deal.stage = stage_update.stage
+    if stage_update.pipeline_id is not None:
+        db_deal.pipeline_id = stage_update.pipeline_id
+
+    new_name = new_stage_obj.name if new_stage_obj else str(stage_update.stage)
+    hist = f"Стадия изменена: {old_name or old_stage} → {new_name}"
+    if db_deal.loss_reason and new_stage_obj and "проигра" in (new_stage_obj.name or "").lower():
+        hist += f" (причина: {db_deal.loss_reason})"
+    db.add(DealHistory(deal_id=deal_id, action_text=hist))
+    db.commit()
+
+    if new_stage_obj and ("Монтаж" in new_stage_obj.name or "доставлен" in new_stage_obj.name.lower()):
+        company = db_deal.company
+        if company:
+            msg = f"Здравствуйте, {company.director_name or company.name}! Ваш заказ '{db_deal.title}' перешел в статус: {new_stage_obj.name}. Оборудование доставлено/монтируется."
+            if company.phone:
+                notifications.send_wa_message(company.phone, msg)
+            if company.telegram_chat_id:
+                notifications.send_tg_message(company.telegram_chat_id, msg)
+            for sub in db_deal.push_subscriptions:
+                notifications.send_web_push({
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                }, msg)
+
     return {"status": "success"}
 
 @app.get("/api/deals/{deal_id}")
-def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
+def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
+    if _user_crm_own_only(user) and d.assignee_id != user.id:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к этой сделке"})
     
     items = []
     for i in d.items:
@@ -1401,7 +1630,7 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
             "category_type": "fixed" if i.equipment and i.equipment.category in FIXED_CATEGORIES else "equipment"
         })
 
-    history = [{"action_text": h.action_text, "created_at": h.created_at.strftime("%Y-%m-%d %H:%M:%S")} for h in sorted(d.history, key=lambda x: x.created_at, reverse=True)]
+    history = [{"action_text": h.action_text, "created_at": h.created_at.strftime("%Y-%m-%d %H:%M:%S"), "kind": "history"} for h in sorted(d.history, key=lambda x: x.created_at, reverse=True)]
     custom_values = {cv.field_id: cv.value for cv in d.custom_values}
 
     prev_deal = None
@@ -1414,7 +1643,25 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
     if d.contact_id:
         c = db.query(Contact).filter(Contact.id == d.contact_id).first()
         if c:
-            contact = {"id": c.id, "name": c.name, "phone": c.phone, "position": c.position}
+            contact = {"id": c.id, "name": c.name, "phone": c.phone, "position": c.position, "email": c.email}
+
+    assignee_name = None
+    if d.assignee_id and d.assignee:
+        assignee_name = d.assignee.full_name or d.assignee.username
+
+    activities = [{
+        "id": a.id, "type": a.type, "title": a.title, "due_at": a.due_at,
+        "status": a.status, "assignee_id": a.assignee_id,
+        "assignee_name": (a.assignee.full_name or a.assignee.username) if a.assignee else None,
+        "result": a.result, "created_by": a.created_by,
+        "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "",
+        "kind": "activity",
+    } for a in sorted(d.activities, key=lambda x: x.created_at or datetime.utcnow(), reverse=True)]
+
+    invoices = [{
+        "id": i.id, "number": i.number, "date": i.date, "amount": i.amount,
+        "status": i.status, "company_bin": i.company_bin, "company_name": i.company_name,
+    } for i in sorted(d.invoices, key=lambda x: x.id, reverse=True)]
 
     return {
         "id": d.id,
@@ -1422,6 +1669,7 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
         "company_id": d.company_id,
         "company_name": d.company.name if d.company else "Unknown",
         "company_phone": d.company.phone if d.company else "",
+        "company_email": d.company.email if d.company else "",
         "company_instagram": d.company.instagram if d.company else "",
         "company_telegram": d.company.telegram_chat_id if d.company else "",
         "pipeline_id": d.pipeline_id,
@@ -1437,9 +1685,17 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db)):
         "chat_id": d.chat_id,
         "contact": contact,
         "contact_id": d.contact_id,
+        "assignee_id": d.assignee_id,
+        "assignee_name": assignee_name,
+        "source": d.source or d.chat_channel or "manual",
+        "loss_reason": d.loss_reason,
+        "is_qualified": bool(d.is_qualified),
+        "is_archived": bool(d.is_archived),
         "prev_deal": prev_deal,
         "items": items,
         "history": history,
+        "activities": activities,
+        "invoices": invoices,
         "custom_values": custom_values
     }
 
@@ -1482,20 +1738,238 @@ class DealUpdate(BaseModel):
     comment: Optional[str] = None
     company_id: Optional[int] = None
     contact_id: Optional[int] = None
+    assignee_id: Optional[int] = None
+    source: Optional[str] = None
+    loss_reason: Optional[str] = None
+    is_qualified: Optional[bool] = None
+    is_archived: Optional[bool] = None
+    pipeline_id: Optional[int] = None
 
 @app.put("/api/deals/{deal_id}")
-def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db)):
+def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
-    
-    for field in ("title", "event_date", "setup_date", "event_address", "comment", "company_id", "contact_id"):
-        value = getattr(update, field)
-        if value is not None:
-            setattr(d, field, value)
-        
+    if _user_crm_own_only(user) and d.assignee_id != user.id:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа"})
+
+    data = update.dict(exclude_unset=True)
+    if "assignee_id" in data and user.role not in ("admin", "manager"):
+        return JSONResponse(status_code=403, content={"error": "Нет права менять ответственного"})
+
+    # Автоподстановка основного контакта при смене компании
+    if "company_id" in data and data["company_id"] and "contact_id" not in data:
+        primary = db.query(Contact).filter(
+            Contact.company_id == data["company_id"], Contact.is_primary == True  # noqa: E712
+        ).first()
+        if primary:
+            data["contact_id"] = primary.id
+
+    for field, value in data.items():
+        setattr(d, field, value)
+
     db.commit()
     return {"status": "success"}
+
+
+@app.post("/api/deals/{deal_id}/archive")
+def archive_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    d.is_archived = True
+    db.add(DealHistory(deal_id=deal_id, action_text="Сделка архивирована"))
+    db.commit()
+    return {"status": "success"}
+
+
+@app.post("/api/deals/{deal_id}/unarchive")
+def unarchive_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    d.is_archived = False
+    db.add(DealHistory(deal_id=deal_id, action_text="Сделка восстановлена из архива"))
+    db.commit()
+    return {"status": "success"}
+
+
+# -- Дела (Activities) --
+class ActivityCreate(BaseModel):
+    deal_id: int
+    type: str = "call"
+    title: str
+    due_at: Optional[str] = None
+    assignee_id: Optional[int] = None
+    status: Optional[str] = "planned"
+    result: Optional[str] = None
+
+
+class ActivityUpdate(BaseModel):
+    type: Optional[str] = None
+    title: Optional[str] = None
+    due_at: Optional[str] = None
+    assignee_id: Optional[int] = None
+    status: Optional[str] = None
+    result: Optional[str] = None
+
+
+@app.get("/api/activities")
+def get_activities(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
+    q = db.query(Activity)
+    if deal_id:
+        q = q.filter(Activity.deal_id == deal_id)
+    rows = q.order_by(Activity.id.desc()).all()
+    return [{
+        "id": a.id, "deal_id": a.deal_id, "type": a.type, "title": a.title,
+        "due_at": a.due_at, "status": a.status, "assignee_id": a.assignee_id,
+        "assignee_name": (a.assignee.full_name or a.assignee.username) if a.assignee else None,
+        "result": a.result, "created_by": a.created_by,
+        "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "",
+    } for a in rows]
+
+
+@app.post("/api/activities")
+def create_activity(a: ActivityCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == a.deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    act = Activity(
+        deal_id=a.deal_id, type=a.type or "call", title=a.title,
+        due_at=a.due_at, assignee_id=a.assignee_id or user.id,
+        status=a.status or "planned", result=a.result,
+        created_by=user.username,
+    )
+    db.add(act)
+    db.add(DealHistory(deal_id=a.deal_id, action_text=f"Запланировано дело ({a.type}): {a.title}"))
+    db.commit()
+    db.refresh(act)
+    return {"id": act.id, "status": "success"}
+
+
+@app.put("/api/activities/{activity_id}")
+def update_activity(activity_id: int, a: ActivityUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    act = db.query(Activity).filter(Activity.id == activity_id).first()
+    if not act:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    for key, value in a.dict(exclude_unset=True).items():
+        setattr(act, key, value)
+    if a.status == "done":
+        db.add(DealHistory(deal_id=act.deal_id, action_text=f"Дело выполнено: {act.title}"))
+    db.commit()
+    return {"status": "success"}
+
+
+@app.delete("/api/activities/{activity_id}")
+def delete_activity(activity_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    act = db.query(Activity).filter(Activity.id == activity_id).first()
+    if act:
+        db.delete(act)
+        db.commit()
+    return {"status": "success"}
+
+
+# -- Счета в UI CRM --
+class InvoiceCreate(BaseModel):
+    deal_id: int
+    number: Optional[str] = None
+    date: Optional[str] = None
+    amount: float = 0.0
+    status: str = "draft"
+    company_bin: Optional[str] = None
+    company_name: Optional[str] = None
+
+
+class InvoiceUpdate(BaseModel):
+    number: Optional[str] = None
+    date: Optional[str] = None
+    amount: Optional[float] = None
+    status: Optional[str] = None
+
+
+def _maybe_move_deal_on_invoice_paid(db: Session, deal: Deal):
+    """Простой робот: оплаченный счёт → стадия «Предоплата внесена»."""
+    if not deal or not deal.pipeline_id:
+        return
+    target = None
+    for st in db.query(Stage).filter(Stage.pipeline_id == deal.pipeline_id).order_by(Stage.order_index):
+        if "Предоплата" in (st.name or ""):
+            target = st
+            break
+    if not target or deal.stage == target.id:
+        return
+    old = db.query(Stage).filter(Stage.id == deal.stage).first()
+    deal.stage = target.id
+    db.add(DealHistory(
+        deal_id=deal.id,
+        action_text=f"Автопереход по оплате счёта: {(old.name if old else deal.stage)} → {target.name}",
+    ))
+
+
+@app.get("/api/invoices")
+def get_invoices(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
+    q = db.query(Invoice)
+    if deal_id:
+        q = q.filter(Invoice.deal_id == deal_id)
+    return [{
+        "id": i.id, "number": i.number, "date": i.date, "amount": i.amount,
+        "status": i.status, "deal_id": i.deal_id,
+        "company_bin": i.company_bin, "company_name": i.company_name,
+    } for i in q.order_by(Invoice.id.desc()).all()]
+
+
+@app.post("/api/invoices")
+def create_invoice(inv: InvoiceCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == inv.deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    number = inv.number or f"INV-{deal.id}-{int(datetime.utcnow().timestamp()) % 100000}"
+    if db.query(Invoice).filter(Invoice.number == number).first():
+        return JSONResponse(status_code=400, content={"error": "Счёт с таким номером уже есть"})
+    company = deal.company
+    row = Invoice(
+        number=number,
+        date=inv.date or datetime.utcnow().strftime("%Y-%m-%d"),
+        amount=inv.amount if inv.amount else (deal.final_sum or 0),
+        status=inv.status or "draft",
+        deal_id=deal.id,
+        company_bin=inv.company_bin or (company.bin if company else ""),
+        company_name=inv.company_name or (company.name if company else ""),
+    )
+    db.add(row)
+    db.add(DealHistory(deal_id=deal.id, action_text=f"Создан счёт {number} на {row.amount} ₸"))
+    if row.status == "paid":
+        _maybe_move_deal_on_invoice_paid(db, deal)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "number": row.number, "status": "success"}
+
+
+@app.put("/api/invoices/{invoice_id}")
+def update_invoice(invoice_id: int, inv: InvoiceUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    prev_status = row.status
+    for key, value in inv.dict(exclude_unset=True).items():
+        setattr(row, key, value)
+    if row.status == "paid" and prev_status != "paid" and row.deal_id:
+        deal = db.query(Deal).filter(Deal.id == row.deal_id).first()
+        if deal:
+            db.add(DealHistory(deal_id=deal.id, action_text=f"Счёт {row.number} оплачен"))
+            _maybe_move_deal_on_invoice_paid(db, deal)
+    db.commit()
+    return {"status": "success"}
+
+
+@app.delete("/api/invoices/{invoice_id}")
+def delete_invoice(invoice_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"status": "success"}
+
 
 class DealCommentRequest(BaseModel):
     comment: str
@@ -1600,6 +2074,8 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         .all()
     )
     for d in linked:
+        if getattr(d, "is_archived", False):
+            continue
         if d.stage not in closed_stage_ids:
             return d  # открытая сделка уже есть — продолжаем диалог в ней
 
@@ -1641,6 +2117,8 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         chat_channel=channel,
         chat_id=chat_id,
         prev_deal_id=prev_deal.id if prev_deal else None,
+        source=channel,
+        assignee_id=_default_assignee_id(db),
     )
     db.add(deal)
     db.commit()

@@ -112,6 +112,9 @@
                     <div class="form-group"><label>Должность</label><input type="text" id="ct_position" placeholder="Директор, менеджер…"></div>
                     <div class="form-group"><label>Телефон</label><input type="text" id="ct_phone"></div>
                     <div class="form-group"><label>Email</label><input type="email" id="ct_email"></div>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0;">
+                        <input type="checkbox" id="ct_primary"> Основной контакт компании
+                    </label>
                     <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
                         <button type="button" class="btn btn-primary btn-sm" onclick="saveContact()">Сохранить</button>
                         <button type="button" class="btn btn-sm" onclick="document.getElementById('contact_form').style.display='none'">Отмена</button>
@@ -272,7 +275,7 @@
                 list.innerHTML += `
                     <div class="history-item" style="align-items:flex-start;">
                         <div>
-                            <div style="font-weight:bold;">${escHtml(ct.name)}${ct.position ? ` <span style="font-weight:normal;color:var(--muted);font-size:0.85rem;">— ${escHtml(ct.position)}</span>` : ''}</div>
+                            <div style="font-weight:bold;">${ct.is_primary ? '★ ' : ''}${escHtml(ct.name)}${ct.position ? ` <span style="font-weight:normal;color:var(--muted);font-size:0.85rem;">— ${escHtml(ct.position)}</span>` : ''}</div>
                             <div style="font-size:0.85rem;color:var(--text-2);">
                                 ${ct.phone ? `📞 ${escHtml(ct.phone)}` : ''} ${ct.email ? ` ✉ ${escHtml(ct.email)}` : ''}
                             </div>
@@ -293,6 +296,7 @@
             document.getElementById('ct_position').value = ct.position || '';
             document.getElementById('ct_phone').value = ct.phone || '';
             document.getElementById('ct_email').value = ct.email || '';
+            document.getElementById('ct_primary').checked = !!ct.is_primary;
             document.getElementById('contact_form').style.display = 'block';
         }
 
@@ -305,6 +309,7 @@
                 phone: document.getElementById('ct_phone').value.trim(),
                 email: document.getElementById('ct_email').value.trim(),
                 company_id: parseInt(companyId),
+                is_primary: document.getElementById('ct_primary').checked,
             };
             if (!payload.name) { alert('Укажите ФИО контакта'); return; }
             if (ctId) {
@@ -362,6 +367,20 @@
                 bik: document.getElementById('comp_bik').value,
                 instagram: document.getElementById('comp_instagram').value.replace(/^@/, '').trim()
             };
+
+            // Предупреждение о дублях (не блокирует)
+            try {
+                const params = new URLSearchParams();
+                if (data.phone) params.set('phone', data.phone);
+                if (data.bin) params.set('bin', data.bin);
+                if (id) params.set('exclude_id', id);
+                const dupRes = await fetch('/api/companies/check-duplicates?' + params.toString());
+                const dupData = await dupRes.json();
+                if (dupData.has_duplicates) {
+                    const names = dupData.duplicates.map(d => `${d.name} (${d.field}: ${d.value})`).join('\n');
+                    if (!confirm('Возможный дубль:\n' + names + '\n\nВсё равно сохранить?')) return;
+                }
+            } catch (err) { console.error(err); }
             
             if (id) {
                 await fetch(`/api/companies/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});

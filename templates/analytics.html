@@ -54,6 +54,66 @@
     </div>
 </div>
 
+<div class="grid cols-2" style="align-items:start;margin-bottom:22px">
+    <div class="card">
+        <h3 class="section-title" style="margin-bottom:16px">По менеджерам</h3>
+        {% if by_manager_rows %}
+        <table class="data cards-mobile">
+            <thead>
+                <tr>
+                    <th>Менеджер</th>
+                    <th class="num">Выручка</th>
+                    <th class="num">Win</th>
+                    <th class="num">Lost</th>
+                    <th class="num">В работе</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in by_manager_rows %}
+                <tr>
+                    <td class="card-head"><strong>{{ m.name }}</strong></td>
+                    <td class="num" data-label="Выручка">{{ "{:,.0f}".format(m.won_sum).replace(',', ' ') }} ₸</td>
+                    <td class="num" data-label="Win">{{ m.won }}</td>
+                    <td class="num" data-label="Lost">{{ m.lost }}</td>
+                    <td class="num" data-label="В работе">{{ m.active }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="muted" style="font-size:13px">Назначьте ответственных в сделках — здесь появится разрез.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h3 class="section-title" style="margin-bottom:16px">По источникам</h3>
+        {% if by_source_rows %}
+            {% set max_src = by_source_rows[0][1] if by_source_rows else 1 %}
+            {% for label, cnt in by_source_rows %}
+            <div class="pipe-row">
+                <div style="width:120px;font-size:13px;font-weight:600;">{{ label }}</div>
+                <div class="pipe-bar"><div class="pipe-fill" style="width:{{ (cnt / max_src * 100)|round }}%;background:#0ea5e9"></div></div>
+                <div style="width:36px;text-align:right;font-weight:700;font-size:13px">{{ cnt }}</div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="muted" style="font-size:13px">Источники появятся после первых сделок.</div>
+        {% endif %}
+
+        <h3 class="section-title" style="margin:22px 0 12px">Топ причин отказа</h3>
+        {% if loss_reason_rows %}
+            {% for reason, cnt in loss_reason_rows %}
+            <div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-2);font-size:13px;">
+                <span>{{ reason }}</span>
+                <strong>{{ cnt }}</strong>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="muted" style="font-size:13px">При переводе в «Сделка проиграна» указывайте причину.</div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="card">
     <h3 class="section-title" style="margin-bottom:16px">Сообщения за 30 дней</h3>
     <table class="data cards-mobile">

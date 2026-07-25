@@ -457,30 +457,62 @@
     </div>
 
     <!-- Toggle views & quick actions -->
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 16px; flex-wrap: wrap;">
-        <div class="view-switcher" style="margin-bottom: 0;">
-            <button id="view-kanban-btn" class="view-btn active" onclick="switchView('kanban')">
-                <svg style="width: 15px; height: 15px;" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 24 24">
-                    <rect x="3" y="3" width="7" height="9" rx="1"></rect>
-                    <rect x="14" y="3" width="7" height="5" rx="1"></rect>
-                    <rect x="14" y="12" width="7" height="9" rx="1"></rect>
-                    <rect x="3" y="16" width="7" height="5" rx="1"></rect>
-                </svg>
-                Канбан
-            </button>
-            <button id="view-list-btn" class="view-btn" onclick="switchView('list')">
-                <svg style="width: 15px; height: 15px;" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 24 24">
-                    <line x1="8" y1="6" x2="21" y2="6"></line>
-                    <line x1="8" y1="12" x2="21" y2="12"></line>
-                    <line x1="8" y1="18" x2="21" y2="18"></line>
-                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                </svg>
-                Список
-            </button>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 16px; flex-wrap: wrap;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <label class="field" style="margin:0; min-width:200px;">
+                <span style="font-size:11px;">Воронка</span>
+                <select id="crm-pipeline-select" onchange="onPipelineChange()" style="padding:8px 10px;"></select>
+            </label>
+            <div class="view-switcher" style="margin-bottom: 0;">
+                <button id="view-kanban-btn" class="view-btn active" onclick="switchView('kanban')">Канбан</button>
+                <button id="view-list-btn" class="view-btn" onclick="switchView('list')">Список</button>
+            </div>
         </div>
-        <button class="btn btn-primary" onclick="openCreateDealModal()">+ Быстрая сделка</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn" onclick="openPipelineAdmin()" title="Управление воронками">⚙ Воронки</button>
+            <button class="btn btn-primary" onclick="openCreateDealModal()">+ Быстрая сделка</button>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:16px; padding:12px 14px;">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+            <label class="field" style="margin:0; flex:1; min-width:160px;">
+                <span style="font-size:11px;">Поиск</span>
+                <input type="search" id="crm-filter-q" placeholder="Название, компания, телефон…" oninput="debounceLoadDeals()">
+            </label>
+            <label class="field" style="margin:0; min-width:140px;">
+                <span style="font-size:11px;">Ответственный</span>
+                <select id="crm-filter-assignee" onchange="loadDeals().then(renderCrm)">
+                    <option value="">Все</option>
+                    <option value="me">Мои</option>
+                </select>
+            </label>
+            <label class="field" style="margin:0; min-width:140px;">
+                <span style="font-size:11px;">Источник</span>
+                <select id="crm-filter-source" onchange="loadDeals().then(renderCrm)">
+                    <option value="">Все</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="manual">Вручную</option>
+                    <option value="referral">Рекомендация</option>
+                    <option value="site">Сайт</option>
+                    <option value="other">Другое</option>
+                </select>
+            </label>
+            <label class="field" style="margin:0; min-width:130px;">
+                <span style="font-size:11px;">Аренда с</span>
+                <input type="date" id="crm-filter-from" onchange="loadDeals().then(renderCrm)">
+            </label>
+            <label class="field" style="margin:0; min-width:130px;">
+                <span style="font-size:11px;">Аренда по</span>
+                <input type="date" id="crm-filter-to" onchange="loadDeals().then(renderCrm)">
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; padding-bottom:8px; white-space:nowrap;">
+                <input type="checkbox" id="crm-filter-overdue" onchange="loadDeals().then(renderCrm)"> Просроченные дела
+            </label>
+        </div>
     </div>
 
     <!-- Main Workspace Layout -->
@@ -580,6 +612,7 @@
     <div class="slider-tabs-row">
         <div id="tab-btn-info" class="slider-tab-item active" onclick="switchSliderTab('info')">Общие (Параметры)</div>
         <div id="tab-btn-products" class="slider-tab-item" onclick="switchSliderTab('products')">Товары (Смета)</div>
+        <div id="tab-btn-invoices" class="slider-tab-item" onclick="switchSliderTab('invoices')">Счета</div>
         <div id="tab-btn-chat" class="slider-tab-item" onclick="switchSliderTab('chat')" style="display:none;">💬 Чат с клиентом</div>
     </div>
 
@@ -615,8 +648,39 @@
                             
                             <label class="field">
                                 <span>Клиент / Компания</span>
-                                <select id="edit-deal-company"></select>
+                                <select id="edit-deal-company" onchange="onDealCompanyChange()"></select>
                             </label>
+                            <label class="field">
+                                <span>Контактное лицо</span>
+                                <select id="edit-deal-contact"><option value="">— не выбран —</option></select>
+                            </label>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                <label class="field">
+                                    <span>Ответственный</span>
+                                    <select id="edit-deal-assignee"></select>
+                                </label>
+                                <label class="field">
+                                    <span>Источник</span>
+                                    <select id="edit-deal-source">
+                                        <option value="manual">Вручную</option>
+                                        <option value="whatsapp">WhatsApp</option>
+                                        <option value="telegram">Telegram</option>
+                                        <option value="instagram">Instagram</option>
+                                        <option value="referral">Рекомендация</option>
+                                        <option value="site">Сайт</option>
+                                        <option value="other">Другое</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-top:4px;">
+                                <input type="checkbox" id="edit-deal-qualified"> Квалифицирована
+                            </label>
+                            <div id="edit-deal-loss-wrap" style="display:none;">
+                                <label class="field">
+                                    <span>Причина отказа</span>
+                                    <input type="text" id="edit-deal-loss-reason" placeholder="Дорого / выбрали конкурента / …">
+                                </label>
+                            </div>
                         </div>
                     </div>
 
@@ -674,7 +738,10 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary" style="width: 100%;">Сохранить изменения</button>
+                    <div style="display:flex; gap:8px; margin-top:8px;">
+                        <button type="submit" class="btn btn-primary" style="flex:1;">Сохранить изменения</button>
+                        <button type="button" class="btn" style="color:var(--danger);" onclick="archiveActiveDeal()">В архив</button>
+                    </div>
                 </form>
             </div>
 
@@ -710,6 +777,15 @@
                 <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
             </div>
 
+            <!-- Tab Content: Invoices -->
+            <div id="tab-content-invoices" class="tab-pane">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <div class="muted" style="font-size:12.5px;">Счета по сделке. Статус «Оплачен» переводит сделку на стадию «Предоплата внесена».</div>
+                    <button class="btn btn-sm btn-green" onclick="createDealInvoice()">+ Счёт</button>
+                </div>
+                <div id="deal-invoices-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+            </div>
+
             <!-- Tab Content: Chat with client (messenger dialog linked to deal) -->
             <div id="tab-content-chat" class="tab-pane">
                 <div id="deal-chat-header" class="muted" style="font-size:12.5px; margin-bottom:10px;"></div>
@@ -739,12 +815,26 @@
                 
                 <!-- Activity Pane -->
                 <div id="act-pane-delo" class="activity-pane">
-                    <div class="activity-placeholder-text">Запланировать звонок, встречу или визит к клиенту</div>
+                    <select id="act-type" style="width:100%; margin-bottom:8px; font-size:12.5px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                        <option value="call">Звонок</option>
+                        <option value="meeting">Встреча</option>
+                        <option value="reminder">Напоминание</option>
+                        <option value="message">Сообщение</option>
+                    </select>
+                    <input type="text" id="act-title" placeholder="Что сделать? (например: Уточнить даты аренды)" style="width:100%; box-sizing:border-box; font-size:12.5px; margin-bottom:8px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                    <div style="display:flex; gap:8px; margin-bottom:8px;">
+                        <input type="datetime-local" id="act-due" style="flex:1; font-size:12.5px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);">
+                        <select id="act-assignee" style="flex:1; font-size:12.5px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);"></select>
+                    </div>
+                    <button class="btn btn-sm btn-primary" style="width:100%" onclick="createDealActivity()">Запланировать</button>
+                    <div id="deal-activities-list" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;"></div>
                 </div>
                 
                 <!-- Message Pane -->
                 <div id="act-pane-message" class="activity-pane">
-                    <div class="activity-placeholder-text">Написать сообщение в WhatsApp / Telegram</div>
+                    <div class="activity-placeholder-text" style="margin-bottom:8px;">Быстрое исходящее сообщение клиенту</div>
+                    <textarea id="act-message-text" rows="3" placeholder="Текст сообщения…" style="width:100%; box-sizing:border-box; font-size:12.5px; margin-bottom:8px; padding:6px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text);"></textarea>
+                    <button class="btn btn-sm btn-primary" style="width:100%" onclick="planMessageActivity()">Запланировать сообщение</button>
                 </div>
                 
                 <!-- Task Pane -->
@@ -782,6 +872,19 @@
                 <select id="new-deal-company" required></select>
             </label>
             <label class="field">
+                <span>Ответственный</span>
+                <select id="new-deal-assignee"></select>
+            </label>
+            <label class="field">
+                <span>Источник</span>
+                <select id="new-deal-source">
+                    <option value="manual">Вручную</option>
+                    <option value="referral">Рекомендация</option>
+                    <option value="site">Сайт</option>
+                    <option value="other">Другое</option>
+                </select>
+            </label>
+            <label class="field">
                 <span>Дата проведения</span>
                 <input type="date" id="new-deal-event-date" required>
             </label>
@@ -791,6 +894,32 @@
             </label>
             <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 16px;">Создать сделку</button>
         </form>
+    </div>
+</div>
+
+<!-- Loss reason modal -->
+<div id="loss-reason-modal" class="slider-overlay" style="display:none; align-items:center; justify-content:center;">
+    <div class="card" style="width:420px; max-width:92%; padding:22px; position:relative;">
+        <h3 style="margin-top:0;">Причина отказа</h3>
+        <p class="muted" style="font-size:13px;">Укажите, почему сделка проиграна — это нужно для аналитики.</p>
+        <input type="text" id="loss-reason-input" placeholder="Например: Выбрали конкурента" style="width:100%; box-sizing:border-box; margin:10px 0 14px;">
+        <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" style="flex:1;" onclick="confirmLossReason()">Сохранить</button>
+            <button class="btn" style="flex:1;" onclick="cancelLossReason()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Pipeline admin modal -->
+<div id="pipeline-admin-modal" class="slider-overlay" style="display:none; align-items:center; justify-content:center;">
+    <div class="card" style="width:520px; max-width:94%; padding:22px; position:relative; max-height:85vh; overflow:auto;">
+        <button onclick="closePipelineAdmin()" style="position:absolute; top:10px; right:14px; border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--muted);">&times;</button>
+        <h3 style="margin-top:0;">Воронки продаж</h3>
+        <div id="pipeline-admin-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;"></div>
+        <div style="display:flex; gap:8px;">
+            <input type="text" id="new-pipeline-name" placeholder="Название новой воронки" style="flex:1;">
+            <button class="btn btn-green" onclick="createPipeline()">Создать</button>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -807,68 +936,118 @@
     let crmStages = [];
     let crmCompanies = [];
     let crmEquipment = [];
-    let crmCustomFields = []; // определения дополнительных полей (как в Битрикс24)
-    let currentView = 'kanban'; // 'kanban' or 'list'
-    let currentDealProducts = []; // items in active slider deal
+    let crmCustomFields = [];
+    let crmPipelines = [];
+    let crmUsers = [];
+    let currentPipelineId = 1;
+    let currentView = 'kanban';
+    let currentDealProducts = [];
+    let pendingLossStageId = null;
+    let dealLoadTimer = null;
+    let activeDealActivities = [];
+    let activeDealInvoices = [];
 
-    // Load initial data
     async function initCrm() {
         try {
-            // Load stages (default pipeline 1)
-            const stagesRes = await fetch('/api/pipelines/1/stages');
-            crmStages = await stagesRes.json();
-
-            // Load companies
-            const companiesRes = await fetch('/api/companies');
+            const [pipesRes, companiesRes, equipRes, cfRes, usersRes] = await Promise.all([
+                fetch('/api/pipelines'),
+                fetch('/api/companies'),
+                fetch('/api/equipment'),
+                fetch('/api/custom-fields'),
+                fetch('/api/users/names'),
+            ]);
+            crmPipelines = await pipesRes.json();
             crmCompanies = await companiesRes.json();
-
-            // Load equipment catalog
-            const equipRes = await fetch('/api/equipment');
             crmEquipment = await equipRes.json();
-
-            // Load custom field definitions
-            const cfRes = await fetch('/api/custom-fields');
             crmCustomFields = await cfRes.json();
+            crmUsers = await usersRes.json();
 
-            // Load deals
-            await loadDeals();
+            currentPipelineId = (crmPipelines[0] && crmPipelines[0].id) || 1;
+            const pipeSel = document.getElementById('crm-pipeline-select');
+            pipeSel.innerHTML = crmPipelines.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+            pipeSel.value = currentPipelineId;
 
-            // Fill selectors
+            const filterAssignee = document.getElementById('crm-filter-assignee');
+            crmUsers.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = u.full_name || u.username;
+                filterAssignee.appendChild(opt);
+            });
+
+            await loadStagesForPipeline(currentPipelineId);
             fillSelectors();
-            
-            // Render
+            await loadDeals();
             renderCrm();
         } catch (e) {
             console.error('CRM Init failed:', e);
         }
     }
 
+    async function loadStagesForPipeline(pipelineId) {
+        const stagesRes = await fetch(`/api/pipelines/${pipelineId}/stages`);
+        crmStages = await stagesRes.json();
+    }
+
+    async function onPipelineChange() {
+        currentPipelineId = parseInt(document.getElementById('crm-pipeline-select').value) || 1;
+        await loadStagesForPipeline(currentPipelineId);
+        fillSelectors();
+        await loadDeals();
+        renderCrm();
+    }
+
+    function debounceLoadDeals() {
+        clearTimeout(dealLoadTimer);
+        dealLoadTimer = setTimeout(() => loadDeals().then(renderCrm), 280);
+    }
+
     async function loadDeals() {
-        const dealsRes = await fetch('/api/deals');
+        const params = new URLSearchParams();
+        params.set('pipeline_id', currentPipelineId);
+        const q = document.getElementById('crm-filter-q')?.value?.trim();
+        const assignee = document.getElementById('crm-filter-assignee')?.value;
+        const source = document.getElementById('crm-filter-source')?.value;
+        const from = document.getElementById('crm-filter-from')?.value;
+        const to = document.getElementById('crm-filter-to')?.value;
+        const overdue = document.getElementById('crm-filter-overdue')?.checked;
+        if (q) params.set('q', q);
+        if (assignee) params.set('assignee', assignee);
+        if (source) params.set('source', source);
+        if (from) params.set('rent_from', from);
+        if (to) params.set('rent_to', to);
+        if (overdue) params.set('overdue_only', 'true');
+        const dealsRes = await fetch('/api/deals?' + params.toString());
         crmDeals = await dealsRes.json();
     }
 
     function fillSelectors() {
-        // Fill companies dropdowns
         const compSelects = ['edit-deal-company', 'new-deal-company'];
         compSelects.forEach(id => {
             const select = document.getElementById(id);
             if(select) {
-                select.innerHTML = crmCompanies.map(c => `<option value="${c.id}">${c.name} (${c.director_name})</option>`).join('');
+                select.innerHTML = '<option value="">— выберите —</option>' +
+                    crmCompanies.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
             }
         });
 
-        // Fill stages dropdown in edit form
         const stageSelect = document.getElementById('edit-deal-stage');
         if(stageSelect) {
-            stageSelect.innerHTML = crmStages.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+            stageSelect.innerHTML = crmStages.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
         }
 
-        // Fill catalog selector in product tab
         const prodSelect = document.getElementById('add-prod-select');
         if(prodSelect) {
-            prodSelect.innerHTML = crmEquipment.map(eq => `<option value="${eq.id}">${eq.name} — ${eq.price.toLocaleString()} ₸</option>`).join('');
+            prodSelect.innerHTML = crmEquipment.map(eq => `<option value="${eq.id}">${escapeHtml(eq.name)} — ${eq.price.toLocaleString()} ₸</option>`).join('');
         }
+
+        const userOpts = crmUsers.map(u => `<option value="${u.id}">${escapeHtml(u.full_name || u.username)}</option>`).join('');
+        ['edit-deal-assignee', 'new-deal-assignee', 'act-assignee', 'deal-task-assignee'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const keepFirst = id === 'deal-task-assignee';
+            el.innerHTML = (keepFirst ? '<option value="">— ответственный —</option>' : '') + userOpts;
+        });
     }
 
     function switchView(view) {
@@ -943,16 +1122,20 @@
                 card.addEventListener('dragstart', dragStart);
                 card.addEventListener('click', () => openDealSlider(deal.id));
 
-                const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣' }[deal.chat_channel] || '';
+                const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣' }[deal.chat_channel || deal.source] || '';
+                const overdueBadge = deal.has_overdue_activity ? '<span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700;">!</span>' : '';
+                const assignee = deal.assignee_name ? `<span style="font-size:11px;color:var(--muted);">👤 ${escapeHtml(deal.assignee_name)}</span>` : '';
                 card.innerHTML = `
-                    <h4 class="deal-title-link" style="margin:0 0 6px 0; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--primary);">${chIcon ? chIcon + ' ' : ''}${deal.title}</h4>
-                    <p style="font-size:12px; margin:0 0 10px 0; color:var(--text-2);">${deal.company_name}</p>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
-                        <span class="sum" style="font-size:13.5px; font-weight:800; color:var(--primary); margin:0;">${deal.final_sum.toLocaleString()} ₸</span>
-                        <span style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:3px;">
-                            📅 ${deal.event_date || ''}
-                        </span>
+                    <div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start;">
+                        <h4 class="deal-title-link" style="margin:0 0 6px 0; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--primary);">${chIcon ? chIcon + ' ' : ''}${escapeHtml(deal.title)}</h4>
+                        ${overdueBadge}
                     </div>
+                    <p style="font-size:12px; margin:0 0 8px 0; color:var(--text-2);">${escapeHtml(deal.company_name || '')}</p>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <span class="sum" style="font-size:13.5px; font-weight:800; color:var(--primary); margin:0;">${(deal.final_sum || 0).toLocaleString()} ₸</span>
+                        <span style="font-size:11px; color:var(--muted);">📅 ${deal.event_date || '—'}</span>
+                    </div>
+                    <div style="margin-top:8px;">${assignee}</div>
                 `;
                 
                 // Add click listener specifically to title link
@@ -1036,32 +1219,61 @@
         // Find deal locally
         const deal = crmDeals.find(d => d.id === dealId);
         if (deal && deal.stage !== newStageId) {
-            // Optimistic update
-            const oldStageId = deal.stage;
-            deal.stage = newStageId;
-            renderCrm();
-
-            // API Call
-            try {
-                const response = await fetch(`/api/deals/${dealId}/stage`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stage: newStageId })
-                });
-                
-                if(!response.ok) {
-                    throw new Error('API failure');
-                }
-                
-                // Reload deals in background to get audit history, etc.
-                await loadDeals();
-            } catch (err) {
-                console.error('Failed to move stage:', err);
-                // Rollback on failure
-                deal.stage = oldStageId;
-                renderCrm();
-            }
+            await moveDealToStage(dealId, newStageId);
         }
+    }
+
+    async function moveDealToStage(dealId, newStageId, lossReason) {
+        const deal = crmDeals.find(d => d.id === dealId);
+        const stageObj = crmStages.find(s => s.id === newStageId);
+        if (stageObj && /проигра/i.test(stageObj.name || '') && !lossReason) {
+            pendingLossStageId = newStageId;
+            document.getElementById('loss-reason-input').value = '';
+            const modal = document.getElementById('loss-reason-modal');
+            modal.style.display = 'flex';
+            modal.dataset.dealId = dealId;
+            return false;
+        }
+        const oldStageId = deal ? deal.stage : null;
+        if (deal) { deal.stage = newStageId; renderCrm(); }
+        try {
+            const body = { stage: newStageId };
+            if (lossReason) body.loss_reason = lossReason;
+            const response = await fetch(`/api/deals/${dealId}/stage`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'API failure');
+            }
+            await loadDeals();
+            renderCrm();
+            if (activeDealId === dealId) openDealSlider(dealId);
+            return true;
+        } catch (err) {
+            console.error('Failed to move stage:', err);
+            alert(err.message || 'Не удалось сменить стадию');
+            if (deal && oldStageId != null) { deal.stage = oldStageId; renderCrm(); }
+            return false;
+        }
+    }
+
+    function confirmLossReason() {
+        const reason = document.getElementById('loss-reason-input').value.trim();
+        if (!reason) { alert('Укажите причину отказа'); return; }
+        const modal = document.getElementById('loss-reason-modal');
+        const dealId = parseInt(modal.dataset.dealId || activeDealId);
+        const stageId = pendingLossStageId;
+        modal.style.display = 'none';
+        pendingLossStageId = null;
+        moveDealToStage(dealId, stageId, reason);
+    }
+
+    function cancelLossReason() {
+        document.getElementById('loss-reason-modal').style.display = 'none';
+        pendingLossStageId = null;
     }
 
     // Quick Deal Modal logic
@@ -1078,30 +1290,29 @@
     async function submitCreateDeal(e) {
         e.preventDefault();
         const title = document.getElementById('new-deal-title').value;
-        const company_id = parseInt(document.getElementById('new-deal-company').value);
+        const company_id = parseInt(document.getElementById('new-deal-company').value) || null;
         const event_date = document.getElementById('new-deal-event-date').value;
         const address = document.getElementById('new-deal-address').value;
+        const assignee_id = parseInt(document.getElementById('new-deal-assignee').value) || null;
+        const source = document.getElementById('new-deal-source').value || 'manual';
 
         try {
             const res = await fetch('/api/deals', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: title,
-                    company_id: company_id,
-                    event_date: event_date,
+                    title, company_id, event_date,
                     event_address: address,
-                    pipeline_id: 1,
+                    pipeline_id: currentPipelineId,
+                    assignee_id, source,
                     discount_percentage: 0.0
                 })
             });
 
             if (res.ok) {
-                // Clear inputs
                 document.getElementById('new-deal-title').value = '';
                 document.getElementById('new-deal-event-date').value = '';
                 document.getElementById('new-deal-address').value = '';
-                
                 closeCreateDealModal();
                 await loadDeals();
                 renderCrm();
@@ -1182,11 +1393,24 @@
             document.getElementById('edit-deal-event-date').value = data.event_date || '';
             document.getElementById('edit-deal-address').value = data.event_address || '';
             document.getElementById('edit-deal-comment').value = data.comment || '';
+            document.getElementById('edit-deal-assignee').value = data.assignee_id || '';
+            document.getElementById('edit-deal-source').value = data.source || 'manual';
+            document.getElementById('edit-deal-qualified').checked = !!data.is_qualified;
+            document.getElementById('edit-deal-loss-reason').value = data.loss_reason || '';
+            const lossWrap = document.getElementById('edit-deal-loss-wrap');
+            const stageName = (crmStages.find(s => s.id === data.stage) || {}).name || '';
+            lossWrap.style.display = /проигра/i.test(stageName) ? 'block' : 'none';
+            await loadContactsForCompany(data.company_id, data.contact_id);
+            activeDealActivities = data.activities || [];
+            activeDealInvoices = data.invoices || [];
+            renderDealActivities();
+            renderDealInvoices();
 
             // Set quick actions
             const callBtn = document.getElementById('deal-call-btn');
             const chatBtn = document.getElementById('deal-chat-btn');
             const igBtn = document.getElementById('deal-ig-btn');
+            const emailBtn = document.getElementById('deal-email-btn');
             if (callBtn) callBtn.href = data.company_phone ? 'tel:' + data.company_phone : '#';
             if (chatBtn) {
                 let waPhone = (data.company_phone || '').replace(/[^0-9]/g, '');
@@ -1198,6 +1422,10 @@
                 const igUser = (data.company_instagram || '').replace(/^@/, '').trim();
                 igBtn.href = igUser ? 'https://ig.me/m/' + igUser : '#';
                 igBtn.style.display = igUser ? 'flex' : 'none';
+            }
+            if (emailBtn) {
+                emailBtn.href = data.company_email ? 'mailto:' + data.company_email : '#';
+                emailBtn.style.display = data.company_email ? 'flex' : 'none';
             }
 
             // Render custom fields (Bitrix24-style)
@@ -1234,13 +1462,13 @@
             // Draw stages progress bar
             drawStagesProgressBar(data.stage);
 
-            // Draw products & timeline
+            // Draw products & timeline (history + activities)
             drawProductRows();
-            drawTimeline(data.history || []);
+            drawTimeline(data.history || [], data.activities || []);
 
             // Set Info tab active by default
             switchSliderTab('info');
-            switchActivityTab('comment');
+            switchActivityTab('delo');
 
             // Slide in
             document.getElementById('slider-backdrop').classList.add('active');
@@ -1257,13 +1485,14 @@
     }
 
     function switchSliderTab(tabName) {
-        ['info', 'products', 'chat'].forEach(t => {
+        ['info', 'products', 'invoices', 'chat'].forEach(t => {
             const btn = document.getElementById('tab-btn-' + t);
             const pane = document.getElementById('tab-content-' + t);
             if (btn) btn.classList.toggle('active', tabName === t);
             if (pane) pane.classList.toggle('active', tabName === t);
         });
         if (tabName === 'chat') loadDealChat();
+        if (tabName === 'invoices') renderDealInvoices();
     }
 
     // ---- Чат с клиентом внутри сделки (диалог мессенджера) ----
@@ -1323,6 +1552,7 @@
         document.getElementById('act-pane-message').classList.toggle('active', tabName === 'message');
         document.getElementById('act-pane-task').classList.toggle('active', tabName === 'task');
         if (tabName === 'task') loadDealTasks();
+        if (tabName === 'delo') renderDealActivities();
     }
 
     function drawStagesProgressBar(currentStageId) {
@@ -1348,23 +1578,7 @@
 
             step.addEventListener('click', async () => {
                 if (stage.id === currentStageId) return;
-                
-                try {
-                    const res = await fetch(`/api/deals/${activeDealId}/stage`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ stage: stage.id })
-                    });
-                    if (res.ok) {
-                        await loadDeals();
-                        renderCrm();
-                        openDealSlider(activeDealId);
-                    } else {
-                        alert('Не удалось изменить стадию');
-                    }
-                } catch (e) {
-                    console.error(e);
-                }
+                await moveDealToStage(activeDealId, stage.id);
             });
 
             barContainer.appendChild(step);
@@ -1410,28 +1624,22 @@
             event_date: document.getElementById('edit-deal-event-date').value,
             setup_date: document.getElementById('edit-deal-setup-date').value || null,
             event_address: document.getElementById('edit-deal-address').value || null,
-            comment: document.getElementById('edit-deal-comment').value || null
+            comment: document.getElementById('edit-deal-comment').value || null,
+            company_id: parseInt(document.getElementById('edit-deal-company').value) || null,
+            contact_id: parseInt(document.getElementById('edit-deal-contact').value) || null,
+            assignee_id: parseInt(document.getElementById('edit-deal-assignee').value) || null,
+            source: document.getElementById('edit-deal-source').value || 'manual',
+            is_qualified: document.getElementById('edit-deal-qualified').checked,
+            loss_reason: document.getElementById('edit-deal-loss-reason').value || null,
         };
 
-        const stageVal = parseInt(document.getElementById('edit-deal-stage').value);
-        const companyVal = parseInt(document.getElementById('edit-deal-company').value);
-
         try {
-            // 1. Save core fields
             await fetch(`/api/deals/${activeDealId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
-            // 2. Save stage (triggers notification, etc.)
-            await fetch(`/api/deals/${activeDealId}/stage`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ stage: stageVal })
-            });
-
-            // 3. Save custom field values
             const fieldValues = [];
             document.querySelectorAll('.cf-input').forEach(input => {
                 const fieldId = parseInt(input.getAttribute('data-field-id'));
@@ -1446,7 +1654,6 @@
                 });
             }
 
-            // Reload board and reopen to refresh
             await loadDeals();
             renderCrm();
             openDealSlider(activeDealId);
@@ -1455,6 +1662,195 @@
             console.error(err);
             alert('Не удалось сохранить изменения');
         }
+    }
+
+    async function loadContactsForCompany(companyId, selectedId) {
+        const sel = document.getElementById('edit-deal-contact');
+        sel.innerHTML = '<option value="">— не выбран —</option>';
+        if (!companyId) return;
+        const res = await fetch('/api/contacts?company_id=' + companyId);
+        const contacts = await res.json();
+        contacts.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = (c.is_primary ? '★ ' : '') + c.name + (c.position ? ` (${c.position})` : '');
+            sel.appendChild(opt);
+        });
+        if (selectedId) sel.value = selectedId;
+        else {
+            const primary = contacts.find(c => c.is_primary);
+            if (primary) sel.value = primary.id;
+        }
+    }
+
+    async function onDealCompanyChange() {
+        const companyId = parseInt(document.getElementById('edit-deal-company').value) || null;
+        await loadContactsForCompany(companyId, null);
+    }
+
+    async function archiveActiveDeal() {
+        if (!activeDealId || !confirm('Отправить сделку в архив? Она исчезнет с канбана.')) return;
+        await fetch(`/api/deals/${activeDealId}/archive`, { method: 'POST' });
+        closeDealSlider();
+        await loadDeals();
+        renderCrm();
+    }
+
+    function renderDealActivities() {
+        const box = document.getElementById('deal-activities-list');
+        if (!box) return;
+        const planned = (activeDealActivities || []).filter(a => a.status === 'planned');
+        if (!planned.length) {
+            box.innerHTML = '<div class="muted" style="font-size:12px;padding:6px 0;">Нет запланированных дел.</div>';
+            return;
+        }
+        const typeLabel = { call: '📞', meeting: '🤝', message: '💬', reminder: '⏰' };
+        box.innerHTML = planned.map(a => `
+            <div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--surface);">
+                <div style="font-size:12.5px;font-weight:600;">${typeLabel[a.type] || '•'} ${escapeHtml(a.title)}</div>
+                <div class="muted" style="font-size:11px;margin-top:3px;">${escapeHtml(a.due_at || 'без срока')} ${a.assignee_name ? '· ' + escapeHtml(a.assignee_name) : ''}</div>
+                <button class="btn btn-sm" style="margin-top:6px;width:100%;" onclick="completeActivity(${a.id})">Готово</button>
+            </div>
+        `).join('');
+    }
+
+    async function createDealActivity() {
+        if (!activeDealId) return;
+        const title = document.getElementById('act-title').value.trim();
+        if (!title) { alert('Укажите название дела'); return; }
+        const res = await fetch('/api/activities', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                deal_id: activeDealId,
+                type: document.getElementById('act-type').value,
+                title,
+                due_at: document.getElementById('act-due').value || null,
+                assignee_id: parseInt(document.getElementById('act-assignee').value) || null,
+            })
+        });
+        if (res.ok) {
+            document.getElementById('act-title').value = '';
+            openDealSlider(activeDealId);
+        } else alert('Не удалось создать дело');
+    }
+
+    async function planMessageActivity() {
+        const text = document.getElementById('act-message-text').value.trim();
+        if (!text || !activeDealId) return;
+        document.getElementById('act-type').value = 'message';
+        document.getElementById('act-title').value = text;
+        await createDealActivity();
+        document.getElementById('act-message-text').value = '';
+    }
+
+    async function completeActivity(id) {
+        await fetch('/api/activities/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'done' })
+        });
+        openDealSlider(activeDealId);
+        await loadDeals();
+        renderCrm();
+    }
+
+    function renderDealInvoices() {
+        const box = document.getElementById('deal-invoices-list');
+        if (!box) return;
+        const rows = activeDealInvoices || [];
+        if (!rows.length) {
+            box.innerHTML = '<div class="muted" style="font-size:13px;padding:12px 0;">Счетов пока нет.</div>';
+            return;
+        }
+        const statusLabel = { draft: 'Черновик', sent: 'Отправлен', paid: 'Оплачен', canceled: 'Отменён', new: 'Новый', cancelled: 'Отменён' };
+        box.innerHTML = rows.map(inv => `
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
+                <div>
+                    <div style="font-weight:700;">${escapeHtml(inv.number)}</div>
+                    <div class="muted" style="font-size:12px;">${escapeHtml(inv.date || '')} · ${(inv.amount || 0).toLocaleString()} ₸</div>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <select onchange="setInvoiceStatus(${inv.id}, this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                        ${['draft','sent','paid','canceled'].map(s => `<option value="${s}" ${inv.status===s?'selected':''}>${statusLabel[s]}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async function createDealInvoice() {
+        if (!activeDealId) return;
+        const amount = prompt('Сумма счёта (₸)', document.getElementById('edit-deal-sum').value || '0');
+        if (amount === null) return;
+        const res = await fetch('/api/invoices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deal_id: activeDealId, amount: parseFloat(amount) || 0, status: 'draft' })
+        });
+        if (res.ok) openDealSlider(activeDealId);
+        else alert('Не удалось создать счёт');
+    }
+
+    async function setInvoiceStatus(id, status) {
+        await fetch('/api/invoices/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+        });
+        await loadDeals();
+        renderCrm();
+        openDealSlider(activeDealId);
+    }
+
+    async function openPipelineAdmin() {
+        const modal = document.getElementById('pipeline-admin-modal');
+        modal.style.display = 'flex';
+        const list = document.getElementById('pipeline-admin-list');
+        const pipes = await (await fetch('/api/pipelines')).json();
+        list.innerHTML = pipes.map(p => `
+            <div style="display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+                <input type="text" value="${escapeHtml(p.name)}" id="pipe-name-${p.id}" style="flex:1;">
+                <button class="btn btn-sm" onclick="renamePipeline(${p.id})">Сохранить</button>
+                <button class="btn btn-sm" style="color:var(--danger);" onclick="deletePipeline(${p.id})">Удалить</button>
+            </div>
+        `).join('') || '<div class="muted">Воронок пока нет</div>';
+    }
+
+    function closePipelineAdmin() {
+        document.getElementById('pipeline-admin-modal').style.display = 'none';
+    }
+
+    async function createPipeline() {
+        const name = document.getElementById('new-pipeline-name').value.trim();
+        if (!name) return;
+        const res = await fetch('/api/pipelines', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        if (!res.ok) { alert('Не удалось создать воронку (нужны права админа)'); return; }
+        document.getElementById('new-pipeline-name').value = '';
+        await initCrm();
+        openPipelineAdmin();
+    }
+
+    async function renamePipeline(id) {
+        const name = document.getElementById('pipe-name-' + id).value.trim();
+        await fetch('/api/pipelines/' + id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        await initCrm();
+        openPipelineAdmin();
+    }
+
+    async function deletePipeline(id) {
+        if (!confirm('Удалить воронку? Можно только если в ней нет сделок.')) return;
+        const res = await fetch('/api/pipelines/' + id, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.error) alert(data.error);
+        await initCrm();
+        openPipelineAdmin();
     }
 
     // ---- Дополнительные поля (Bitrix24-style custom fields) ----
@@ -1798,25 +2194,38 @@
             .replace(/'/g, "&#039;");
     }
 
-    function drawTimeline(history) {
+    function drawTimeline(history, activities) {
         const container = document.getElementById('deal-timeline-list');
         container.innerHTML = '';
 
-        if(history.length === 0) {
+        const items = [];
+        (history || []).forEach(h => items.push({
+            kind: 'history',
+            text: h.action_text,
+            created_at: h.created_at,
+        }));
+        (activities || []).forEach(a => items.push({
+            kind: 'activity',
+            text: `[${a.type}] ${a.title}` + (a.status === 'done' ? ' ✓' : ''),
+            created_at: a.created_at || a.due_at || '',
+        }));
+        items.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
+        if(items.length === 0) {
             container.innerHTML = `<div class="muted" style="font-size:12.5px; padding:8px 0;">История пуста.</div>`;
             return;
         }
 
-        history.forEach(h => {
-            const isComment = h.action_text.startsWith("Комментарий: ");
+        items.forEach(h => {
+            const isComment = (h.text || '').startsWith("Комментарий: ");
             const div = document.createElement('div');
-            div.className = isComment ? 'log-item log-item-comment' : 'log-item log-item-system';
+            div.className = isComment ? 'log-item log-item-comment' : (h.kind === 'activity' ? 'log-item log-item-comment' : 'log-item log-item-system');
             
             // Format time locally:
             let dateStr = h.created_at;
             try {
                 // h.created_at is like "2026-06-26 10:52:51" (UTC string in DB)
-                const utcDate = new Date(h.created_at.replace(/-/g, '/').replace(' ', 'T') + 'Z');
+                const utcDate = new Date(String(h.created_at).replace(/-/g, '/').replace(' ', 'T') + (String(h.created_at).includes('T') || String(h.created_at).includes(' ') ? 'Z' : ''));
                 if (!isNaN(utcDate.getTime())) {
                     const now = new Date();
                     const isToday = utcDate.toDateString() === now.toDateString();
@@ -1833,7 +2242,7 @@
             }
 
             if (isComment) {
-                const commentText = h.action_text.substring(13); // Length of "Комментарий: " is 13
+                const commentText = (h.text || '').substring(13); // Length of "Комментарий: " is 13
                 div.innerHTML = `
                     <div class="timeline-badge timeline-badge-comment">
                         <svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1852,10 +2261,10 @@
                 let badgeClass = 'timeline-badge-system';
                 let iconSvg = `<svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
                 
-                if (h.action_text.includes("Стадия изменена")) {
+                if ((h.text || '').includes("Стадия изменена")) {
                     badgeClass = 'timeline-badge-stage';
                     iconSvg = `<svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`;
-                } else if (h.action_text.includes("Сделка создана")) {
+                } else if ((h.text || '').includes("Сделка создана")) {
                     badgeClass = 'timeline-badge-created';
                     iconSvg = `<svg class="timeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>`;
                 }
@@ -1865,7 +2274,7 @@
                         ${iconSvg}
                     </div>
                     <div class="system-event">
-                        <div class="system-event-text">${escapeHtml(h.action_text)}</div>
+                        <div class="system-event-text">${escapeHtml(h.text)}</div>
                         <div class="system-event-time">${dateStr}</div>
                     </div>
                 `;

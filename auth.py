@@ -26,6 +26,11 @@ SECTIONS = {
     "settings": "Настройки",
 }
 
+# Специальные флаги прав (хранятся в том же JSON permissions, не открывают раздел)
+PERMISSION_FLAGS = {
+    "crm_own_only": "CRM: видеть только свои сделки",
+}
+
 # Соответствие URL-префиксов разделам (для проверки доступа)
 PATH_SECTIONS = {
     "/inbox": "inbox",
@@ -114,7 +119,11 @@ def user_can_access(user, section: str) -> bool:
     perms = user.permissions
     if not perms:  # null/пусто = полный доступ (по умолчанию)
         return True
-    return section in perms
+    # Флаги вроде crm_own_only не открывают разделы — учитываем только ключи SECTIONS
+    section_perms = [p for p in perms if p in SECTIONS]
+    if not section_perms:
+        return True  # только флаги без разделов = полный доступ к разделам
+    return section in section_perms
 
 
 def section_for_path(path: str):

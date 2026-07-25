@@ -107,6 +107,7 @@ class Contact(Base):
     email = Column(String, nullable=True)
     comment = Column(String, nullable=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    is_primary = Column(Boolean, default=False)  # основной контакт компании
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     company = relationship("Company", back_populates="contacts")
@@ -146,17 +147,24 @@ class Deal(Base):
     final_sum = Column(Float, default=0.0)
     comment = Column(String)
     contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
+    assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     # Привязка к чату мессенджера (для автосозданных сделок из входящих сообщений)
     chat_channel = Column(String, nullable=True)   # whatsapp / telegram / instagram
     chat_id = Column(String, nullable=True)
     prev_deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)  # прошлое обращение клиента
+    source = Column(String, nullable=True)  # whatsapp / telegram / instagram / manual / referral / site / other
+    loss_reason = Column(String, nullable=True)
+    is_qualified = Column(Boolean, default=False)
+    is_archived = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     company = relationship("Company", back_populates="deals")
     contact = relationship("Contact", foreign_keys=[contact_id])
+    assignee = relationship("User", foreign_keys=[assignee_id])
     pipeline = relationship("Pipeline", back_populates="deals")
     stage_obj = relationship("Stage", back_populates="deals")
     items = relationship("DealItem", back_populates="deal")
+    activities = relationship("Activity", back_populates="deal", cascade="all, delete-orphan")
 
 class DealItem(Base):
     __tablename__ = "deal_items"
@@ -270,8 +278,26 @@ class Task(Base):
     deal = relationship("Deal", backref="tasks")
 
 
+class Activity(Base):
+    """Дела по сделке (звонок / встреча / сообщение / напоминание) — как в Битрикс24."""
+    __tablename__ = "activities"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False)
+    type = Column(String, default="call")  # call / meeting / message / reminder
+    title = Column(String)
+    due_at = Column(String, nullable=True)  # YYYY-MM-DD or YYYY-MM-DDTHH:MM
+    status = Column(String, default="planned")  # planned / done / canceled
+    assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    result = Column(String, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", back_populates="activities")
+    assignee = relationship("User", foreign_keys=[assignee_id])
+
+
 class Invoice(Base):
-    """Счета для обмена с 1С."""
+    """Счета для обмена с 1С и UI CRM."""
     __tablename__ = "invoices"
     id = Column(Integer, primary_key=True, index=True)
     number = Column(String, unique=True, index=True)
@@ -279,10 +305,12 @@ class Invoice(Base):
     company_bin = Column(String, index=True)
     company_name = Column(String, nullable=True)
     amount = Column(Float, default=0.0)
-    status = Column(String, default="new")  # new / paid / cancelled
+    status = Column(String, default="draft")  # draft / sent / paid / canceled / new / cancelled
     deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)
     external_id = Column(String, nullable=True)  # идентификатор документа в 1С
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="invoices")
 
 
 def init_db():
