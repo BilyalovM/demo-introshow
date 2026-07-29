@@ -285,6 +285,7 @@ PUBLIC_PATH_PREFIXES = (
     "/static", "/uploads", "/login", "/api/login",
     "/api/tg/webhook", "/api/wa/webhook", "/api/ig/webhook",
     "/tracking/", "/api/push/", "/api/1c/", "/favicon", "/docs", "/openapi.json",
+    "/roadmap",  # публичный статус/roadmap для клиента
 )
 
 
@@ -326,6 +327,11 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/login", response_class=HTMLResponse)
 async def read_login(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
+
+@app.get("/roadmap", response_class=HTMLResponse)
+async def read_roadmap_public(request: Request):
+    """Публичная страница статуса CRM (без логина) — обновляется через static/roadmap.json."""
+    return templates.TemplateResponse("roadmap_public.html", {"request": request})
 
 @app.post("/api/login")
 async def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):

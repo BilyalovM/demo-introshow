@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Intro Show CRM — Roadmap</title>
+  <meta name="robots" content="noindex" />
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --surface: #fff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --ok: #15803d;
+      --ok-bg: #dcfce7;
+      --warn: #a16207;
+      --warn-bg: #fef9c3;
+      --bad: #b91c1c;
+      --bad-bg: #fee2e2;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 28px 18px 60px; }
+    h1 { font-size: 1.55rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    h2 { font-size: 1.1rem; margin: 28px 0 12px; }
+    h3 { font-size: 0.98rem; margin: 0 0 8px; }
+    .sub { color: var(--muted); font-size: 0.95rem; margin: 0 0 20px; }
+    .meta { color: var(--muted); font-size: 0.82rem; margin-bottom: 18px; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 12px;
+    }
+    .stat b { display: block; font-size: 1.35rem; }
+    .stat span { color: var(--muted); font-size: 0.78rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    .bar {
+      display: flex; height: 10px; border-radius: 999px; overflow: hidden;
+      background: #e2e8f0; margin: 8px 0 18px;
+    }
+    .bar i { display: block; height: 100%; }
+    .bar .ok { background: #22c55e; }
+    .bar .warn { background: #eab308; }
+    .bar .bad { background: #f97316; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-size: 0.78rem; font-weight: 600; }
+    .pill {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 700;
+    }
+    .pill.done { background: var(--ok-bg); color: var(--ok); }
+    .pill.partial { background: var(--warn-bg); color: var(--warn); }
+    .pill.missing { background: var(--bad-bg); color: var(--bad); }
+    .phase-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+    .phase-id {
+      background: #eff6ff; color: var(--accent); font-weight: 800;
+      font-size: 0.75rem; padding: 3px 8px; border-radius: 999px;
+    }
+    .phase-meta { color: var(--muted); font-size: 0.8rem; }
+    .task {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem;
+    }
+    .task:last-child { border-bottom: none; }
+    .check {
+      width: 18px; height: 18px; border-radius: 50%; border: 2px solid #cbd5e1;
+      flex: none; margin-top: 2px; display: grid; place-items: center; font-size: 11px;
+    }
+    .task.done .check { background: var(--ok); border-color: var(--ok); color: #fff; }
+    .task.done .txt { color: var(--muted); text-decoration: line-through; }
+    .note {
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px;
+      padding: 12px 14px; font-size: 0.88rem; color: #854d0e; margin-top: 8px;
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 720px) {
+      .stats, .grid2 { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 480px) {
+      .stats, .grid2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 id="title">Intro Show CRM — Roadmap</h1>
+    <p class="sub" id="summary"></p>
+    <p class="meta" id="updated"></p>
+
+    <div class="stats" id="stats"></div>
+    <div class="bar" id="bar"></div>
+
+    <h2>Процесс клиента</h2>
+    <div class="card"><table><thead><tr><th>Этап</th><th>Статус</th></tr></thead><tbody id="process"></tbody></table></div>
+
+    <h2>Что сделано</h2>
+    <div class="card"><table><thead><tr><th>Блок</th><th>Что умеет</th></tr></thead><tbody id="done"></tbody></table></div>
+
+    <h2>Что ещё нужно</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>Частично</h3>
+        <table><thead><tr><th>Тема</th><th>Разрыв</th></tr></thead><tbody id="partial"></tbody></table>
+      </div>
+      <div class="card">
+        <h3>Отсутствует</h3>
+        <table><thead><tr><th>Тема</th><th>Суть</th></tr></thead><tbody id="missing"></tbody></table>
+      </div>
+    </div>
+
+    <h2>Этапы реализации</h2>
+    <div id="phases"></div>
+    <div id="notes"></div>
+  </div>
+
+  <script>
+    const STATUS_LABEL = { done: 'Готово', partial: 'Частично', missing: 'Нет', pending: 'В очереди' };
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function load() {
+      const res = await fetch('/static/roadmap.json?t=' + Date.now());
+      const d = await res.json();
+      document.getElementById('title').textContent = d.title;
+      document.getElementById('summary').textContent = d.summary;
+      document.getElementById('updated').textContent = 'Обновлено: ' + d.updated_at + ' · публичная страница статуса';
+
+      const s = d.stats;
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><b>${esc(s.core_pct)}%</b><span>Ядро процесса</span></div>
+        <div class="stat"><b>${esc(s.done)}</b><span>Модулей готово</span></div>
+        <div class="stat"><b>${esc(s.partial)}</b><span>Частично</span></div>
+        <div class="stat"><b>${esc(s.missing)}</b><span>Критичных пробелов</span></div>`;
+
+      const total = s.done + s.partial + s.missing || 1;
+      document.getElementById('bar').innerHTML =
+        `<i class="ok" style="width:${s.done/total*100}%"></i>` +
+        `<i class="warn" style="width:${s.partial/total*100}%"></i>` +
+        `<i class="bad" style="width:${s.missing/total*100}%"></i>`;
+
+      document.getElementById('process').innerHTML = d.process.map(p =>
+        `<tr><td>${esc(p.stage)}</td><td><span class="pill ${p.status}">${STATUS_LABEL[p.status] || p.status}</span></td></tr>`
+      ).join('');
+
+      document.getElementById('done').innerHTML = d.done.map(x =>
+        `<tr><td><strong>${esc(x.block)}</strong></td><td>${esc(x.detail)}</td></tr>`
+      ).join('');
+
+      document.getElementById('partial').innerHTML = d.partial.map(x =>
+        `<tr><td><strong>${esc(x.topic)}</strong></td><td>${esc(x.gap)}</td></tr>`
+      ).join('');
+
+      document.getElementById('missing').innerHTML = d.missing.map(x =>
+        `<tr><td><strong>${esc(x.topic)}</strong></td><td>${esc(x.detail)}</td></tr>`
+      ).join('');
+
+      document.getElementById('phases').innerHTML = d.phases.map(ph => {
+        const doneN = ph.tasks.filter(t => t.status === 'done').length;
+        return `<div class="card">
+          <div class="phase-head">
+            <span class="phase-id">Этап ${esc(ph.id)}</span>
+            <h3 style="margin:0">${esc(ph.name)}</h3>
+            <span class="phase-meta">${esc(ph.duration)} · ${doneN}/${ph.tasks.length}</span>
+          </div>
+          ${ph.tasks.map(t => `
+            <div class="task ${t.status === 'done' ? 'done' : ''}">
+              <div class="check">${t.status === 'done' ? '✓' : ''}</div>
+              <div class="txt">${esc(t.content)}</div>
+            </div>`).join('')}
+        </div>`;
+      }).join('');
+
+      document.getElementById('notes').innerHTML = (d.notes || []).map(n =>
+        `<div class="note">${esc(n)}</div>`
+      ).join('');
+    }
+    load();
+  </script>
+</body>
+</html>
