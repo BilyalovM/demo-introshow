@@ -77,8 +77,8 @@
         <div class="card">
             <h3 style="margin-top:0">Итоги</h3>
             <div class="totals">
-                <div class="row"><span class="muted">Оборудование</span><span id="tEq">0 ₸</span></div>
-                <div class="row" id="tSubRow" style="display:none"><span class="muted">Субаренда</span><span id="tSub">0 ₸</span></div>
+                <div class="row"><span class="muted">Оборудование (свой склад)</span><span id="tEq">0 ₸</span></div>
+                <div class="row" id="tSubRow" style="display:none"><span class="muted"><strong>Субаренда</strong></span><span id="tSub">0 ₸</span></div>
                 <div class="row"><span class="muted">Логистика, тех. персонал</span><span id="tFixed">0 ₸</span></div>
                 <div class="row"><span class="muted">Сумма до скидки</span><span id="tBase">0 ₸</span></div>
                 <div class="row"><span class="muted" id="tDiscountLabel">Скидка 0%</span><span id="tDiscount">−0 ₸</span></div>
@@ -93,19 +93,52 @@
             <h3 style="margin-top:0">Документы</h3>
             <div class="grid" style="gap:8px">
                 <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить</button>
-                <div class="docs-dd" id="docsDd">
-                    <button type="button" class="btn btn-primary" style="width:100%" onclick="toggleDocsMenu(event)">Документы ▾</button>
-                    <div class="docs-menu" id="docsMenu" hidden>
-                        <button type="button" class="docs-menu-item" onclick="downloadDoc('internal')">Для нас → Word</button>
-                        <button type="button" class="docs-menu-item" onclick="downloadDoc('internal_pdf')">Для нас → PDF</button>
-                        <button type="button" class="docs-menu-item" onclick="downloadDoc('client')">Клиентская → Word</button>
-                        <button type="button" class="docs-menu-item" onclick="downloadDoc('client_pdf')">Клиентская → PDF</button>
-                        <button type="button" class="docs-menu-item" onclick="downloadDoc('contract')">Договор → Word</button>
-                        <button type="button" class="docs-menu-item" onclick="downloadDoc('contract_pdf')">Договор → PDF</button>
-                    </div>
+                <button type="button" class="btn btn-primary" style="width:100%" onclick="openDocsRegistry()">Документы</button>
+            </div>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">Один реестр: для нас / клиентская / договор (Word и PDF). Техничка создаётся автоматически в CRM → Команда — в этом списке её нет.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Реестр документов сметы -->
+<div id="docsRegistryOverlay" class="docs-registry-overlay" hidden onclick="if(event.target===this)closeDocsRegistry()">
+    <div class="docs-registry-modal" role="dialog" aria-modal="true" aria-labelledby="docsRegistryTitle">
+        <div class="docs-registry-head">
+            <h3 id="docsRegistryTitle" style="margin:0">Реестр документов</h3>
+            <button type="button" class="btn btn-sm" onclick="closeDocsRegistry()">Закрыть</button>
+        </div>
+        <p class="muted" style="font-size:12.5px;margin:0 0 12px">Выберите документ для выгрузки. Техничка — только через CRM → Команда.</p>
+        <div class="docs-registry-list">
+            <div class="docs-registry-row">
+                <div>
+                    <strong>Для нас</strong>
+                    <div class="muted" style="font-size:12px">Полная смета с субарендой и маржой</div>
+                </div>
+                <div class="docs-registry-actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('internal')">Word</button>
+                    <button type="button" class="btn btn-sm" onclick="downloadDoc('internal_pdf')">PDF</button>
                 </div>
             </div>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">«Для нас» — полная смета с субарендой и маржой. «Клиентская» — без субаренды. Техничка создаётся автоматически при назначении сотрудников в CRM → Команда. Для договора нужен выбранный клиент.</p>
+            <div class="docs-registry-row">
+                <div>
+                    <strong>Клиентская</strong>
+                    <div class="muted" style="font-size:12px">Без субаренды и внутренних сумм</div>
+                </div>
+                <div class="docs-registry-actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('client')">Word</button>
+                    <button type="button" class="btn btn-sm" onclick="downloadDoc('client_pdf')">PDF</button>
+                </div>
+            </div>
+            <div class="docs-registry-row">
+                <div>
+                    <strong>Договор</strong>
+                    <div class="muted" style="font-size:12px">Нужен выбранный клиент</div>
+                </div>
+                <div class="docs-registry-actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('contract')">Word</button>
+                    <button type="button" class="btn btn-sm" onclick="downloadDoc('contract_pdf')">PDF</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -145,20 +178,23 @@
     white-space: nowrap;
 }
 .btn-sub-dup:hover { background: #ffedd5; }
-.docs-dd { position: relative; }
-.docs-menu {
-    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    box-shadow: var(--shadow-md, 0 8px 24px rgba(15,23,42,0.12));
-    display: flex; flex-direction: column; padding: 4px; gap: 2px;
+.docs-registry-overlay {
+    position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,0.45);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
 }
-.docs-menu[hidden] { display: none !important; }
-.docs-menu-item {
-    display: block; width: 100%; text-align: left; padding: 9px 12px;
-    border: none; background: transparent; border-radius: 8px; cursor: pointer;
-    font: inherit; color: var(--text); font-size: 13.5px; font-weight: 600;
+.docs-registry-overlay[hidden] { display: none !important; }
+.docs-registry-modal {
+    width: min(480px, 100%); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: var(--shadow-lg, 0 16px 48px rgba(15,23,42,0.2));
+    padding: 18px 18px 14px;
 }
-.docs-menu-item:hover { background: var(--bg-2, #f1f5f9); }
+.docs-registry-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
+.docs-registry-list { display:flex; flex-direction:column; gap:8px; }
+.docs-registry-row {
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+    padding:12px; border:1px solid var(--border); border-radius:10px; background: var(--bg-2, #f8fafc);
+}
+.docs-registry-actions { display:flex; gap:6px; flex-shrink:0; }
 .conflict-icon {
     color: #fff;
     font-weight: 800;
@@ -808,17 +844,21 @@ function renderCart() {
 const FIXED_CATS = ["Логистика, Тех персонал", "Логистика", "Персонал", "Расходники"];
 
 function calculateTotals() {
-    let eqTotal = 0, fixedTotal = 0, costTotal = 0, subRev = 0;
+    let ownEqTotal = 0, fixedTotal = 0, costTotal = 0, subRev = 0;
     cart.forEach(item => {
         const sum = item.price * item.qty * item.days;
-        if (FIXED_CATS.includes(item.category)) fixedTotal += sum;
-        else eqTotal += sum;
-        if ((item.warehouse_type || 'own') === 'subrental') {
+        const isSub = (item.warehouse_type || 'own') === 'subrental';
+        if (FIXED_CATS.includes(item.category)) {
+            fixedTotal += sum;
+        } else if (isSub) {
             subRev += sum;
             costTotal += (Number(item.cost_price) || 0) * item.qty * item.days;
+        } else {
+            ownEqTotal += sum;
         }
     });
 
+    const eqTotal = ownEqTotal + subRev; // база для скидки (оборудование + субаренда)
     const discountPercent = parseFloat(document.getElementById('discountInput').value) || 0;
     const taxPercent = 16;
     const discountSum = (eqTotal * discountPercent) / 100;
@@ -826,9 +866,10 @@ function calculateTotals() {
     const taxSum = (afterDiscount * taxPercent) / 100;
     const grand = afterDiscount + taxSum;
 
-    document.getElementById('tEq').textContent = fmt(eqTotal) + ' ₸';
+    document.getElementById('tEq').textContent = fmt(ownEqTotal) + ' ₸';
     const subRow = document.getElementById('tSubRow');
     if (subRow) {
+        // Всегда показываем строку «Субаренда», если в корзине есть позиции субаренды
         subRow.style.display = subRev > 0 ? 'flex' : 'none';
         document.getElementById('tSub').textContent = fmt(subRev) + ' ₸';
     }
@@ -940,23 +981,22 @@ async function saveQuote(silent) {
     }
 }
 
-function toggleDocsMenu(ev) {
-    if (ev) ev.stopPropagation();
-    const menu = document.getElementById('docsMenu');
-    if (!menu) return;
-    menu.hidden = !menu.hidden;
+function openDocsRegistry() {
+    const el = document.getElementById('docsRegistryOverlay');
+    if (el) el.hidden = false;
 }
 
-document.addEventListener('click', (e) => {
-    const dd = document.getElementById('docsDd');
-    const menu = document.getElementById('docsMenu');
-    if (!dd || !menu || menu.hidden) return;
-    if (!dd.contains(e.target)) menu.hidden = true;
+function closeDocsRegistry() {
+    const el = document.getElementById('docsRegistryOverlay');
+    if (el) el.hidden = true;
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDocsRegistry();
 });
 
 async function downloadDoc(kind) {
-    const menu = document.getElementById('docsMenu');
-    if (menu) menu.hidden = true;
+    closeDocsRegistry();
     const id = await saveQuote(true);
     if (!id) return;
     if ((kind === 'contract' || kind === 'contract_pdf') && !document.getElementById('companySelect').value) {

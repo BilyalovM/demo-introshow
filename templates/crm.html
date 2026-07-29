@@ -778,18 +778,35 @@
                 </table>
                 <div style="display: flex; justify-content: flex-end; margin-top: 16px; gap: 16px; font-weight: 700; font-size: 14px; flex-wrap: wrap;">
                     <div>Скидка: <span id="modal-discount-label">0%</span></div>
+                    <div>Налог: <span id="modal-tax-label">16%</span></div>
                     <div>Итого: <span id="modal-total-label" style="color: var(--primary);">0 ₸</span></div>
                 </div>
                 <div id="modal-margin-block" style="display:none; margin-top:10px; padding:10px 12px; background:var(--bg-2); border-radius:8px; font-size:12.5px;">
                     <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-                        <span class="muted">Оборудование: <strong id="modal-eq-total">0</strong></span>
+                        <span class="muted">Свой склад: <strong id="modal-eq-total">0</strong></span>
+                        <span class="muted" id="modal-sub-wrap" style="display:none">Субаренда: <strong id="modal-sub-total">0</strong></span>
                         <span class="muted">Логистика/персонал: <strong id="modal-fixed-total">0</strong></span>
-                        <span class="muted">Налог: <strong id="modal-tax-total">0</strong></span>
+                        <span class="muted">Налог 16%: <strong id="modal-tax-total">0</strong></span>
                         <span class="muted">Себест. субаренды: <strong id="modal-cost-total">0</strong></span>
                         <span>Маржа: <strong id="modal-margin-total" style="color:var(--primary)">0</strong></span>
                     </div>
                 </div>
-                <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px;">
+                    <button class="btn btn-primary" style="width:100%" onclick="saveDealProducts()">Сохранить смету</button>
+                    <a class="btn" id="crm-open-full-quote" href="/quotes/new" style="width:100%; text-align:center; display:inline-flex; align-items:center; justify-content:center;">Полная смета →</a>
+                </div>
+                <div style="margin-top:10px; position:relative;" id="crmDocsDd">
+                    <button type="button" class="btn btn-sm" style="width:100%" onclick="toggleCrmDocsMenu(event)">Документы ▾</button>
+                    <div id="crmDocsMenu" hidden style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;display:flex;flex-direction:column;gap:2px;">
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('internal')">Для нас → Word</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('internal_pdf')">Для нас → PDF</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client')">Клиентская → Word</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_pdf')">Клиентская → PDF</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract')">Договор → Word</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract_pdf')">Договор → PDF</button>
+                    </div>
+                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Техничка — во вкладке «Команда», не в документах сметы.</p>
+                </div>
             </div>
 
             <!-- Tab Content: Team / staff assignment -->
@@ -1498,6 +1515,8 @@
 
     async function openDealSlider(dealId, preferredTab) {
         activeDealId = dealId;
+        const fullQuoteLink = document.getElementById('crm-open-full-quote');
+        if (fullQuoteLink) fullQuoteLink.href = `/quotes/${dealId}`;
         
         // Fetch detailed deal info
         try {
@@ -2468,42 +2487,89 @@
         document.getElementById('modal-tax-total').textContent = fmt(totals.tax_amount);
         document.getElementById('modal-cost-total').textContent = fmt(totals.cost_total);
         document.getElementById('modal-margin-total').textContent = fmt(totals.margin);
+        const subWrap = document.getElementById('modal-sub-wrap');
+        const subEl = document.getElementById('modal-sub-total');
+        if (subWrap && subEl) {
+            const sub = totals.subrental_total || 0;
+            subWrap.style.display = sub > 0 ? '' : 'none';
+            subEl.textContent = fmt(sub);
+        }
         block.style.display = 'block';
     }
 
     function recalculateSliderTotal() {
         const discount = parseFloat(document.getElementById('edit-deal-discount').value) || 0;
         
-        let equipTotal = 0;
+        let ownEqTotal = 0;
+        let subRev = 0;
         let fixedTotal = 0;
         let costTotal = 0;
 
         currentDealProducts.forEach(p => {
             const rowTotal = (p.price || 0) * (p.quantity || 1) * (p.days || 1);
+            const isSub = (p.warehouse_type || 'own') === 'subrental';
             if (p.category_type === 'fixed') {
                 fixedTotal += rowTotal;
-            } else {
-                equipTotal += rowTotal;
-            }
-            if ((p.warehouse_type || 'own') === 'subrental') {
+            } else if (isSub) {
+                subRev += rowTotal;
                 costTotal += (Number(p.cost_price) || 0) * (p.quantity || 1) * (p.days || 1);
+            } else {
+                ownEqTotal += rowTotal;
             }
         });
 
+        const equipTotal = ownEqTotal + subRev;
         const discountedEquip = equipTotal * (1 - discount / 100);
         const after = discountedEquip + fixedTotal;
-        const grandTotal = Math.round(after);
+        const taxAmount = after * 0.16;
+        const grandTotal = Math.round(after + taxAmount);
 
         document.getElementById('modal-discount-label').innerText = `${discount}%`;
+        const taxLabel = document.getElementById('modal-tax-label');
+        if (taxLabel) taxLabel.innerText = '16%';
         document.getElementById('modal-total-label').innerText = `${grandTotal.toLocaleString()} ₸`;
         document.getElementById('edit-deal-sum').value = grandTotal;
         renderDealMarginBlock({
-            equipment_total: discountedEquip,
+            equipment_total: ownEqTotal * (1 - discount / 100),
+            subrental_total: subRev * (1 - discount / 100),
             fixed_total: fixedTotal,
-            tax_amount: 0,
+            tax_amount: taxAmount,
             cost_total: costTotal,
-            margin: after - costTotal,
+            margin: (after + taxAmount) - costTotal,
         });
+    }
+
+    function toggleCrmDocsMenu(ev) {
+        if (ev) ev.stopPropagation();
+        const menu = document.getElementById('crmDocsMenu');
+        if (!menu) return;
+        menu.hidden = !menu.hidden;
+        if (!menu.hidden) menu.style.display = 'flex';
+        else menu.style.display = 'none';
+    }
+
+    document.addEventListener('click', (e) => {
+        const dd = document.getElementById('crmDocsDd');
+        const menu = document.getElementById('crmDocsMenu');
+        if (!dd || !menu || menu.hidden) return;
+        if (!dd.contains(e.target)) {
+            menu.hidden = true;
+            menu.style.display = 'none';
+        }
+    });
+
+    async function crmDownloadDoc(kind) {
+        const menu = document.getElementById('crmDocsMenu');
+        if (menu) { menu.hidden = true; menu.style.display = 'none'; }
+        if (!activeDealId) return;
+        await saveDealProducts();
+        let url = `/api/deals/${activeDealId}/estimate?mode=internal`;
+        if (kind === 'contract') url = `/api/deals/${activeDealId}/contract`;
+        else if (kind === 'contract_pdf') url = `/api/deals/${activeDealId}/contract.pdf`;
+        else if (kind === 'client') url = `/api/deals/${activeDealId}/estimate?mode=client`;
+        else if (kind === 'client_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=client`;
+        else if (kind === 'internal_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=internal`;
+        window.open(url, '_blank');
     }
 
     // Submit products update to backend
@@ -2524,6 +2590,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     discount_percentage: discount,
+                    tax_percentage: 16,
                     items: itemsPayload
                 })
             });
@@ -2532,6 +2599,7 @@
                 const data = await response.json();
                 document.getElementById('edit-deal-sum').value = data.final_sum;
                 if (data.totals) renderDealMarginBlock(data.totals);
+                else recalculateSliderTotal();
                 await loadDeals();
                 renderCrm();
                 openDealSlider(activeDealId, 'products');

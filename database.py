@@ -16,9 +16,18 @@ def get_database_url() -> str:
         return configured_url
 
     if os.environ.get("VERCEL"):
+        # Vercel /tmp is ephemeral: seed from packaged DB on cold start,
+        # and refresh if the deployed package DB is newer than the runtime copy.
         db_path = os.path.join(tempfile.gettempdir(), "rental_app.db")
-        if not os.path.exists(db_path) and os.path.exists(DEFAULT_DB_PATH):
-            shutil.copyfile(DEFAULT_DB_PATH, db_path)
+        if os.path.exists(DEFAULT_DB_PATH):
+            should_copy = not os.path.exists(db_path)
+            if not should_copy:
+                try:
+                    should_copy = os.path.getmtime(DEFAULT_DB_PATH) > os.path.getmtime(db_path)
+                except OSError:
+                    should_copy = True
+            if should_copy:
+                shutil.copyfile(DEFAULT_DB_PATH, db_path)
         return f"sqlite:///{db_path}"
 
     return f"sqlite:///{DEFAULT_DB_PATH}"
@@ -480,7 +489,7 @@ class InternalChat(Base):
     """Внутренний чат сотрудников (DM или тред по сделке) — отдельно от клиентского Inbox."""
     __tablename__ = "internal_chats"
     id = Column(Integer, primary_key=True, index=True)
-    chat_type = Column(String, default="dm")  # dm / deal
+    chat_type = Column(String, default="dm")  # dm / deal / company
     title = Column(String, nullable=True)
     deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True, index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)

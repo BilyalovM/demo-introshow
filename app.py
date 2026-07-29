@@ -153,6 +153,40 @@ with Session(engine) as session:
     except Exception:
         session.rollback()
 
+    # 4b3. Пустые/NULL типы склада → own
+    try:
+        session.execute(
+            text("UPDATE equipment SET warehouse_type = 'own' WHERE warehouse_type IS NULL OR TRIM(warehouse_type) = ''")
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    # 4b4. Демо-каталог субаренды (Vercel SQLite эфемерен — без seed вкладка пустая)
+    try:
+        sub_cnt = session.query(Equipment).filter(Equipment.warehouse_type == "subrental").count()
+        if sub_cnt == 0:
+            for name, cat, price, cost, supplier, qty in [
+                ("LED экран P3.9 (субаренда)", "Экраны", 45000, 32000, "EventPro Almaty", 10),
+                ("Линейный массив 2×top (субаренда)", "Звук", 80000, 55000, "SoundRent", 4),
+                ("Дым-машина hazer (субаренда)", "Свет", 12000, 7000, "LightHub", 6),
+                ("Генератор 30 кВт (субаренда)", "Логистика", 35000, 22000, "PowerGo", 2),
+            ]:
+                session.add(Equipment(
+                    name=name,
+                    category=cat,
+                    price=float(price),
+                    cost_price=float(cost),
+                    stock_quantity=int(qty),
+                    status="Доступно",
+                    warehouse_type="subrental",
+                    supplier=supplier,
+                    description="Демо-позиция внешнего склада (субаренда)",
+                ))
+            session.commit()
+    except Exception:
+        session.rollback()
+
     # 4c. Стадии «в работе» для проверки брони оборудования:
     # если ни одна стадия не помечена, помечаем стандартные.
     try:
@@ -1486,6 +1520,20 @@ def create_user(u: UserCreate, db: Session = Depends(get_db), current_user: User
     )
     db.add(new_user)
     db.commit()
+    db.refresh(new_user)
+    # Новый сотрудник сразу попадает в «Чат компании»
+    try:
+        company_chat = (
+            db.query(InternalChat)
+            .filter(InternalChat.chat_type == "company")
+            .order_by(InternalChat.id.asc())
+            .first()
+        )
+        if company_chat:
+            _ensure_chat_member(db, company_chat.id, new_user.id)
+            db.commit()
+    except Exception:
+        db.rollback()
     return {"status": "success"}
 
 @app.put("/api/users/{user_id}")
@@ -2541,7 +2589,9 @@ def _recalc_deal_sum(db: Session, deal: Deal) -> None:
 def _estimate_totals_payload(result: dict) -> dict:
     return {
         "equipment_base": result.get("equipment_base", 0),
-        "equipment_total": result.get("equipment_total", 0),
+        "equipment_total": result.get("own_equipment_total", result.get("equipment_total", 0)),
+        "subrental_total": result.get("subrental_total", 0),
+        "subrental_base": result.get("subrental_base", 0),
         "fixed_total": result.get("fixed_total", 0),
         "discount_amount": result.get("discount_amount", 0),
         "after_discount": result.get("after_discount", 0),
@@ -3957,6 +4007,9 @@ def _user_display(u: User) -> str:
     return (u.full_name or u.username) if u else "Сотрудник"
 
 
+COMPANY_CHAT_TITLE = "Чат компании"
+
+
 def _ensure_chat_member(db: Session, chat_id: int, user_id: int) -> InternalChatMember:
     member = (
         db.query(InternalChatMember)
@@ -3968,6 +4021,37 @@ def _ensure_chat_member(db: Session, chat_id: int, user_id: int) -> InternalChat
         db.add(member)
         db.flush()
     return member
+
+
+def _sync_company_chat_members(db: Session, chat: InternalChat) -> None:
+    """Все активные сотрудники — участники чата компании."""
+    for u in db.query(User).all():
+        _ensure_chat_member(db, chat.id, u.id)
+    if chat.title != COMPANY_CHAT_TITLE:
+        chat.title = COMPANY_CHAT_TITLE
+
+
+def _ensure_company_chat(db: Session, user: User) -> InternalChat:
+    """Один общий чат компании; при открытии синхронизируем всех сотрудников."""
+    chat = (
+        db.query(InternalChat)
+        .filter(InternalChat.chat_type == "company")
+        .order_by(InternalChat.id.asc())
+        .first()
+    )
+    if not chat:
+        chat = InternalChat(
+            chat_type="company",
+            title=COMPANY_CHAT_TITLE,
+            created_by_id=user.id,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(chat)
+        db.flush()
+    _sync_company_chat_members(db, chat)
+    db.commit()
+    db.refresh(chat)
+    return chat
 
 
 def _find_dm_chat(db: Session, user_a: int, user_b: int) -> Optional[InternalChat]:
@@ -4043,6 +4127,8 @@ def _chat_to_dict(db: Session, chat: InternalChat, current_user_id: int) -> dict
             title = chat.title or f"Проект: {chat.deal.title}"
         else:
             title = chat.title or f"Сделка #{chat.deal_id}"
+    elif chat.chat_type == "company":
+        title = COMPANY_CHAT_TITLE
 
     return {
         "id": chat.id,
@@ -4062,6 +4148,8 @@ def _chat_to_dict(db: Session, chat: InternalChat, current_user_id: int) -> dict
 
 @app.get("/api/internal-chats")
 def list_internal_chats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # Гарантируем «Чат компании» и членство всех сотрудников при каждом открытии списка
+    _ensure_company_chat(db, user)
     chat_ids = [
         r[0]
         for r in db.query(InternalChatMember.chat_id)
@@ -4076,7 +4164,16 @@ def list_internal_chats(db: Session = Depends(get_db), user: User = Depends(get_
         .order_by(InternalChat.updated_at.desc())
         .all()
     )
+    # Компанейский чат — всегда сверху
+    chats.sort(key=lambda c: (0 if c.chat_type == "company" else 1, -(c.updated_at.timestamp() if c.updated_at else 0)))
     return [_chat_to_dict(db, c, user.id) for c in chats]
+
+
+@app.post("/api/internal-chats/company")
+def open_company_chat(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Открыть/создать общий чат компании со всеми сотрудниками."""
+    chat = _ensure_company_chat(db, user)
+    return _chat_to_dict(db, chat, user.id)
 
 
 @app.get("/api/internal-chats/unread-count")

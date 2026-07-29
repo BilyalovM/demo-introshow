@@ -58,6 +58,10 @@ def calculate_estimate(
 
     equipment_base = 0.0
     equipment_after = 0.0
+    own_equipment_base = 0.0
+    own_equipment_after = 0.0
+    subrental_base = 0.0
+    subrental_after = 0.0
     fixed_sum = 0.0
     cost_total = 0.0
 
@@ -84,6 +88,12 @@ def calculate_estimate(
             equipment_base += line_total_base
             equipment_after += line_total_discounted
             line_discount = line_total_base - line_total_discounted
+            if warehouse_type == "subrental":
+                subrental_base += line_total_base
+                subrental_after += line_total_discounted
+            else:
+                own_equipment_base += line_total_base
+                own_equipment_after += line_total_discounted
         else:
             line_total_discounted = line_total_base
             fixed_sum += line_total_discounted
@@ -119,8 +129,12 @@ def calculate_estimate(
 
     return {
         "items": processed_items,
-        "equipment_total": equipment_after,  # после скидки (совместимость)
+        "equipment_total": equipment_after,  # после скидки (совместимость: свой + субаренда)
         "equipment_base": equipment_base,
+        "own_equipment_total": own_equipment_after,
+        "own_equipment_base": own_equipment_base,
+        "subrental_total": subrental_after,
+        "subrental_base": subrental_base,
         "fixed_total": fixed_sum,
         "discount_amount": discount_amount,
         "after_discount": after_discount,

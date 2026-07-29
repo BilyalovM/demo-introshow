@@ -56,6 +56,7 @@
         background-color: var(--background);
         border-left: 4px solid var(--primary);
     }
+    .ichat-avatar.company { background: linear-gradient(135deg, #22c55e, #15803d); }
     .ichat-avatar {
         width: 36px; height: 36px; border-radius: 50%;
         display: flex; align-items: center; justify-content: center;
@@ -234,6 +235,7 @@
             <span id="ichat-total-unread" class="ichat-unread" style="display:none"></span>
         </div>
         <div class="ichat-actions">
+            <button class="btn btn-sm btn-green" onclick="openCompanyChat()" title="Общий чат всех сотрудников">Чат компании</button>
             <button class="btn btn-sm btn-primary" onclick="openNewDm()">+ Личный</button>
             <button class="btn btn-sm" onclick="openNewDealChat()">+ По сделке</button>
         </div>
@@ -248,7 +250,7 @@
         <div class="ichat-messages" id="ichat-messages">
             <div class="ichat-empty" id="ichat-empty">
                 <strong>Переписка между сотрудниками</strong>
-                <span>Личные чаты и обсуждение проектов — отдельно от клиентского Inbox (WhatsApp / Telegram / Instagram).</span>
+                <span>«Чат компании» — все сотрудники. Также личные чаты и чаты по сделкам — отдельно от клиентского Inbox.</span>
             </div>
         </div>
         <div class="ichat-input-area" id="ichat-input-area" style="display:none;">
@@ -374,7 +376,7 @@ function renderSidebar() {
     const list = document.getElementById('ichat-list');
     list.innerHTML = '';
     if (!chats.length) {
-        list.innerHTML = '<div class="muted" style="padding:16px;font-size:12.5px">Чатов пока нет. Создайте личный или чат по сделке.</div>';
+        list.innerHTML = '<div class="muted" style="padding:16px;font-size:12.5px">Чатов пока нет. Откройте «Чат компании» или создайте личный / по сделке.</div>';
         return;
     }
     chats.forEach(chat => {
@@ -382,10 +384,13 @@ function renderSidebar() {
         const div = document.createElement('div');
         div.className = `ichat-item ${isActive ? 'active' : ''}`;
         div.onclick = () => selectChat(chat);
-        const kind = chat.chat_type === 'deal' ? 'deal' : '';
+        const kind = chat.chat_type === 'deal' ? 'deal' : (chat.chat_type === 'company' ? 'company' : '');
         const unread = chat.unread > 0
             ? `<span class="ichat-unread">${chat.unread > 99 ? '99+' : chat.unread}</span>`
             : '';
+        const previewFallback = chat.chat_type === 'company'
+            ? 'Общий чат всех сотрудников'
+            : (chat.chat_type === 'deal' ? 'Чат по проекту' : 'Личный чат');
         div.innerHTML = `
             <div class="ichat-avatar ${kind}">${esc(initials(chat.title))}</div>
             <div style="min-width:0;flex:1">
@@ -393,11 +398,28 @@ function renderSidebar() {
                     <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(chat.title)}</span>
                     ${unread}
                 </div>
-                <div class="ichat-item-preview">${esc(chat.last_message || (chat.chat_type === 'deal' ? 'Чат по проекту' : 'Личный чат'))}</div>
+                <div class="ichat-item-preview">${esc(chat.last_message || previewFallback)}</div>
             </div>
         `;
         list.appendChild(div);
     });
+}
+
+async function openCompanyChat() {
+    try {
+        const res = await fetch('/api/internal-chats/company', { method: 'POST' });
+        const chat = await res.json();
+        if (!res.ok) {
+            alert(chat.error || 'Не удалось открыть чат компании');
+            return;
+        }
+        await loadChats();
+        const found = chats.find(c => c.id === chat.id) || chat;
+        await selectChat(found);
+    } catch (e) {
+        console.error(e);
+        alert('Ошибка открытия чата компании');
+    }
 }
 
 async function selectChat(chat) {
@@ -570,7 +592,9 @@ function openTaskFromMessage(messageId) {
     if (activeChat && activeChat.deal_id) {
         hint.textContent = `Будет привязана к сделке №${activeChat.deal_id}${activeChat.deal_title ? ' — ' + activeChat.deal_title : ''}.`;
     } else {
-        hint.textContent = 'Сделка не привязана (личный чат).';
+        hint.textContent = activeChat && activeChat.chat_type === 'company'
+            ? 'Сделка не привязана (чат компании).'
+            : 'Сделка не привязана (личный чат).';
     }
     document.getElementById('task-from-msg-modal').classList.add('active');
 }

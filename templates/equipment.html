@@ -222,6 +222,7 @@
 .badge-sub { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; background:#fff7ed; color:#c2410c; margin-left:6px; }
 </style>
 <script>
+        const IS_ADMIN = {{ 'true' if request.state.user and request.state.user.role == 'admin' else 'false' }};
         let equipmentData = [];
         let foldersData = [];
         let currentFolderId = null;
@@ -338,12 +339,32 @@
             const tbody = document.querySelector('#equipTable tbody');
             tbody.innerHTML = '';
             const isSub = warehouseTab === 'subrental';
-            equipmentData.filter(e => {
+            const rows = equipmentData.filter(e => {
                 const w = e.warehouse_type || 'own';
                 if (w !== warehouseTab) return false;
                 if (search) return e.name.toLowerCase().includes(search);
                 return e.folder_id === currentFolderId;
-            }).forEach(item => {
+            });
+            if (!rows.length) {
+                const tr = document.createElement('tr');
+                const cols = isSub ? 12 : 10;
+                tr.innerHTML = `<td colspan="${cols}" style="text-align:center;padding:28px 16px;">
+                    <div style="font-weight:700;margin-bottom:6px">${isSub ? 'Склад субаренды пуст' : 'Нет позиций'}</div>
+                    <div class="muted" style="font-size:13px;max-width:420px;margin:0 auto 12px;line-height:1.45">
+                        ${isSub
+                            ? 'Добавьте позицию кнопкой «+ Добавить» (склад = Субаренда), импортируйте Excel (admin) или продублируйте товар со своего склада в смете («в субаренду»). На демо SQLite эфемерен — после «холодного» рестарта Vercel каталог пересоздаётся из seed.'
+                            : 'Создайте папку или добавьте оборудование.'}
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="openEquipModal()">+ Добавить позицию</button>
+                        ${isSub && IS_ADMIN ? '<button type="button" class="btn btn-sm" onclick="document.getElementById(\'catalogXlsxInput\').click()">⬆ Импорт Excel</button>' : ''}
+                        ${!isSub ? '<button type="button" class="btn btn-sm" onclick="setWarehouseTab(\'subrental\')">Открыть субаренду</button>' : ''}
+                    </div>
+                </td>`;
+                tbody.appendChild(tr);
+                return;
+            }
+            rows.forEach(item => {
                 const tr = document.createElement('tr');
                 let img = item.photo_url ? `<img src="${item.photo_url}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">` : '📷';
                 let statusBadge = `<span style="color: ${item.status === 'Доступно' ? 'green' : 'red'}">${item.status}</span>`;
@@ -357,9 +378,31 @@
                 const subBadge = isSub ? '<span class="badge-sub">субаренда</span>' : '';
                 const costCell = isSub ? `<td>${Number(item.cost_price || 0).toLocaleString()} ₸</td>` : '<td style="display:none"></td>';
                 const supCell = isSub ? `<td>${item.supplier || '—'}</td>` : '<td style="display:none"></td>';
-                tr.innerHTML = `<td>${item.id}</td><td>${img}</td><td><strong>${item.name}</strong>${subBadge}<br><small style="color:var(--text-2)">Категория: ${item.category}</small></td><td>${Number(item.price).toLocaleString()} ₸</td>${costCell}${supCell}<td>${item.stock_quantity}</td><td>${item.rented_quantity}</td><td style="${availColor}">${item.available_quantity}</td><td>${statusBadge}</td><td><div style="font-size: 0.85rem;">${item.description || ''}</div>${customFieldsHtml}</td><td class="actions"><div style="display:flex;gap:0.5rem;"><button class="btn btn-sm" onclick='openEquipModal(${JSON.stringify(item).replace(/'/g, "&apos;")})'>Редакт.</button> <button class="btn btn-sm btn-danger" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button></div></td>`;
+                const dupBtn = !isSub
+                    ? `<button class="btn btn-sm" type="button" title="Продублировать в субаренду" onclick="duplicateEquipToSubrental(${item.id})">→ субаренда</button>`
+                    : '';
+                tr.innerHTML = `<td>${item.id}</td><td>${img}</td><td><strong>${item.name}</strong>${subBadge}<br><small style="color:var(--text-2)">Категория: ${item.category}</small></td><td>${Number(item.price).toLocaleString()} ₸</td>${costCell}${supCell}<td>${item.stock_quantity}</td><td>${item.rented_quantity}</td><td style="${availColor}">${item.available_quantity}</td><td>${statusBadge}</td><td><div style="font-size: 0.85rem;">${item.description || ''}</div>${customFieldsHtml}</td><td class="actions"><div style="display:flex;gap:0.5rem;flex-wrap:wrap;"><button class="btn btn-sm" onclick='openEquipModal(${JSON.stringify(item).replace(/'/g, "&apos;")})'>Редакт.</button> ${dupBtn} <button class="btn btn-sm btn-danger" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button></div></td>`;
                 tbody.appendChild(tr);
             });
+        }
+
+        async function duplicateEquipToSubrental(equipId) {
+            try {
+                const res = await fetch(`/api/equipment/${equipId}/duplicate-subrental`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    alert(data.error || 'Не удалось продублировать');
+                    return;
+                }
+                await loadData();
+                setWarehouseTab('subrental');
+                alert(data.status === 'exists'
+                    ? 'Уже есть во вкладке «Субаренда».'
+                    : 'Скопировано в субаренду.');
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка дублирования');
+            }
         }
 
         function openFolderModal() {
