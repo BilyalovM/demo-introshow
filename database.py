@@ -372,6 +372,24 @@ class DealExpense(Base):
     deal = relationship("Deal", backref="expenses")
 
 
+class DealStaffAssignment(Base):
+    """Назначение сотрудника на проект: техничка + задача + напоминание."""
+    __tablename__ = "deal_staff_assignments"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    role_name = Column(String, nullable=True)
+    note = Column(String, nullable=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    attachment_id = Column(Integer, ForeignKey("deal_attachments.id"), nullable=True)
+    notified_at = Column(DateTime, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="staff_assignments")
+    user = relationship("User", foreign_keys=[user_id])
+
+
 class DealPayrollLine(Base):
     """Строка зарплатной ведомости по сделке (из позиций «Персонал» сметы)."""
     __tablename__ = "deal_payroll_lines"

@@ -6,12 +6,15 @@
 <div class="toolbar" style="margin-bottom:6px">
     <h1 class="page-title" style="margin:0">Календарь проектов</h1>
     <div class="spacer"></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-right:8px;cursor:pointer;">
+        <input type="checkbox" id="calMineOnly"> Только мои
+    </label>
     <button class="btn" type="button" id="calPrev">←</button>
     <strong id="calMonthLabel" style="min-width:160px;text-align:center"></strong>
     <button class="btn" type="button" id="calNext">→</button>
     <button class="btn" type="button" id="calToday">Сегодня</button>
 </div>
-<p class="page-sub">Сделки по датам мероприятий. К событию можно прикрепить ссылку на Google Docs/Sheets или загрузить файл (КП, оффер).</p>
+<p class="page-sub">Сделки по датам. Назначенным сотрудникам видны свои выезды и техничка (без цен). Можно прикрепить ссылку или файл.</p>
 
 <div class="grid" style="grid-template-columns:1fr 340px;gap:16px;align-items:start">
     <div class="card card-pad-0" style="overflow:hidden">
@@ -28,6 +31,7 @@
             <div class="muted" style="font-size:12px;margin-bottom:4px">Мероприятие</div>
             <div id="calDealTitle" style="font-weight:700;margin-bottom:8px"></div>
             <div class="muted" style="font-size:12px">Дата: <span id="calDealDate"></span></div>
+            <div class="muted" style="font-size:12px">Адрес: <span id="calDealAddress">—</span></div>
             <div class="muted" style="font-size:12px">Менеджер: <span id="calDealManager">—</span></div>
             <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
                 <a class="btn btn-sm" id="calOpenQuote" href="#">Смета</a>
@@ -156,6 +160,8 @@ function initCal() {
     document.getElementById('calPrev').onclick = () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } loadMonth(); };
     document.getElementById('calNext').onclick = () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } loadMonth(); };
     document.getElementById('calToday').onclick = () => { const t = new Date(); calYear = t.getFullYear(); calMonth = t.getMonth(); loadMonth(); };
+    const mineCb = document.getElementById('calMineOnly');
+    if (mineCb) mineCb.onchange = () => loadMonth();
     loadMonth();
 }
 
@@ -173,7 +179,8 @@ async function loadMonth() {
     const endDow = (end.getDay() + 6) % 7;
     end.setDate(end.getDate() + (6 - endDow));
 
-    const res = await fetch(`/api/calendar/events?from=${ymd(start)}&to=${ymd(end)}`);
+    const mine = document.getElementById('calMineOnly')?.checked ? '&mine=1' : '';
+    const res = await fetch(`/api/calendar/events?from=${ymd(start)}&to=${ymd(end)}${mine}`);
     calEvents = await res.json();
     renderGrid(start, end);
 }
@@ -228,6 +235,9 @@ async function selectDeal(dealId, scrollSide) {
     document.getElementById('calDealManager').textContent = data.manager || '—';
     document.getElementById('calOpenQuote').href = `/quotes/${dealId}`;
     document.getElementById('calOpenCrm').href = `/crm?deal=${dealId}`;
+    document.getElementById('calOpenQuote').style.display = data.hide_prices ? 'none' : '';
+    const addrEl = document.getElementById('calDealAddress');
+    if (addrEl) addrEl.textContent = data.event_address || '—';
     renderAttachments(data.attachments || []);
 
     // подсветка события на сетке + актуализация счётчика вложений

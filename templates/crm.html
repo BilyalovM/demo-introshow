@@ -614,6 +614,7 @@
     <div class="slider-tabs-row">
         <div id="tab-btn-info" class="slider-tab-item active" onclick="switchSliderTab('info')">Общие (Параметры)</div>
         <div id="tab-btn-products" class="slider-tab-item" onclick="switchSliderTab('products')">Товары (Смета)</div>
+        <div id="tab-btn-team" class="slider-tab-item" onclick="switchSliderTab('team')">Команда</div>
         <div id="tab-btn-money" class="slider-tab-item" onclick="switchSliderTab('money')">Деньги</div>
         <div id="tab-btn-invoices" class="slider-tab-item" onclick="switchSliderTab('invoices')">Счета</div>
         <div id="tab-btn-chat" class="slider-tab-item" onclick="switchSliderTab('chat')" style="display:none;">💬 Чат с клиентом</div>
@@ -780,6 +781,28 @@
                     <div>Итого с учетом скидки: <span id="modal-total-label" style="color: var(--primary);">0 ₸</span></div>
                 </div>
                 <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
+            </div>
+
+            <!-- Tab Content: Team / staff assignment -->
+            <div id="tab-content-team" class="tab-pane">
+                <div class="slider-info-card">
+                    <div class="slider-info-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span>Команда на проекте</span>
+                        <a class="btn btn-sm" id="team-tech-download" href="#" target="_blank">Скачать техничку</a>
+                    </div>
+                    <div class="slider-info-card-body">
+                        <div class="muted" style="font-size:12.5px;margin-bottom:10px;">
+                            После сметы назначьте сотрудников: им уйдёт файл «техничка» (без цен), задача в календарь и напоминание за 1 день до выезда.
+                        </div>
+                        <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:8px;margin-bottom:8px;">
+                            <select id="team-user" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);"></select>
+                            <input type="text" id="team-role" placeholder="Роль (техник, монтаж…)" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                        </div>
+                        <input type="text" id="team-note" placeholder="Комментарий (необязательно)" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="assignDealStaff()">+ Назначить и отправить техничку</button>
+                        <div id="deal-staff-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Tab Content: Advances + project expenses -->
@@ -1014,6 +1037,8 @@
     let activeDealExpenses = [];
     let activeDealPayroll = [];
     let activeDealPayrollSummary = null;
+    let activeDealStaff = [];
+    let dealHidePrices = false;
     const EXPENSE_LABELS = { taxi: 'Такси', purchase: 'Закупка', delivery: 'Довоз / логистика', other: 'Прочее' };
     const ATTENDANCE_LABELS = { pending: 'Ожидает', present: 'Был', absent: 'Не был', fine: 'Штраф' };
 
@@ -1495,10 +1520,20 @@
             activeDealExpenses = data.expenses || [];
             activeDealPayroll = data.payroll_lines || [];
             activeDealPayrollSummary = data.payroll_summary || null;
+            activeDealStaff = data.staff || [];
+            dealHidePrices = !!data.hide_prices;
+            const moneyBtn = document.getElementById('tab-btn-money');
+            const invBtn = document.getElementById('tab-btn-invoices');
+            if (moneyBtn) moneyBtn.style.display = dealHidePrices ? 'none' : '';
+            if (invBtn) invBtn.style.display = dealHidePrices ? 'none' : '';
+            const techDl = document.getElementById('team-tech-download');
+            if (techDl) techDl.href = '/api/deals/' + dealId + '/technichka';
             renderDealActivities();
             renderDealInvoices();
             renderDealMoney();
+            renderDealStaff();
             fillAdvanceUserSelect();
+            fillTeamUserSelect();
             const today = new Date().toISOString().slice(0, 10);
             const advDate = document.getElementById('adv-date');
             const expDate = document.getElementById('exp-date');
@@ -1584,7 +1619,8 @@
     }
 
     function switchSliderTab(tabName) {
-        ['info', 'products', 'money', 'invoices', 'chat'].forEach(t => {
+        if (dealHidePrices && (tabName === 'money' || tabName === 'invoices')) tabName = 'team';
+        ['info', 'products', 'team', 'money', 'invoices', 'chat'].forEach(t => {
             const btn = document.getElementById('tab-btn-' + t);
             const pane = document.getElementById('tab-content-' + t);
             if (btn) btn.classList.toggle('active', tabName === t);
@@ -1593,6 +1629,64 @@
         if (tabName === 'chat') loadDealChat();
         if (tabName === 'invoices') renderDealInvoices();
         if (tabName === 'money') renderDealMoney();
+        if (tabName === 'team') renderDealStaff();
+    }
+
+    function fillTeamUserSelect() {
+        const sel = document.getElementById('team-user');
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">Сотрудник…</option>' +
+            (crmUsers || []).map(u =>
+                `<option value="${u.id}">${escapeHtml(u.full_name || u.username)}</option>`
+            ).join('');
+        if (cur) sel.value = cur;
+    }
+
+    function renderDealStaff() {
+        const box = document.getElementById('deal-staff-list');
+        if (!box) return;
+        if (!(activeDealStaff || []).length) {
+            box.innerHTML = '<div class="muted" style="font-size:13px;">Пока никто не назначен.</div>';
+            return;
+        }
+        box.innerHTML = activeDealStaff.map(s => `
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+                <div>
+                    <div style="font-weight:700;">${escapeHtml(s.user_name)}${s.role_name ? ' · ' + escapeHtml(s.role_name) : ''}</div>
+                    <div class="muted" style="font-size:12px;margin-top:3px;">
+                        ${s.notified_at ? 'Техничка отправлена ' + escapeHtml(s.notified_at) : 'Назначен'}
+                        ${s.note ? ' · ' + escapeHtml(s.note) : ''}
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+                        ${s.attachment_url ? `<a class="btn btn-sm" href="${escapeHtml(s.attachment_url)}" target="_blank">Техничка</a>` : ''}
+                        ${s.task_id ? `<a class="btn btn-sm" href="/tasks">Задача #${s.task_id}</a>` : ''}
+                    </div>
+                </div>
+                ${dealHidePrices ? '' : `<button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="unassignDealStaff(${s.id})">Снять</button>`}
+            </div>`).join('');
+    }
+
+    async function assignDealStaff() {
+        if (!activeDealId) return;
+        const userId = parseInt(document.getElementById('team-user').value) || 0;
+        const role_name = document.getElementById('team-role').value.trim();
+        const note = document.getElementById('team-note').value.trim();
+        if (!userId) { alert('Выберите сотрудника'); return; }
+        const res = await fetch(`/api/deals/${activeDealId}/staff`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, role_name, note })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось назначить'); return; }
+        document.getElementById('team-note').value = '';
+        await openDealSlider(activeDealId, 'team');
+    }
+
+    async function unassignDealStaff(id) {
+        if (!confirm('Снять сотрудника с проекта?')) return;
+        await fetch(`/api/deals/${activeDealId}/staff/${id}`, { method: 'DELETE' });
+        await openDealSlider(activeDealId, 'team');
     }
 
     function fillAdvanceUserSelect() {

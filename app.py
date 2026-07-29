@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
@@ -606,9 +606,20 @@ def api_calendar_events(
     """События календаря = сделки с датой мероприятия/монтажа в диапазоне."""
     date_from = (request.query_params.get("from") or "").strip()
     date_to = (request.query_params.get("to") or "").strip()
+    mine = (request.query_params.get("mine") or "").strip() in ("1", "true", "yes")
+    hide = _user_hide_prices(user)
     q = db.query(Deal).filter(Deal.is_archived == False)  # noqa: E712
-    if _user_crm_own_only(user):
-        q = q.filter(Deal.assignee_id == user.id)
+    staff_ids = [
+        r[0] for r in db.query(DealStaffAssignment.deal_id)
+        .filter(DealStaffAssignment.user_id == user.id).distinct().all()
+    ]
+    # Личный календарь: свои сделки как менеджер ИЛИ назначения в команду
+    if hide or mine or _user_crm_own_only(user):
+        from sqlalchemy import or_
+        filters = [Deal.assignee_id == user.id]
+        if staff_ids:
+            filters.append(Deal.id.in_(staff_ids))
+        q = q.filter(or_(*filters))
     deals = q.all()
     out = []
     for d in deals:
@@ -631,7 +642,10 @@ def api_calendar_events(
             "event_date": d.event_date,
             "manager": mgr,
             "attachments_count": att_cnt,
-            "company": d.company.name if d.company else None,
+            "company": None if hide else (d.company.name if d.company else None),
+            "address": d.event_address or "",
+            "hide_prices": hide,
+            "my_assignment": d.id in staff_ids,
         })
     out.sort(key=lambda x: (x["date"], x["id"]))
     return out
@@ -642,9 +656,13 @@ def api_calendar_deal(deal_id: int, db: Session = Depends(get_db), user: User = 
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Not found")
-    if _user_crm_own_only(user) and d.assignee_id != user.id:
+    if not _user_assigned_to_deal(db, user, d) and _user_crm_own_only(user):
         raise HTTPException(status_code=403, detail="Forbidden")
+    if not _user_assigned_to_deal(db, user, d) and user.role != "admin" and _user_hide_prices(user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    hide = _user_hide_prices(user)
     atts = db.query(DealAttachment).filter(DealAttachment.deal_id == deal_id).order_by(DealAttachment.id.desc()).all()
+    # Техникам показываем вложения (техничку), без лишней коммерции
     return {
         "id": d.id,
         "title": d.title,
@@ -652,6 +670,7 @@ def api_calendar_deal(deal_id: int, db: Session = Depends(get_db), user: User = 
         "event_date": d.event_date,
         "event_address": d.event_address,
         "manager": (d.assignee.full_name or d.assignee.username) if d.assignee else None,
+        "hide_prices": hide,
         "attachments": [{
             "id": a.id,
             "title": a.title,
@@ -1939,6 +1958,140 @@ def _user_crm_own_only(user: User) -> bool:
     return "crm_own_only" in perms
 
 
+def _user_hide_prices(user: User) -> bool:
+    if not user or user.role == "admin":
+        return False
+    return "hide_prices" in (user.permissions or [])
+
+
+def _user_assigned_to_deal(db: Session, user: User, deal: Deal) -> bool:
+    if not user or not deal:
+        return False
+    if user.role == "admin":
+        return True
+    if deal.assignee_id == user.id:
+        return True
+    return db.query(DealStaffAssignment).filter(
+        DealStaffAssignment.deal_id == deal.id,
+        DealStaffAssignment.user_id == user.id,
+    ).first() is not None
+
+
+def _build_technichka_context(deal: Deal, assignee_name: str = "") -> dict:
+    result = calculate_estimate(_deal_calc_items(deal), deal.discount_percentage or 0)
+    rent_period = ""
+    if deal.setup_date or deal.event_date:
+        rent_period = f"{deal.setup_date or '—'} — {deal.event_date or '—'}"
+    return {
+        "number": f"TECH-{deal.id}",
+        "date": datetime.today().strftime("%d.%m.%Y"),
+        "company_name": deal.company.name if deal.company else "",
+        "event_name": deal.title or "",
+        "event_address": deal.event_address or "",
+        "rent_period": rent_period,
+        "assignee_name": assignee_name or "",
+        "items": result["items"],
+    }
+
+
+def _save_technichka_file(deal: Deal, assignee_name: str = "") -> tuple:
+    """Генерирует DOCX технички, сохраняет в uploads. Returns (url, filename, abs_path)."""
+    from document_generator import generate_technichka_docx
+    import uuid
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    fname = f"technichka_deal{deal.id}_{uuid.uuid4().hex[:8]}.docx"
+    abs_path = os.path.join(UPLOADS_DIR, fname)
+    generate_technichka_docx(_build_technichka_context(deal, assignee_name), abs_path)
+    return f"/uploads/{fname}", fname, abs_path
+
+
+def assign_staff_to_deal(
+    db: Session,
+    deal: Deal,
+    emp: User,
+    created_by: str,
+    role_name: Optional[str] = None,
+    note: Optional[str] = None,
+) -> DealStaffAssignment:
+    """Назначить сотрудника: техничка → вложение → задача → напоминание за 1 день."""
+    existing = db.query(DealStaffAssignment).filter(
+        DealStaffAssignment.deal_id == deal.id,
+        DealStaffAssignment.user_id == emp.id,
+    ).first()
+    if existing:
+        return existing
+
+    emp_name = emp.full_name or emp.username
+    url, fname, _ = _save_technichka_file(deal, emp_name)
+    att = DealAttachment(
+        deal_id=deal.id,
+        kind="file",
+        url=url,
+        title=f"Техничка — {emp_name}",
+        file_name=fname,
+    )
+    db.add(att)
+    db.flush()
+
+    event_day = (deal.event_date or deal.setup_date or "")[:10]
+    setup_day = (deal.setup_date or deal.event_date or "")[:10]
+    task = Task(
+        title=f"Выезд: {deal.title}",
+        description=(
+            f"Вы назначены на проект «{deal.title}».\n"
+            f"Адрес: {deal.event_address or '—'}\n"
+            f"Монтаж: {setup_day or '—'} · Мероприятие: {event_day or '—'}\n"
+            f"Роль: {role_name or '—'}\n"
+            f"Файл технички: {url}\n"
+            f"{('Комментарий: ' + note) if note else ''}"
+        ).strip(),
+        assignee=emp.username,
+        created_by=created_by,
+        due_date=event_day or setup_day or None,
+        priority="high",
+        deal_id=deal.id,
+        status="open",
+    )
+    db.add(task)
+    db.flush()
+
+    # Напоминание за 1 день до эвента/сборки
+    remind_day = None
+    base_day = event_day or setup_day
+    if base_day:
+        try:
+            remind_day = (datetime.strptime(base_day, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            remind_day = None
+    if remind_day:
+        db.add(Activity(
+            deal_id=deal.id,
+            type="reminder",
+            title=f"Напоминание: завтра выезд «{deal.title}» ({emp_name})",
+            due_at=remind_day,
+            status="planned",
+            assignee_id=emp.id,
+            created_by=created_by,
+        ))
+
+    row = DealStaffAssignment(
+        deal_id=deal.id,
+        user_id=emp.id,
+        role_name=(role_name or "").strip() or None,
+        note=(note or "").strip() or None,
+        task_id=task.id,
+        attachment_id=att.id,
+        notified_at=datetime.utcnow(),
+        created_by=created_by,
+    )
+    db.add(row)
+    db.add(DealHistory(
+        deal_id=deal.id,
+        action_text=f"Назначен сотрудник {emp_name}: отправлена техничка, задача и напоминание за 1 день",
+    ))
+    return row
+
+
 def _deal_has_overdue_activity(db: Session, deal_id: int) -> bool:
     today = datetime.utcnow().strftime("%Y-%m-%d")
     acts = db.query(Activity).filter(
@@ -2148,19 +2301,22 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
-    if _user_crm_own_only(user) and d.assignee_id != user.id:
-        return JSONResponse(status_code=403, content={"error": "Нет доступа к этой сделке"})
+    if not _user_assigned_to_deal(db, user, d):
+        if _user_crm_own_only(user) or _user_hide_prices(user):
+            return JSONResponse(status_code=403, content={"error": "Нет доступа к этой сделке"})
+    hide = _user_hide_prices(user)
     
     items = []
     for i in d.items:
+        price = 0 if hide else _item_price(i)
         items.append({
             "id": i.id,
             "equipment_id": i.equipment_id,
             "quantity": i.quantity,
             "days": i.days,
             "name": i.equipment.name if i.equipment else "Unknown",
-            "price": _item_price(i),
-            "stock_price": i.equipment.price if i.equipment else 0,
+            "price": price,
+            "stock_price": 0 if hide else (i.equipment.price if i.equipment else 0),
             "category_type": "fixed" if i.equipment and i.equipment.category in FIXED_CATEGORIES else "equipment"
         })
 
@@ -2226,8 +2382,9 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "setup_date": d.setup_date,
         "event_date": d.event_date,
         "event_address": d.event_address,
-        "discount_percentage": d.discount_percentage,
-        "final_sum": d.final_sum,
+        "discount_percentage": 0 if hide else d.discount_percentage,
+        "final_sum": 0 if hide else d.final_sum,
+        "hide_prices": hide,
         "comment": d.comment,
         "created_at": d.created_at.strftime("%d.%m.%Y") if d.created_at else "",
         "chat_channel": d.chat_channel,
@@ -2244,13 +2401,25 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "items": items,
         "history": history,
         "activities": activities,
-        "invoices": invoices,
-        "advances": advances,
-        "expenses": expenses,
-        "advances_total": sum(a["amount"] for a in advances),
-        "expenses_total": sum(e["amount"] for e in expenses),
-        "payroll_lines": [_serialize_payroll_line(p) for p in sorted(d.payroll_lines, key=lambda x: x.id)],
-        "payroll_summary": _payroll_summary(d),
+        "invoices": [] if hide else invoices,
+        "advances": [] if hide else advances,
+        "expenses": [] if hide else expenses,
+        "advances_total": 0 if hide else sum(a["amount"] for a in advances),
+        "expenses_total": 0 if hide else sum(e["amount"] for e in expenses),
+        "payroll_lines": [] if hide else [_serialize_payroll_line(p) for p in sorted(d.payroll_lines, key=lambda x: x.id)],
+        "payroll_summary": None if hide else _payroll_summary(d),
+        "staff": [{
+            "id": s.id,
+            "user_id": s.user_id,
+            "user_name": (s.user.full_name or s.user.username) if s.user else "—",
+            "role_name": s.role_name or "",
+            "note": s.note or "",
+            "task_id": s.task_id,
+            "attachment_id": s.attachment_id,
+            "attachment_url": next((a.url for a in d.attachments if a.id == s.attachment_id), None) if s.attachment_id else None,
+            "notified_at": s.notified_at.strftime("%Y-%m-%d %H:%M") if s.notified_at else "",
+            "created_at": s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "",
+        } for s in sorted(d.staff_assignments, key=lambda x: x.id, reverse=True)],
         "custom_values": custom_values
     }
 
@@ -2700,6 +2869,85 @@ def api_generate_payroll(deal_id: int, db: Session = Depends(get_db), user: User
         "payroll_lines": [_serialize_payroll_line(p) for p in deal.payroll_lines],
         "payroll_summary": _payroll_summary(deal),
     }
+
+
+class StaffAssignIn(BaseModel):
+    user_id: int
+    role_name: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/api/deals/{deal_id}/staff")
+def api_assign_staff(deal_id: int, body: StaffAssignIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    emp = db.query(User).filter(User.id == body.user_id).first()
+    if not emp:
+        return JSONResponse(status_code=404, content={"error": "Сотрудник не найден"})
+    existed = db.query(DealStaffAssignment).filter(
+        DealStaffAssignment.deal_id == deal.id,
+        DealStaffAssignment.user_id == emp.id,
+    ).first()
+    if existed:
+        return JSONResponse(status_code=400, content={"error": "Сотрудник уже назначен на этот проект"})
+    row = assign_staff_to_deal(
+        db, deal, emp,
+        created_by=user.full_name or user.username,
+        role_name=body.role_name,
+        note=body.note,
+    )
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "status": "success",
+        "attachment_url": next((a.url for a in deal.attachments if a.id == row.attachment_id), None),
+        "task_id": row.task_id,
+    }
+
+
+@app.delete("/api/deals/{deal_id}/staff/{assignment_id}")
+def api_unassign_staff(deal_id: int, assignment_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(DealStaffAssignment).filter(
+        DealStaffAssignment.id == assignment_id,
+        DealStaffAssignment.deal_id == deal_id,
+    ).first()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Назначение не найдено"})
+    name = (row.user.full_name or row.user.username) if row.user else "—"
+    db.delete(row)
+    db.add(DealHistory(deal_id=deal_id, action_text=f"Снят с проекта: {name}"))
+    db.commit()
+    return {"status": "success"}
+
+
+@app.get("/api/deals/{deal_id}/technichka")
+def download_technichka(deal_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Скачать техничку (без цен) для склада/персонала."""
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    if not _user_assigned_to_deal(db, user, d) and user.role != "admin" and _user_crm_own_only(user):
+        return JSONResponse(status_code=403, content={"error": "Нет доступа"})
+    from document_generator import generate_technichka_docx
+    who = user.full_name or user.username
+    fd, temp_path = tempfile.mkstemp(suffix=".docx")
+    os.close(fd)
+    generate_technichka_docx(_build_technichka_context(d, who), temp_path)
+
+    def cleanup_file(path: str):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    background_tasks.add_task(cleanup_file, temp_path)
+    return FileResponse(
+        temp_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"Technichka_{d.id}.docx",
+    )
 
 
 @app.put("/api/payroll-lines/{line_id}")

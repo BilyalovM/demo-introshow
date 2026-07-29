@@ -73,6 +73,55 @@ def _fmt_money(v: float) -> str:
     return f"{v:,.0f}".replace(",", " ") + " ₸"
 
 
+def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
+    """Техничка для склада/персонала: позиции и количества без цен."""
+    doc = Document()
+
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title.add_run(f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}")
+    run.bold = True
+    run.font.size = Pt(16)
+
+    meta_lines = []
+    if context.get("company_name"):
+        meta_lines.append(f"Заказчик: {context['company_name']}")
+    if context.get("event_name"):
+        meta_lines.append(f"Мероприятие: {context['event_name']}")
+    if context.get("event_address"):
+        meta_lines.append(f"Адрес: {context['event_address']}")
+    if context.get("rent_period"):
+        meta_lines.append(f"Период: {context['rent_period']}")
+    if context.get("assignee_name"):
+        meta_lines.append(f"Ответственный на объекте: {context['assignee_name']}")
+    for line in meta_lines:
+        doc.add_paragraph(line)
+
+    items = context.get("items", [])
+    table = doc.add_table(rows=1, cols=4)
+    table.style = "Table Grid"
+    headers = ["№", "Наименование", "Кол-во", "Дней / смен"]
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = h
+        for p in cell.paragraphs:
+            for r in p.runs:
+                r.bold = True
+
+    for idx, item in enumerate(items, 1):
+        row = table.add_row().cells
+        row[0].text = str(idx)
+        row[1].text = str(item.get("name", ""))
+        row[2].text = str(item.get("quantity", 1))
+        row[3].text = str(item.get("days", 1))
+
+    note = doc.add_paragraph()
+    note.add_run("Цены скрыты. Документ для склада и выездного персонала.").italic = True
+
+    doc.save(output_path)
+    return output_path
+
+
 def generate_estimate_docx(context: Dict[str, Any], output_path: str) -> str:
     """Генерирует смету (.docx) с таблицей позиций и итогами."""
     doc = Document()
