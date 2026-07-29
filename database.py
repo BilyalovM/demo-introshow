@@ -415,6 +415,50 @@ class DealPayrollLine(Base):
     equipment = relationship("Equipment")
 
 
+class InternalChat(Base):
+    """Внутренний чат сотрудников (DM или тред по сделке) — отдельно от клиентского Inbox."""
+    __tablename__ = "internal_chats"
+    id = Column(Integer, primary_key=True, index=True)
+    chat_type = Column(String, default="dm")  # dm / deal
+    title = Column(String, nullable=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", foreign_keys=[deal_id])
+    members = relationship("InternalChatMember", back_populates="chat", cascade="all, delete-orphan")
+    messages = relationship("InternalMessage", back_populates="chat", cascade="all, delete-orphan")
+
+
+class InternalChatMember(Base):
+    """Участник внутреннего чата + курсор прочитанного."""
+    __tablename__ = "internal_chat_members"
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("internal_chats.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    last_read_message_id = Column(Integer, default=0)
+    joined_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    chat = relationship("InternalChat", back_populates="members")
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class InternalMessage(Base):
+    """Сообщение во внутреннем чате сотрудников."""
+    __tablename__ = "internal_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("internal_chats.id"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    text = Column(String)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    chat = relationship("InternalChat", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])
+    task = relationship("Task", foreign_keys=[task_id])
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 

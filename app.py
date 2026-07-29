@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -797,6 +797,10 @@ def api_calendar_delete_attachment(
 @app.get("/inbox", response_class=HTMLResponse)
 async def read_inbox(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("inbox.html", {"request": request, "active_page": "inbox"})
+
+@app.get("/chats", response_class=HTMLResponse)
+async def read_internal_chats(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("chats.html", {"request": request, "active_page": "chats"})
 
 @app.get("/tasks", response_class=HTMLResponse)
 async def read_tasks(request: Request, user: User = Depends(get_current_user)):
@@ -3442,6 +3446,347 @@ def ig_webhook(event: dict, db: Session = Depends(get_db)):
     except Exception as e:
         print("IG webhook error:", e)
     return {"status": "ok"}
+
+
+# -----------------
+# ВНУТРЕННИЕ ЧАТЫ СОТРУДНИКОВ (отдельно от клиентского Inbox)
+# -----------------
+
+def _user_display(u: User) -> str:
+    return (u.full_name or u.username) if u else "Сотрудник"
+
+
+def _ensure_chat_member(db: Session, chat_id: int, user_id: int) -> InternalChatMember:
+    member = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == chat_id, InternalChatMember.user_id == user_id)
+        .first()
+    )
+    if not member:
+        member = InternalChatMember(chat_id=chat_id, user_id=user_id, last_read_message_id=0)
+        db.add(member)
+        db.flush()
+    return member
+
+
+def _find_dm_chat(db: Session, user_a: int, user_b: int) -> Optional[InternalChat]:
+    """Найти существующий DM между двумя пользователями."""
+    chats_a = [
+        r[0]
+        for r in db.query(InternalChatMember.chat_id)
+        .filter(InternalChatMember.user_id == user_a)
+        .all()
+    ]
+    if not chats_a:
+        return None
+    shared = (
+        db.query(InternalChatMember.chat_id)
+        .filter(
+            InternalChatMember.user_id == user_b,
+            InternalChatMember.chat_id.in_(chats_a),
+        )
+        .all()
+    )
+    for (chat_id,) in shared:
+        chat = db.query(InternalChat).filter(InternalChat.id == chat_id, InternalChat.chat_type == "dm").first()
+        if not chat:
+            continue
+        member_count = db.query(InternalChatMember).filter(InternalChatMember.chat_id == chat_id).count()
+        if member_count == 2:
+            return chat
+    return None
+
+
+def _chat_to_dict(db: Session, chat: InternalChat, current_user_id: int) -> dict:
+    member = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == chat.id, InternalChatMember.user_id == current_user_id)
+        .first()
+    )
+    last_read = (member.last_read_message_id or 0) if member else 0
+    last_msg = (
+        db.query(InternalMessage)
+        .filter(InternalMessage.chat_id == chat.id)
+        .order_by(InternalMessage.id.desc())
+        .first()
+    )
+    unread = (
+        db.query(InternalMessage)
+        .filter(
+            InternalMessage.chat_id == chat.id,
+            InternalMessage.id > last_read,
+            InternalMessage.sender_id != current_user_id,
+        )
+        .count()
+    )
+    members = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == chat.id)
+        .all()
+    )
+    member_users = []
+    peer_name = None
+    for m in members:
+        u = db.query(User).filter(User.id == m.user_id).first()
+        if not u:
+            continue
+        member_users.append({"id": u.id, "name": _user_display(u)})
+        if chat.chat_type == "dm" and u.id != current_user_id:
+            peer_name = _user_display(u)
+
+    title = chat.title
+    if chat.chat_type == "dm":
+        title = peer_name or title or "Личный чат"
+    elif chat.chat_type == "deal":
+        if chat.deal:
+            title = chat.title or f"Проект: {chat.deal.title}"
+        else:
+            title = chat.title or f"Сделка #{chat.deal_id}"
+
+    return {
+        "id": chat.id,
+        "chat_type": chat.chat_type,
+        "title": title,
+        "deal_id": chat.deal_id,
+        "deal_title": chat.deal.title if chat.deal else None,
+        "members": member_users,
+        "last_message": last_msg.text if last_msg else "",
+        "last_at": last_msg.created_at.strftime("%Y-%m-%d %H:%M:%S") if last_msg and last_msg.created_at else (
+            chat.updated_at.strftime("%Y-%m-%d %H:%M:%S") if chat.updated_at else ""
+        ),
+        "unread": unread,
+        "updated_at": chat.updated_at.strftime("%Y-%m-%d %H:%M:%S") if chat.updated_at else "",
+    }
+
+
+@app.get("/api/internal-chats")
+def list_internal_chats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    chat_ids = [
+        r[0]
+        for r in db.query(InternalChatMember.chat_id)
+        .filter(InternalChatMember.user_id == user.id)
+        .all()
+    ]
+    if not chat_ids:
+        return []
+    chats = (
+        db.query(InternalChat)
+        .filter(InternalChat.id.in_(chat_ids))
+        .order_by(InternalChat.updated_at.desc())
+        .all()
+    )
+    return [_chat_to_dict(db, c, user.id) for c in chats]
+
+
+@app.get("/api/internal-chats/unread-count")
+def internal_chats_unread_count(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    memberships = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.user_id == user.id)
+        .all()
+    )
+    total = 0
+    for m in memberships:
+        total += (
+            db.query(InternalMessage)
+            .filter(
+                InternalMessage.chat_id == m.chat_id,
+                InternalMessage.id > (m.last_read_message_id or 0),
+                InternalMessage.sender_id != user.id,
+            )
+            .count()
+        )
+    return {"unread": total}
+
+
+class InternalDmCreate(BaseModel):
+    user_id: int
+
+
+@app.post("/api/internal-chats/dm")
+def create_or_get_dm(body: InternalDmCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if body.user_id == user.id:
+        return JSONResponse(status_code=400, content={"error": "Нельзя создать чат с собой"})
+    other = db.query(User).filter(User.id == body.user_id).first()
+    if not other:
+        return JSONResponse(status_code=404, content={"error": "Сотрудник не найден"})
+    chat = _find_dm_chat(db, user.id, other.id)
+    if not chat:
+        chat = InternalChat(
+            chat_type="dm",
+            title=None,
+            created_by_id=user.id,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(chat)
+        db.flush()
+        db.add(InternalChatMember(chat_id=chat.id, user_id=user.id, last_read_message_id=0))
+        db.add(InternalChatMember(chat_id=chat.id, user_id=other.id, last_read_message_id=0))
+        db.commit()
+        db.refresh(chat)
+    return _chat_to_dict(db, chat, user.id)
+
+
+class InternalDealChatCreate(BaseModel):
+    deal_id: int
+
+
+@app.post("/api/internal-chats/deal")
+def create_or_get_deal_chat(body: InternalDealChatCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == body.deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    chat = (
+        db.query(InternalChat)
+        .filter(InternalChat.chat_type == "deal", InternalChat.deal_id == deal.id)
+        .first()
+    )
+    if not chat:
+        chat = InternalChat(
+            chat_type="deal",
+            title=f"Проект: {deal.title}",
+            deal_id=deal.id,
+            created_by_id=user.id,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(chat)
+        db.flush()
+        _ensure_chat_member(db, chat.id, user.id)
+        if deal.assignee_id and deal.assignee_id != user.id:
+            _ensure_chat_member(db, chat.id, deal.assignee_id)
+        db.commit()
+        db.refresh(chat)
+    else:
+        _ensure_chat_member(db, chat.id, user.id)
+        db.commit()
+        db.refresh(chat)
+    return _chat_to_dict(db, chat, user.id)
+
+
+@app.get("/api/internal-chats/{chat_id}/messages")
+def get_internal_messages(chat_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    member = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == chat_id, InternalChatMember.user_id == user.id)
+        .first()
+    )
+    if not member:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к чату"})
+    messages = (
+        db.query(InternalMessage)
+        .filter(InternalMessage.chat_id == chat_id)
+        .order_by(InternalMessage.id)
+        .limit(500)
+        .all()
+    )
+    if messages:
+        member.last_read_message_id = messages[-1].id
+        db.commit()
+    return [{
+        "id": m.id,
+        "sender_id": m.sender_id,
+        "sender_name": _user_display(m.sender) if m.sender else "",
+        "text": m.text,
+        "task_id": m.task_id,
+        "mine": m.sender_id == user.id,
+        "created_at": m.created_at.strftime("%Y-%m-%d %H:%M:%S") if m.created_at else "",
+    } for m in messages]
+
+
+class InternalMessageSend(BaseModel):
+    text: str
+
+
+@app.post("/api/internal-chats/{chat_id}/messages")
+def send_internal_message(
+    chat_id: int,
+    body: InternalMessageSend,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    text = (body.text or "").strip()
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "Пустое сообщение"})
+    chat = db.query(InternalChat).filter(InternalChat.id == chat_id).first()
+    if not chat:
+        return JSONResponse(status_code=404, content={"error": "Чат не найден"})
+    member = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == chat_id, InternalChatMember.user_id == user.id)
+        .first()
+    )
+    if not member:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к чату"})
+    msg = InternalMessage(chat_id=chat_id, sender_id=user.id, text=text)
+    db.add(msg)
+    chat.updated_at = datetime.utcnow()
+    db.flush()
+    member.last_read_message_id = msg.id
+    db.commit()
+    db.refresh(msg)
+    return {
+        "id": msg.id,
+        "sender_id": msg.sender_id,
+        "sender_name": _user_display(user),
+        "text": msg.text,
+        "task_id": None,
+        "mine": True,
+        "created_at": msg.created_at.strftime("%Y-%m-%d %H:%M:%S") if msg.created_at else "",
+    }
+
+
+class InternalTaskFromMessage(BaseModel):
+    title: Optional[str] = None
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = "normal"
+
+
+@app.post("/api/internal-chats/messages/{message_id}/create-task")
+def create_task_from_internal_message(
+    message_id: int,
+    body: InternalTaskFromMessage,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    msg = db.query(InternalMessage).filter(InternalMessage.id == message_id).first()
+    if not msg:
+        return JSONResponse(status_code=404, content={"error": "Сообщение не найдено"})
+    member = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == msg.chat_id, InternalChatMember.user_id == user.id)
+        .first()
+    )
+    if not member:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к чату"})
+    chat = db.query(InternalChat).filter(InternalChat.id == msg.chat_id).first()
+    if msg.task_id:
+        return {"id": msg.task_id, "status": "exists", "deal_id": chat.deal_id if chat else None}
+
+    title = (body.title or "").strip()
+    if not title:
+        title = (msg.text or "").strip()
+        if len(title) > 120:
+            title = title[:117] + "…"
+    if not title:
+        title = "Задача из чата"
+
+    task = Task(
+        title=title,
+        description=f"Из внутреннего чата:\n{msg.text}",
+        assignee=body.assignee or (user.full_name or user.username),
+        created_by=user.full_name or user.username,
+        due_date=body.due_date,
+        priority=body.priority or "normal",
+        deal_id=chat.deal_id if chat else None,
+    )
+    db.add(task)
+    db.flush()
+    msg.task_id = task.id
+    if task.deal_id:
+        db.add(DealHistory(deal_id=task.deal_id, action_text=f"Создана задача из чата: {task.title}"))
+    db.commit()
+    return {"id": task.id, "status": "success", "deal_id": task.deal_id}
 
 
 # -----------------

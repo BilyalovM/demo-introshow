@@ -16,6 +16,7 @@ SECRET_FILE = os.path.join(BASE_DIR, ".session_secret")
 SECTIONS = {
     "dashboard": "Дашборд",
     "inbox": "Чаты (Inbox)",
+    "chats": "Внутренние чаты",
     "crm": "CRM",
     "quotes": "Сметы и договоры",
     "calendar": "Календарь",
@@ -36,6 +37,7 @@ PERMISSION_FLAGS = {
 # Соответствие URL-префиксов разделам (для проверки доступа)
 PATH_SECTIONS = {
     "/inbox": "inbox",
+    "/chats": "chats",
     "/crm": "crm",
     "/quotes": "quotes",
     "/calendar": "calendar",

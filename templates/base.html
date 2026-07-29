@@ -66,7 +66,19 @@
    </svg>
   </span>
   <span>
-   Чаты
+   Inbox
+  </span>
+ </a>
+ {% endif %}
+ {% if 'chats' in sections %}
+ <a href="/chats" class="nav-link {% if request.url.path.startswith('/chats') %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+   </svg>
+  </span>
+  <span>
+   Внутренние
   </span>
  </a>
  {% endif %}
@@ -337,7 +349,17 @@
     <path d="M5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"></path>
    </svg>
   </span>
-  <span>Чаты</span>
+  <span>Inbox</span>
+ </a>
+ {% endif %}
+ {% if 'chats' in sections %}
+ <a class="bn-item {% if cur_path.startswith('/chats') %}active{% endif %}" href="/chats">
+  <span class="bn-icon">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+   </svg>
+  </span>
+  <span>Команда</span>
  </a>
  {% endif %}
  {% if 'crm' in sections %}
@@ -380,6 +402,7 @@
 <div id="more-sheet" class="sheet" style="display:none">
     <div class="sheet-grip"></div>
     <div class="more-grid">
+        {% if 'chats' in sections %}<a class="more-item {% if cur_path.startswith('/chats') %}active{% endif %}" href="/chats">💬<span>Внутренние</span></a>{% endif %}
         {% if 'tasks' in sections %}<a class="more-item {% if cur_path.startswith('/tasks') %}active{% endif %}" href="/tasks">✅<span>Задачи</span></a>{% endif %}
         {% if 'companies' in sections %}<a class="more-item {% if cur_path.startswith('/companies') %}active{% endif %}" href="/companies">🏢<span>Клиенты</span></a>{% endif %}
         {% if 'equipment' in sections %}<a class="more-item {% if cur_path.startswith('/equipment') %}active{% endif %}" href="/equipment">📦<span>Склад</span></a>{% endif %}
