@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -116,6 +116,8 @@ with Session(engine) as session:
         # Задачи в стиле Битрикс24
         "ALTER TABLE tasks ADD COLUMN description VARCHAR",
         "ALTER TABLE tasks ADD COLUMN created_by VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN creator_id INTEGER",
+        "ALTER TABLE tasks ADD COLUMN tags VARCHAR",
         "ALTER TABLE tasks ADD COLUMN priority VARCHAR DEFAULT 'normal'",
         "ALTER TABLE tasks ADD COLUMN completed_at DATETIME",
         # CRM → ближе к Битрикс24
@@ -910,13 +912,22 @@ async def read_analytics(request: Request, db: Session = Depends(get_db), user: 
 
 
 # -- Задачи --
+TASK_STATUSES = {
+    "open": "Новая",
+    "in_progress": "Выполняется",
+    "deferred": "Отложена",
+    "done": "Завершена",
+}
+
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     assignee: Optional[str] = None
     due_date: Optional[str] = None
     priority: Optional[str] = "normal"
+    status: Optional[str] = "open"
     deal_id: Optional[int] = None
+    tags: Optional[str] = None
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -926,18 +937,51 @@ class TaskUpdate(BaseModel):
     priority: Optional[str] = None
     status: Optional[str] = None
     deal_id: Optional[int] = None
+    tags: Optional[str] = None
 
-def _task_to_dict(t: Task) -> dict:
+class TaskCommentCreate(BaseModel):
+    text: str
+
+def _task_tags_list(tags: Optional[str]) -> list:
+    if not tags:
+        return []
+    return [x.strip() for x in str(tags).split(",") if x.strip()]
+
+def _task_comment_to_dict(c: TaskComment) -> dict:
+    author = ""
+    if c.user:
+        author = c.user.full_name or c.user.username or ""
+    return {
+        "id": c.id,
+        "task_id": c.task_id,
+        "user_id": c.user_id,
+        "author": author,
+        "text": c.text,
+        "created_at": c.created_at.strftime("%d.%m.%Y %H:%M") if c.created_at else "",
+        "created_at_iso": c.created_at.isoformat() if c.created_at else "",
+    }
+
+def _task_to_dict(t: Task, comment_count: Optional[int] = None) -> dict:
     today = datetime.today().strftime("%Y-%m-%d")
     overdue = bool(t.due_date and t.status not in ("done",) and t.due_date[:10] < today)
+    if comment_count is None:
+        comment_count = len(t.comments) if t.comments is not None else 0
     return {
         "id": t.id, "title": t.title, "description": t.description,
-        "assignee": t.assignee, "created_by": t.created_by,
+        "assignee": t.assignee,
+        "created_by": t.created_by,
+        "creator_id": t.creator_id,
         "due_date": t.due_date, "priority": t.priority or "normal",
-        "status": t.status, "deal_id": t.deal_id,
+        "status": t.status or "open",
+        "status_label": TASK_STATUSES.get(t.status or "open", t.status or "open"),
+        "deal_id": t.deal_id,
         "deal_title": t.deal.title if t.deal else None,
+        "tags": t.tags or "",
+        "tags_list": _task_tags_list(t.tags),
         "overdue": overdue,
-        "created_at": t.created_at.strftime("%d.%m.%Y") if t.created_at else "",
+        "comment_count": comment_count,
+        "created_at": t.created_at.strftime("%d.%m.%Y %H:%M") if t.created_at else "",
+        "created_at_date": t.created_at.strftime("%d.%m.%Y") if t.created_at else "",
         "completed_at": t.completed_at.strftime("%d.%m.%Y %H:%M") if t.completed_at else None,
     }
 
@@ -947,18 +991,41 @@ def get_tasks(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
     if deal_id:
         query = query.filter(Task.deal_id == deal_id)
     tasks = query.order_by(Task.status, Task.due_date).all()
-    return [_task_to_dict(t) for t in tasks]
+    counts = dict(
+        db.query(TaskComment.task_id, func.count(TaskComment.id))
+        .group_by(TaskComment.task_id)
+        .all()
+    ) if tasks else {}
+    return [_task_to_dict(t, comment_count=counts.get(t.id, 0)) for t in tasks]
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    count = db.query(TaskComment).filter(TaskComment.task_id == task_id).count()
+    data = _task_to_dict(task, comment_count=count)
+    data["comments"] = [
+        _task_comment_to_dict(c)
+        for c in db.query(TaskComment).filter(TaskComment.task_id == task_id)
+        .order_by(TaskComment.created_at.asc()).all()
+    ]
+    return data
 
 @app.post("/api/tasks")
 def create_task(t: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    status = t.status if t.status in TASK_STATUSES else "open"
     task = Task(
         title=t.title,
         description=t.description,
         assignee=t.assignee or (user.full_name or user.username),
         created_by=user.full_name or user.username,
+        creator_id=user.id,
         due_date=t.due_date,
         priority=t.priority or "normal",
+        status=status,
         deal_id=t.deal_id,
+        tags=t.tags,
     )
     db.add(task)
     db.commit()
@@ -973,11 +1040,13 @@ def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
-    for field in ("title", "description", "assignee", "due_date", "priority", "deal_id"):
+    for field in ("title", "description", "assignee", "due_date", "priority", "deal_id", "tags"):
         value = getattr(t, field)
         if value is not None:
             setattr(task, field, value)
     if t.status is not None:
+        if t.status not in TASK_STATUSES:
+            return JSONResponse(status_code=400, content={"error": "Неизвестный статус"})
         task.status = t.status
         task.completed_at = datetime.utcnow() if t.status == "done" else None
     db.commit()
@@ -987,9 +1056,42 @@ def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
 def delete_task(task_id: int, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if task:
+        db.query(TaskComment).filter(TaskComment.task_id == task_id).delete()
         db.delete(task)
         db.commit()
     return {"status": "success"}
+
+@app.get("/api/tasks/{task_id}/comments")
+def get_task_comments(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    comments = (
+        db.query(TaskComment)
+        .filter(TaskComment.task_id == task_id)
+        .order_by(TaskComment.created_at.asc())
+        .all()
+    )
+    return [_task_comment_to_dict(c) for c in comments]
+
+@app.post("/api/tasks/{task_id}/comments")
+def create_task_comment(
+    task_id: int,
+    body: TaskCommentCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    text = (body.text or "").strip()
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "Пустой комментарий"})
+    comment = TaskComment(task_id=task_id, user_id=user.id, text=text)
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+    return _task_comment_to_dict(comment)
 
 @app.get("/companies", response_class=HTMLResponse)
 async def read_companies(request: Request, user: User = Depends(get_current_user)):
@@ -3776,6 +3878,7 @@ def create_task_from_internal_message(
         description=f"Из внутреннего чата:\n{msg.text}",
         assignee=body.assignee or (user.full_name or user.username),
         created_by=user.full_name or user.username,
+        creator_id=user.id,
         due_date=body.due_date,
         priority=body.priority or "normal",
         deal_id=chat.deal_id if chat else None,

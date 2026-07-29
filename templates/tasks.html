@@ -8,7 +8,7 @@
     <div class="spacer"></div>
     <button class="btn btn-primary" onclick="openTaskForm()">+ Новая задача</button>
 </div>
-<p class="page-sub">Планируйте работу как в Битрикс24: ответственные, крайние сроки, приоритеты и привязка к сделкам.</p>
+<p class="page-sub">CRM-задачи: постановщик, исполнитель, срок, статус, сделка и чат задачи.</p>
 
 <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
     <button class="btn btn-sm task-filter active" data-filter="all" onclick="setFilter('all', this)">Все</button>
@@ -26,7 +26,7 @@
         <div class="task-col-body" id="col-in_progress"></div>
     </div>
     <div class="task-col" data-status="deferred">
-        <div class="task-col-head" style="border-color:#8b5cf6">Отложены <span id="cnt-deferred" class="muted"></span></div>
+        <div class="task-col-head" style="border-color:#64748b">Отложены <span id="cnt-deferred" class="muted"></span></div>
         <div class="task-col-body" id="col-deferred"></div>
     </div>
     <div class="task-col" data-status="done">
@@ -35,31 +35,91 @@
     </div>
 </div>
 
-<!-- Модалка создания/редактирования задачи -->
+<!-- CRM-панель задачи (двухколоночная, как в Битрикс24) -->
 <div id="task-modal" class="task-modal-overlay">
-    <div class="task-modal">
-        <button onclick="closeTaskForm()" style="position:absolute; top:12px; right:16px; background:transparent; border:none; font-size:24px; cursor:pointer; color:var(--muted);">&times;</button>
-        <h3 style="margin-top:0" id="task-modal-title">Новая задача</h3>
-        <input type="hidden" id="tk_id">
-        <label class="field"><span>Название задачи *</span><input id="tk_title" placeholder="Например: Позвонить клиенту и согласовать смету"></label>
-        <label class="field"><span>Описание</span><textarea id="tk_desc" rows="3" placeholder="Детали задачи…"></textarea></label>
-        <div class="grid cols-2">
-            <label class="field"><span>Ответственный</span><select id="tk_assignee"></select></label>
-            <label class="field"><span>Крайний срок</span><input id="tk_due" type="date"></label>
+    <div class="task-detail-panel" role="dialog" aria-modal="true">
+        <div class="task-detail-top">
+            <div>
+                <div class="muted" style="font-size:12px" id="task-modal-subtitle">Новая задача</div>
+                <h3 style="margin:2px 0 0" id="task-modal-title">Новая задача</h3>
+            </div>
+            <button type="button" class="task-close-btn" onclick="closeTaskForm()" aria-label="Закрыть">&times;</button>
         </div>
-        <div class="grid cols-2">
-            <label class="field"><span>Приоритет</span>
-                <select id="tk_priority">
-                    <option value="low">Низкий</option>
-                    <option value="normal" selected>Обычный</option>
-                    <option value="high">🔥 Высокий</option>
-                </select>
-            </label>
-            <label class="field"><span>Привязать к сделке</span><select id="tk_deal"><option value="">— без сделки —</option></select></label>
-        </div>
-        <div style="display:flex; gap:8px; margin-top:12px;">
-            <button class="btn btn-primary" style="flex:1" onclick="saveTask()">Сохранить</button>
-            <button class="btn" onclick="closeTaskForm()">Отмена</button>
+        <div class="task-detail-body">
+            <div class="task-detail-left">
+                <input type="hidden" id="tk_id">
+                <label class="field"><span>Название *</span>
+                    <input id="tk_title" placeholder="Например: Позвонить клиенту и согласовать смету">
+                </label>
+                <label class="field"><span>Описание</span>
+                    <textarea id="tk_desc" rows="5" placeholder="Детали задачи…"></textarea>
+                </label>
+
+                <div class="task-fields-grid">
+                    <div class="task-field-row">
+                        <span class="task-field-label">Постановщик</span>
+                        <div class="task-field-value" id="tk_creator_display">—</div>
+                    </div>
+                    <label class="task-field-row">
+                        <span class="task-field-label">Исполнитель</span>
+                        <select id="tk_assignee"></select>
+                    </label>
+                    <label class="task-field-row">
+                        <span class="task-field-label">Крайний срок</span>
+                        <input id="tk_due" type="date">
+                    </label>
+                    <label class="task-field-row">
+                        <span class="task-field-label">Статус</span>
+                        <select id="tk_status">
+                            <option value="open">Новая</option>
+                            <option value="in_progress">Выполняется</option>
+                            <option value="deferred">Отложена</option>
+                            <option value="done">Завершена</option>
+                        </select>
+                    </label>
+                    <label class="task-field-row">
+                        <span class="task-field-label">Приоритет</span>
+                        <select id="tk_priority">
+                            <option value="low">Низкий</option>
+                            <option value="normal" selected>Обычный</option>
+                            <option value="high">Высокий</option>
+                        </select>
+                    </label>
+                    <label class="task-field-row">
+                        <span class="task-field-label">Элемент CRM</span>
+                        <select id="tk_deal"><option value="">— без сделки —</option></select>
+                    </label>
+                    <div class="task-field-row" id="tk_created_row" style="display:none">
+                        <span class="task-field-label">Дата создания</span>
+                        <div class="task-field-value" id="tk_created_at">—</div>
+                    </div>
+                    <label class="task-field-row">
+                        <span class="task-field-label">Теги</span>
+                        <input id="tk_tags" placeholder="срочно, монтаж, клиент">
+                    </label>
+                </div>
+                <div id="tk_deal_link_wrap" style="display:none; margin-top:8px;">
+                    <a id="tk_deal_link" href="/crm" class="task-crm-link">Открыть сделку в CRM →</a>
+                </div>
+
+                <div class="task-detail-actions">
+                    <button class="btn btn-primary" style="flex:1" onclick="saveTask()">Сохранить</button>
+                    <button class="btn" id="tk_delete_btn" style="display:none" onclick="deleteTask()">Удалить</button>
+                    <button class="btn" onclick="closeTaskForm()">Закрыть</button>
+                </div>
+            </div>
+
+            <div class="task-detail-right" id="task-chat-pane">
+                <div class="task-chat-head">
+                    <strong>Чат задачи</strong>
+                    <span class="muted" style="font-size:12px" id="tk_chat_hint">Сохраните задачу, чтобы писать комментарии</span>
+                </div>
+                <div class="task-chat-thread" id="tk_comments"></div>
+                <div class="task-chat-compose">
+                    <textarea id="tk_comment_text" rows="2" placeholder="Написать комментарий…" disabled></textarea>
+                    <button class="btn btn-primary" id="tk_comment_btn" onclick="postComment()" disabled>Отправить</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -68,38 +128,186 @@
 {% block extra_scripts %}
 <style>
 .tasks-board { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; align-items:start; }
-.task-col { background: var(--bg-2); border-radius: 14px; padding: 10px; min-height: 200px; }
+.task-col { background: var(--bg-2); border-radius: 12px; padding: 10px; min-height: 200px; border: 1px solid var(--border); }
 .task-col-head { font-weight: 800; font-size: 13px; padding: 8px 10px 10px; border-top: 3px solid; border-radius: 4px 4px 0 0; margin-bottom: 6px; }
 .task-col-body { display:flex; flex-direction:column; gap:8px; min-height: 60px; }
-.task-card { background: var(--surface); border:1px solid var(--border); border-radius:12px; padding:11px 12px; cursor:grab; box-shadow: var(--shadow-xs); }
+.task-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm, 10px);
+    padding: 11px 12px;
+    cursor: grab;
+    box-shadow: var(--shadow-xs);
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.task-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); border-color: #cbd5e1; }
 .task-card.dragging { opacity: 0.5; }
 .task-col.drag-over { outline: 2px dashed var(--primary); outline-offset: -4px; }
-.task-title { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; line-height: 1.35; }
-.task-meta { font-size: 11.5px; color: var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.task-card-top { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; margin-bottom:6px; }
+.task-title { font-weight: 700; font-size: 13.5px; line-height: 1.35; margin:0; flex:1; color: var(--text); }
+.task-status-pill {
+    flex-shrink:0; font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px;
+    background: var(--primary-soft); color: var(--primary-600, var(--primary));
+}
+.task-status-pill.st-in_progress { background: #fef3c7; color: #b45309; }
+.task-status-pill.st-deferred { background: #f1f5f9; color: #475569; }
+.task-status-pill.st-done { background: #d1fae5; color: #047857; }
+.task-status-pill.st-open { background: var(--primary-soft); color: var(--primary-600, var(--primary)); }
+.task-desc-preview {
+    font-size: 12px; color: var(--text-2, var(--muted)); line-height: 1.35;
+    margin: 0 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.task-meta { font-size: 11.5px; color: var(--muted); display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
+.task-meta-row { display:flex; align-items:center; gap:6px; min-width:0; }
+.task-avatar {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff; font-size: 9px; font-weight: 800;
+    display:inline-grid; place-items:center; flex-shrink:0;
+}
 .task-due-overdue { color: var(--danger); font-weight: 700; }
 .task-priority-high { border-left: 3px solid var(--danger); }
-.task-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding: 16px; }
-.task-modal-overlay.active { display:flex; }
-.task-modal { background: var(--surface); border-radius: 16px; padding: 24px; width: 520px; max-width: 100%; max-height: 90vh; overflow-y:auto; position:relative; box-shadow: var(--shadow-lg); }
+.task-priority-low { border-left: 3px solid #94a3b8; }
+.task-priority-badge {
+    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
+    background: var(--bg-2); color: var(--muted);
+}
+.task-priority-badge.high { background: var(--danger-soft); color: var(--danger); }
+.task-deal-chip {
+    font-size: 11px; color: var(--primary); text-decoration: none; font-weight: 600;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block;
+}
+.task-deal-chip:hover { text-decoration: underline; }
+.task-card-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; padding-top:7px; border-top:1px solid var(--border); }
+.task-comment-count { font-size: 11px; color: var(--muted); font-weight: 600; }
 .task-filter.active { background: var(--primary); color:#fff; border-color: var(--primary); }
-@media (max-width: 1024px) { .tasks-board { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 640px) { .tasks-board { grid-template-columns: 1fr; } }
+
+/* Detail panel */
+.task-modal-overlay {
+    display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45);
+    z-index:1000; align-items:stretch; justify-content:center; padding: 16px;
+}
+.task-modal-overlay.active { display:flex; }
+.task-detail-panel {
+    background: var(--surface);
+    border-radius: 14px;
+    width: min(1080px, 100%);
+    max-height: 92vh;
+    display:flex; flex-direction:column;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+.task-detail-top {
+    display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
+    padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg-2);
+}
+.task-close-btn {
+    background:transparent; border:none; font-size:28px; line-height:1; cursor:pointer;
+    color:var(--muted); padding:0 4px;
+}
+.task-detail-body {
+    display:grid; grid-template-columns: 1.15fr 0.85fr; flex:1; min-height:0; overflow:hidden;
+}
+.task-detail-left {
+    padding: 16px 20px 20px; overflow-y:auto; border-right: 1px solid var(--border);
+}
+.task-detail-right {
+    display:flex; flex-direction:column; min-height:0; background: var(--bg-2);
+}
+.task-fields-grid { display:flex; flex-direction:column; gap:0; margin-top: 4px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.task-field-row {
+    display:grid; grid-template-columns: 140px 1fr; gap:10px; align-items:center;
+    padding: 9px 12px; border-bottom: 1px solid var(--border); margin:0; font-size:13px;
+}
+.task-field-row:last-child { border-bottom: none; }
+.task-field-label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.task-field-value { font-weight: 600; font-size: 13px; }
+.task-field-row select, .task-field-row input {
+    width: 100%; border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 8px; background: var(--surface); color: var(--text); font: inherit;
+}
+.task-crm-link { color: var(--primary); font-weight: 700; font-size: 13px; text-decoration: none; }
+.task-crm-link:hover { text-decoration: underline; }
+.task-detail-actions { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
+.task-chat-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display:flex; justify-content:space-between; align-items:baseline; gap:8px;
+    background: var(--surface);
+}
+.task-chat-thread {
+    flex:1; overflow-y:auto; padding: 14px 16px; display:flex; flex-direction:column; gap:10px;
+    min-height: 220px;
+}
+.task-chat-empty { text-align:center; color: var(--muted); font-size:13px; padding: 28px 12px; }
+.task-comment {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; box-shadow: var(--shadow-xs);
+}
+.task-comment-head { display:flex; justify-content:space-between; gap:8px; margin-bottom:4px; }
+.task-comment-author { font-weight: 700; font-size: 12.5px; }
+.task-comment-time { font-size: 11px; color: var(--muted); }
+.task-comment-text { font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.task-chat-compose {
+    padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface);
+    display:flex; flex-direction:column; gap:8px;
+}
+.task-chat-compose textarea {
+    width:100%; resize: vertical; min-height: 56px; border:1px solid var(--border);
+    border-radius: 10px; padding: 8px 10px; font: inherit; background: var(--bg-2); color: var(--text);
+}
+.task-chat-compose .btn { align-self: flex-end; }
+
+@media (max-width: 1024px) {
+    .tasks-board { grid-template-columns: repeat(2, 1fr); }
+    .task-detail-body { grid-template-columns: 1fr; overflow-y: auto; }
+    .task-detail-left { border-right: none; border-bottom: 1px solid var(--border); }
+    .task-detail-right { min-height: 320px; }
+}
+@media (max-width: 640px) {
+    .tasks-board { grid-template-columns: 1fr; }
+    .task-field-row { grid-template-columns: 1fr; gap:4px; }
+    .task-modal-overlay { padding: 0; }
+    .task-detail-panel { border-radius: 0; max-height: 100vh; width: 100%; }
+}
 </style>
 <script>
 const CURRENT_USER = "{{ (request.state.user.full_name or request.state.user.username) if request.state.user else '' }}";
+const STATUS_LABELS = {
+    open: 'Новая',
+    in_progress: 'Выполняется',
+    deferred: 'Отложена',
+    done: 'Завершена',
+};
+const PRIORITY_LABELS = { low: 'Низкий', normal: 'Обычный', high: 'Высокий' };
+
 let allTasks = [];
 let usersList = [];
 let dealsList = [];
 let currentFilter = 'all';
+let currentComments = [];
 
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function initials(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function fmtDate(d) {
     if (!d) return '';
     try { return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); }
     catch (e) { return d; }
+}
+
+function descPreview(text) {
+    const t = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    return t.length > 120 ? t.slice(0, 117) + '…' : t;
 }
 
 async function loadRefs() {
@@ -110,7 +318,7 @@ async function loadRefs() {
         document.getElementById('tk_assignee').innerHTML =
             usersList.map(u => `<option value="${esc(u.full_name)}" ${u.full_name === CURRENT_USER ? 'selected' : ''}>${esc(u.full_name)}</option>`).join('');
         document.getElementById('tk_deal').innerHTML = '<option value="">— без сделки —</option>' +
-            dealsList.map(d => `<option value="${d.id}">№${d.id} ${esc(d.title)}</option>`).join('');
+            dealsList.map(d => `<option value="${d.id}">№${d.id} — ${esc(d.title)}</option>`).join('');
     } catch (e) { console.error(e); }
 }
 
@@ -124,6 +332,50 @@ function passesFilter(t) {
     if (currentFilter === 'mine') return t.assignee === CURRENT_USER;
     if (currentFilter === 'overdue') return t.overdue;
     return true;
+}
+
+function renderCard(t) {
+    const card = document.createElement('div');
+    card.className = 'task-card' + (t.priority === 'high' ? ' task-priority-high' : t.priority === 'low' ? ' task-priority-low' : '');
+    card.draggable = true;
+    card.dataset.taskId = t.id;
+    card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', String(t.id)); card.classList.add('dragging'); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+    card.addEventListener('click', () => openTaskForm(t.id));
+
+    const st = t.status || 'open';
+    const doneStyle = st === 'done' ? 'text-decoration:line-through;color:var(--muted);' : '';
+    const preview = descPreview(t.description);
+    const dealTitle = t.deal_title ? `№${t.deal_id} ${t.deal_title}` : (t.deal_id ? `Сделка №${t.deal_id}` : '');
+    const tags = (t.tags_list || []).slice(0, 3).map(tag =>
+        `<span class="task-priority-badge">${esc(tag)}</span>`
+    ).join('');
+
+    card.innerHTML = `
+        <div class="task-card-top">
+            <h4 class="task-title" style="${doneStyle}">${esc(t.title)}</h4>
+            <span class="task-status-pill st-${esc(st)}">${esc(t.status_label || STATUS_LABELS[st] || st)}</span>
+        </div>
+        ${preview ? `<div class="task-desc-preview">${esc(preview)}</div>` : ''}
+        <div class="task-meta">
+            <div class="task-meta-row" title="Исполнитель">
+                <span class="task-avatar">${esc(initials(t.assignee))}</span>
+                <span>${esc(t.assignee || '—')}</span>
+            </div>
+            ${t.due_date ? `<span class="${t.overdue ? 'task-due-overdue' : ''}">⏰ ${fmtDate(t.due_date)}${t.overdue ? ' · просрочено' : ''}</span>` : ''}
+            <span class="task-priority-badge ${t.priority === 'high' ? 'high' : ''}">${esc(PRIORITY_LABELS[t.priority] || t.priority || 'Обычный')}</span>
+            ${t.created_by ? `<span title="Постановщик">↗ ${esc(t.created_by)}</span>` : ''}
+            ${tags}
+        </div>
+        <div class="task-card-footer">
+            <div style="min-width:0;flex:1">
+                ${dealTitle
+                    ? `<a class="task-deal-chip" href="/crm" onclick="event.stopPropagation()" title="${esc(dealTitle)}">🔗 ${esc(dealTitle)}</a>`
+                    : '<span class="muted" style="font-size:11px">Без сделки</span>'}
+            </div>
+            <span class="task-comment-count" title="Комментарии">💬 ${t.comment_count || 0}</span>
+        </div>`;
+    return card;
 }
 
 function render() {
@@ -140,38 +392,22 @@ function render() {
             col.innerHTML = '<div class="muted" style="font-size:12px; text-align:center; padding:12px 0;">Пусто</div>';
             return;
         }
-        tasks.forEach(t => {
-            const card = document.createElement('div');
-            card.className = 'task-card' + (t.priority === 'high' ? ' task-priority-high' : '');
-            card.draggable = true;
-            card.dataset.taskId = t.id;
-            card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', t.id); card.classList.add('dragging'); });
-            card.addEventListener('dragend', () => card.classList.remove('dragging'));
-            card.addEventListener('click', () => openTaskForm(t.id));
-            card.innerHTML = `
-                <div class="task-title" style="${t.status === 'done' ? 'text-decoration:line-through;color:var(--muted);' : ''}">${t.priority === 'high' ? '🔥 ' : ''}${esc(t.title)}</div>
-                <div class="task-meta">
-                    <span>👤 ${esc(t.assignee || '—')}</span>
-                    ${t.due_date ? `<span class="${t.overdue ? 'task-due-overdue' : ''}">⏰ ${fmtDate(t.due_date)}${t.overdue ? ' (просрочено)' : ''}</span>` : ''}
-                    ${t.deal_id ? `<a href="/crm" style="color:var(--primary)" onclick="event.stopPropagation()">🔗 №${t.deal_id}</a>` : ''}
-                </div>`;
-            col.appendChild(card);
-        });
+        tasks.forEach(t => col.appendChild(renderCard(t)));
     });
 }
 
-// Drag & drop между колонками
 document.querySelectorAll('.task-col').forEach(col => {
     col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('drag-over'); });
     col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
     col.addEventListener('drop', async e => {
         e.preventDefault();
         col.classList.remove('drag-over');
-        const taskId = parseInt(e.dataTransfer.getData('text/plain'));
+        const taskId = parseInt(e.dataTransfer.getData('text/plain'), 10);
         const newStatus = col.dataset.status;
         const task = allTasks.find(t => t.id === taskId);
         if (!task || task.status === newStatus) return;
         task.status = newStatus;
+        task.status_label = STATUS_LABELS[newStatus] || newStatus;
         render();
         await fetch(`/api/tasks/${taskId}`, {
             method: 'PUT',
@@ -189,17 +425,100 @@ function setFilter(f, btn) {
     render();
 }
 
+function setChatEnabled(enabled) {
+    document.getElementById('tk_comment_text').disabled = !enabled;
+    document.getElementById('tk_comment_btn').disabled = !enabled;
+    document.getElementById('tk_chat_hint').textContent = enabled
+        ? 'Комментарии видны участникам задачи'
+        : 'Сохраните задачу, чтобы писать комментарии';
+}
+
+function renderComments(comments) {
+    currentComments = comments || [];
+    const box = document.getElementById('tk_comments');
+    if (!currentComments.length) {
+        box.innerHTML = '<div class="task-chat-empty">Пока нет комментариев.<br>Напишите первый в чате задачи.</div>';
+        return;
+    }
+    box.innerHTML = currentComments.map(c => `
+        <div class="task-comment">
+            <div class="task-comment-head">
+                <span class="task-comment-author">${esc(c.author || 'Сотрудник')}</span>
+                <span class="task-comment-time">${esc(c.created_at || '')}</span>
+            </div>
+            <div class="task-comment-text">${esc(c.text)}</div>
+        </div>
+    `).join('');
+    box.scrollTop = box.scrollHeight;
+}
+
+async function loadComments(taskId) {
+    if (!taskId) {
+        renderComments([]);
+        setChatEnabled(false);
+        return;
+    }
+    setChatEnabled(true);
+    const res = await fetch(`/api/tasks/${taskId}/comments`);
+    if (!res.ok) { renderComments([]); return; }
+    renderComments(await res.json());
+}
+
+function updateDealLink() {
+    const dealId = parseInt(document.getElementById('tk_deal').value, 10) || null;
+    const wrap = document.getElementById('tk_deal_link_wrap');
+    const link = document.getElementById('tk_deal_link');
+    if (dealId) {
+        const d = dealsList.find(x => x.id === dealId);
+        wrap.style.display = 'block';
+        link.href = '/crm';
+        link.textContent = d
+            ? `Открыть сделку №${dealId} «${d.title}» в CRM →`
+            : `Открыть сделку №${dealId} в CRM →`;
+    } else {
+        wrap.style.display = 'none';
+    }
+}
+
+document.getElementById('tk_deal').addEventListener('change', updateDealLink);
+
 function openTaskForm(taskId) {
     const t = allTasks.find(x => x.id === taskId);
-    document.getElementById('task-modal-title').textContent = t ? 'Задача №' + t.id : 'Новая задача';
+    document.getElementById('task-modal-title').textContent = t ? t.title : 'Новая задача';
+    document.getElementById('task-modal-subtitle').textContent = t ? `Задача №${t.id}` : 'Создание задачи';
     document.getElementById('tk_id').value = t ? t.id : '';
     document.getElementById('tk_title').value = t ? t.title : '';
     document.getElementById('tk_desc').value = t ? (t.description || '') : '';
-    document.getElementById('tk_due').value = t ? (t.due_date || '') : '';
+    document.getElementById('tk_due').value = t && t.due_date ? String(t.due_date).slice(0, 10) : '';
     document.getElementById('tk_priority').value = t ? (t.priority || 'normal') : 'normal';
+    document.getElementById('tk_status').value = t ? (t.status || 'open') : 'open';
     document.getElementById('tk_deal').value = t && t.deal_id ? t.deal_id : '';
-    if (t && t.assignee) document.getElementById('tk_assignee').value = t.assignee;
+    document.getElementById('tk_tags').value = t ? (t.tags || '') : '';
+    document.getElementById('tk_creator_display').textContent = t
+        ? (t.created_by || '—')
+        : (CURRENT_USER || '—');
+    const createdRow = document.getElementById('tk_created_row');
+    if (t && t.created_at) {
+        createdRow.style.display = '';
+        document.getElementById('tk_created_at').textContent = t.created_at;
+    } else {
+        createdRow.style.display = 'none';
+    }
+    document.getElementById('tk_delete_btn').style.display = t ? '' : 'none';
+    if (t && t.assignee) {
+        const sel = document.getElementById('tk_assignee');
+        if (![...sel.options].some(o => o.value === t.assignee)) {
+            const opt = document.createElement('option');
+            opt.value = t.assignee;
+            opt.textContent = t.assignee;
+            sel.appendChild(opt);
+        }
+        sel.value = t.assignee;
+    }
+    document.getElementById('tk_comment_text').value = '';
+    updateDealLink();
     document.getElementById('task-modal').classList.add('active');
+    loadComments(t ? t.id : null);
 }
 
 function closeTaskForm() {
@@ -214,20 +533,80 @@ async function saveTask() {
         assignee: document.getElementById('tk_assignee').value || null,
         due_date: document.getElementById('tk_due').value || null,
         priority: document.getElementById('tk_priority').value,
-        deal_id: parseInt(document.getElementById('tk_deal').value) || null,
+        status: document.getElementById('tk_status').value,
+        deal_id: parseInt(document.getElementById('tk_deal').value, 10) || null,
+        tags: document.getElementById('tk_tags').value.trim() || null,
     };
     if (!payload.title) { alert('Укажите название задачи'); return; }
+    let res;
     if (id) {
-        await fetch(`/api/tasks/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        res = await fetch(`/api/tasks/${id}`, {
+            method: 'PUT',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+        });
     } else {
-        await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        res = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+        });
     }
+    if (!res.ok) {
+        alert('Не удалось сохранить задачу');
+        return;
+    }
+    const data = await res.json().catch(() => ({}));
+    await loadTasks();
+    if (!id && data.id) {
+        openTaskForm(data.id);
+    } else if (id) {
+        openTaskForm(parseInt(id, 10));
+    } else {
+        closeTaskForm();
+    }
+}
+
+async function deleteTask() {
+    const id = document.getElementById('tk_id').value;
+    if (!id) return;
+    if (!confirm('Удалить задачу?')) return;
+    await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
     closeTaskForm();
     loadTasks();
 }
 
+async function postComment() {
+    const id = document.getElementById('tk_id').value;
+    const text = document.getElementById('tk_comment_text').value.trim();
+    if (!id || !text) return;
+    const res = await fetch(`/api/tasks/${id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+    });
+    if (!res.ok) {
+        alert('Не удалось отправить комментарий');
+        return;
+    }
+    document.getElementById('tk_comment_text').value = '';
+    await loadComments(parseInt(id, 10));
+    const task = allTasks.find(t => t.id === parseInt(id, 10));
+    if (task) {
+        task.comment_count = (task.comment_count || 0) + 1;
+        render();
+    }
+}
+
 document.getElementById('task-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('task-modal')) closeTaskForm();
+});
+
+document.getElementById('tk_comment_text').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        postComment();
+    }
 });
 
 loadRefs();

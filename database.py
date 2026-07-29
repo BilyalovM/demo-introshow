@@ -272,16 +272,34 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String)
     description = Column(String, nullable=True)
-    assignee = Column(String, nullable=True)    # ответственный (username)
-    created_by = Column(String, nullable=True)  # постановщик
+    assignee = Column(String, nullable=True)    # ответственный (имя / username)
+    created_by = Column(String, nullable=True)  # постановщик (имя, для отображения)
+    creator_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # постановщик (id)
     due_date = Column(String, nullable=True)    # YYYY-MM-DD или YYYY-MM-DDTHH:MM
     priority = Column(String, default="normal") # low / normal / high
     status = Column(String, default="open")     # open / in_progress / done / deferred
     deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)
+    tags = Column(String, nullable=True)        # теги через запятую
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     deal = relationship("Deal", backref="tasks")
+    creator = relationship("User", foreign_keys=[creator_id])
+    comments = relationship("TaskComment", back_populates="task", cascade="all, delete-orphan",
+                            order_by="TaskComment.created_at")
+
+
+class TaskComment(Base):
+    """Комментарии в чате задачи (как «Чат задачи» в Битрикс24)."""
+    __tablename__ = "task_comments"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    text = Column(String)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    task = relationship("Task", back_populates="comments")
+    user = relationship("User", foreign_keys=[user_id])
 
 
 class Activity(Base):
