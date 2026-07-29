@@ -13,18 +13,29 @@
 <div class="grid quote-layout" style="grid-template-columns:1fr 360px;align-items:start">
     <div class="grid quote-main" style="gap:16px">
         <div class="card">
-            <h3 style="margin-top:0">Параметры</h3>
+            <h3 style="margin-top:0">Шапка сметы</h3>
             <div class="grid cols-2">
                 <label class="field"><span>Дата договора</span><input id="qDate" type="date"/></label>
-                <label class="field"><span>Название сметы / мероприятие</span><input id="qTitle" placeholder="Презентация / концерт / …"/></label>
+                <label class="field"><span>Наименование проекта</span><input id="qTitle" placeholder="Презентация / концерт / …"/></label>
             </div>
-            <label class="field"><span>Адрес проведения</span><input id="qAddress" placeholder="Город, площадка"/></label>
+            <div class="grid cols-2">
+                <label class="field"><span>Город</span><input id="qCity" placeholder="Алматы"/></label>
+                <label class="field"><span>Адрес / площадка</span><input id="qAddress" placeholder="Площадка, улица…"/></label>
+            </div>
             <div class="grid cols-3">
-                <label class="field"><span>Аренда с</span><input id="rentStart" type="date"/></label>
-                <label class="field"><span>Аренда по</span><input id="rentEnd" type="date"/></label>
-                <label class="field"><span>Дата монтажа/оплаты</span><input id="qSetup" type="date"/></label>
+                <label class="field"><span>Выезд оборудования</span><input id="rentStart" type="date"/></label>
+                <label class="field"><span>Возврат оборудования</span><input id="rentEnd" type="date"/></label>
+                <label class="field"><span>Смены / дней</span><input id="qShifts" class="num" min="1" step="1" type="number" value="1"/></label>
             </div>
-            <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Выберите даты — система проверит, не занято ли оборудование в других договорах.</p>
+            <div class="grid cols-2">
+                <label class="field"><span>Менеджер</span>
+                    <select id="assigneeSelect"><option value="">— выберите —</option></select>
+                </label>
+                <label class="field"><span>Контактное лицо</span>
+                    <select id="contactSelect"><option value="">— выберите компанию —</option></select>
+                </label>
+            </div>
+            <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Выезд и возврат используются для проверки занятости склада. Смены попадают в шапку Word.</p>
         </div>
         <div class="card">
             <h3 style="margin-top:0">Каталог — добавить позиции</h3>
@@ -48,9 +59,9 @@
         <div class="card">
             <h3 style="margin-top:0">Арендатор (клиент)</h3>
             <label class="field"><span>Компания</span>
-                <select id="companySelect"><option value="">— выберите —</option></select>
+                <select id="companySelect" onchange="onCompanyChange()"><option value="">— выберите —</option></select>
             </label>
-            <p class="muted" style="font-size:12px;margin:4px 0 0">Клиенты добавляются в разделе «Клиенты».</p>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">Контакты подтягиваются из карточки компании.</p>
         </div>
         <div class="card">
             <h3 style="margin-top:0">Скидка и налог</h3>
@@ -242,8 +253,11 @@ const QUOTE_ID = {{ quote_id or 'null' }};
 let equipment = [];
 let folders = [];
 let companies = [];
+let managers = [];
+let contacts = [];
 let cart = [];               // {id, name, category, price, stock_price, qty, days, warehouse_type, cost_price, supplier}
 let catalogWarehouse = 'all';
+let pendingContactId = null;
 
 function setCatWarehouse(tab) {
     catalogWarehouse = tab;
@@ -294,14 +308,82 @@ function showConflictPopover(event, btn) {
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideConflictPopover(); });
 
+function fillManagerSelect(selectedId) {
+    const sel = document.getElementById('assigneeSelect');
+    sel.innerHTML = '<option value="">— выберите —</option>';
+    managers.forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = u.full_name || u.username;
+        sel.appendChild(opt);
+    });
+    if (selectedId) sel.value = String(selectedId);
+}
+
+function renderContactSelect(selectedId) {
+    const sel = document.getElementById('contactSelect');
+    const companyId = document.getElementById('companySelect').value;
+    sel.innerHTML = '';
+    if (!companyId) {
+        sel.innerHTML = '<option value="">— выберите компанию —</option>';
+        return;
+    }
+    sel.innerHTML = '<option value="">— без контакта —</option>';
+    contacts.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        const extra = c.phone ? ` · ${c.phone}` : '';
+        opt.textContent = (c.name || 'Без имени') + extra + (c.is_primary ? ' ★' : '');
+        sel.appendChild(opt);
+    });
+    const pick = selectedId || pendingContactId;
+    if (pick) sel.value = String(pick);
+    pendingContactId = null;
+}
+
+async function loadContactsForCompany(companyId, selectedId) {
+    contacts = [];
+    if (!companyId) {
+        renderContactSelect(null);
+        return;
+    }
+    try {
+        const res = await fetch('/api/contacts?company_id=' + companyId);
+        if (res.ok) contacts = await res.json();
+    } catch (e) {
+        console.error(e);
+    }
+    renderContactSelect(selectedId);
+}
+
+async function onCompanyChange() {
+    const companyId = document.getElementById('companySelect').value;
+    await loadContactsForCompany(companyId, null);
+    // Автовыбор основного контакта
+    const primary = contacts.find(c => c.is_primary);
+    if (primary) document.getElementById('contactSelect').value = String(primary.id);
+}
+
+function onShiftsChange() {
+    const shifts = parseFloat(document.getElementById('qShifts').value) || 1;
+    if (cart.length && confirm('Обновить «дней» у всех позиций сметы на ' + shifts + '?')) {
+        cart.forEach(c => { c.days = shifts; });
+        renderCart();
+    }
+}
+
 async function loadAll() {
     try {
-        const [resEq, resFold, resComp] = await Promise.all([
-            fetch('/api/equipment'), fetch('/api/folders'), fetch('/api/companies')
+        const [resEq, resFold, resComp, resUsers] = await Promise.all([
+            fetch('/api/equipment'),
+            fetch('/api/folders'),
+            fetch('/api/companies'),
+            fetch('/api/users/names'),
         ]);
         equipment = await resEq.json();
         folders = await resFold.json();
         companies = await resComp.json();
+        managers = resUsers.ok ? await resUsers.json() : [];
 
         const sel = document.getElementById('companySelect');
         companies.forEach(c => {
@@ -310,6 +392,7 @@ async function loadAll() {
             opt.textContent = c.name;
             sel.appendChild(opt);
         });
+        fillManagerSelect(null);
 
         renderCatalog();
         if (QUOTE_ID) await loadQuote();
@@ -324,12 +407,17 @@ async function loadQuote() {
     const deal = await res.json();
     document.getElementById('pageTitle').textContent = 'Смета №CRM-' + deal.id;
     document.getElementById('qTitle').value = deal.title || '';
+    document.getElementById('qCity').value = deal.city || '';
     document.getElementById('qAddress').value = deal.event_address || '';
     document.getElementById('rentStart').value = deal.setup_date || '';
     document.getElementById('rentEnd').value = deal.event_date || '';
+    document.getElementById('qShifts').value = deal.shifts != null ? deal.shifts : 1;
     document.getElementById('discountInput').value = deal.discount_percentage || 0;
     document.getElementById('taxInput').value = deal.tax_percentage || 0;
     document.getElementById('companySelect').value = deal.company_id || '';
+    fillManagerSelect(deal.assignee_id);
+    pendingContactId = deal.contact_id || (deal.contact && deal.contact.id) || null;
+    await loadContactsForCompany(deal.company_id, pendingContactId);
     (deal.items || []).forEach(it => {
         const eq = equipment.find(e => e.id === it.equipment_id);
         cart.push({
@@ -474,12 +562,13 @@ function addToCart(id) {
     const item = equipment.find(e => e.id === id);
     if (!item) return;
 
+    const defaultDays = parseFloat(document.getElementById('qShifts').value) || 1;
     // Склеиваем одинаковые модели в одну строку (даже если в каталоге разные SKU)
     const nameKey = (item.name || '').trim().toLowerCase();
     const existing = cart.find(c =>
         (c.name || '').trim().toLowerCase() === nameKey &&
         Number(c.price) === Number(item.price) &&
-        (parseInt(c.days) || 1) === 1
+        (parseFloat(c.days) || 1) === defaultDays
     ) || cart.find(c => (c.name || '').trim().toLowerCase() === nameKey);
     const newQty = (existing ? existing.qty : 0) + 1;
 
@@ -501,7 +590,7 @@ function addToCart(id) {
         price: item.price,
         stock_price: item.price,
         qty: 1,
-        days: 1,
+        days: defaultDays,
         warehouse_type: item.warehouse_type || 'own',
         cost_price: item.cost_price || 0,
         supplier: item.supplier || null,
@@ -665,28 +754,50 @@ function calculateTotals() {
 
 document.getElementById('discountInput').addEventListener('input', calculateTotals);
 document.getElementById('taxInput').addEventListener('input', calculateTotals);
+document.getElementById('qShifts').addEventListener('change', onShiftsChange);
 
 // ---------- Сохранение и документы ----------
 
-async function saveQuote(silent) {
-    if (cart.length === 0) { alert('Добавьте позиции в смету'); return null; }
+function quoteHeaderPayload() {
     const start = document.getElementById('rentStart').value;
     const end = document.getElementById('rentEnd').value;
-    if (!start || !end) { alert('Укажите даты аренды («Аренда с» и «Аренда по»)'); return null; }
-
     const title = document.getElementById('qTitle').value || ('Смета от ' + new Date().toLocaleDateString('ru-RU'));
     const companyId = parseInt(document.getElementById('companySelect').value) || null;
+    const contactId = parseInt(document.getElementById('contactSelect').value) || null;
+    const assigneeId = parseInt(document.getElementById('assigneeSelect').value) || null;
+    const city = (document.getElementById('qCity').value || '').trim();
+    const address = document.getElementById('qAddress').value || '';
+    const shifts = parseFloat(document.getElementById('qShifts').value) || 1;
+    return { title, start, end, companyId, contactId, assigneeId, city, address, shifts };
+}
+
+async function saveQuote(silent) {
+    if (cart.length === 0) { alert('Добавьте позиции в смету'); return null; }
+    const h = quoteHeaderPayload();
+    if (!h.start || !h.end) {
+        alert('Укажите даты выезда и возврата оборудования');
+        return null;
+    }
+
     const discount = parseFloat(document.getElementById('discountInput').value) || 0;
     const tax = parseFloat(document.getElementById('taxInput').value) || 0;
-    const address = document.getElementById('qAddress').value || '';
 
     try {
         if (savedDealId) {
-            // Обновляем существующую смету
             await fetch(`/api/deals/${savedDealId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, setup_date: start, event_date: end, event_address: address, company_id: companyId })
+                body: JSON.stringify({
+                    title: h.title,
+                    setup_date: h.start,
+                    event_date: h.end,
+                    event_address: h.address,
+                    city: h.city || null,
+                    shifts: h.shifts,
+                    company_id: h.companyId,
+                    contact_id: h.contactId,
+                    assignee_id: h.assigneeId,
+                })
             });
             await fetch(`/api/deals/${savedDealId}/items`, {
                 method: 'PUT',
@@ -702,12 +813,16 @@ async function saveQuote(silent) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title,
-                    company_id: companyId,
+                    title: h.title,
+                    company_id: h.companyId,
+                    contact_id: h.contactId,
+                    assignee_id: h.assigneeId,
                     pipeline_id: 1,
-                    setup_date: start,
-                    event_date: end,
-                    event_address: address,
+                    setup_date: h.start,
+                    event_date: h.end,
+                    event_address: h.address,
+                    city: h.city || null,
+                    shifts: h.shifts,
                     discount_percentage: discount,
                     tax_percentage: tax,
                     items_json: JSON.stringify(cart.map(c => ({ id: c.id, qty: c.qty, days: c.days, price: c.price })))

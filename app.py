@@ -128,6 +128,9 @@ with Session(engine) as session:
         "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
         # Налог в смете (%)
         "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 0",
+        # Шапка сметы (как в Excel)
+        "ALTER TABLE deals ADD COLUMN city VARCHAR",
+        "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
     ]:
         try:
             session.execute(text(ddl))
@@ -234,6 +237,8 @@ class DealCreate(BaseModel):
     setup_date: Optional[str] = None
     event_date: str
     event_address: Optional[str] = None
+    city: Optional[str] = None
+    shifts: Optional[float] = 1.0
     discount_percentage: float = 0.0
     tax_percentage: float = 0.0
     items_json: Optional[str] = None
@@ -2067,18 +2072,61 @@ def _user_assigned_to_deal(db: Session, user: User, deal: Deal) -> bool:
     ).first() is not None
 
 
+def _deal_shifts(deal: Deal) -> float:
+    try:
+        return float(getattr(deal, "shifts", None) or 1)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _estimate_header_fields(deal: Deal) -> dict:
+    """Шапка сметы как в Excel: проект, контакт, менеджер, город, выезд/возврат, смены."""
+    depart = deal.setup_date or ""
+    ret = deal.event_date or ""
+    rent_period = ""
+    if depart or ret:
+        rent_period = f"{depart or '—'} — {ret or '—'}"
+
+    contact_name = ""
+    try:
+        if deal.contact:
+            contact_name = deal.contact.name or ""
+    except Exception:
+        contact_name = ""
+
+    manager_name = ""
+    try:
+        if deal.assignee:
+            manager_name = deal.assignee.full_name or deal.assignee.username or ""
+    except Exception:
+        manager_name = ""
+
+    shifts = _deal_shifts(deal)
+    shifts_label = str(int(shifts)) if shifts == int(shifts) else str(shifts)
+
+    return {
+        "company_name": deal.company.name if deal.company else "",
+        "event_name": deal.title or "",
+        "project_name": deal.title or "",
+        "contact_name": contact_name,
+        "manager_name": manager_name,
+        "city": (getattr(deal, "city", None) or "") or "",
+        "event_address": deal.event_address or "",
+        "departure_date": depart,
+        "return_date": ret,
+        "rent_period": rent_period,
+        "shifts": shifts,
+        "shifts_label": shifts_label,
+    }
+
+
 def _build_technichka_context(deal: Deal, assignee_name: str = "") -> dict:
     result = _calc_deal(deal)
-    rent_period = ""
-    if deal.setup_date or deal.event_date:
-        rent_period = f"{deal.setup_date or '—'} — {deal.event_date or '—'}"
+    header = _estimate_header_fields(deal)
     return {
         "number": f"TECH-{deal.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
-        "company_name": deal.company.name if deal.company else "",
-        "event_name": deal.title or "",
-        "event_address": deal.event_address or "",
-        "rent_period": rent_period,
+        **header,
         "assignee_name": assignee_name or "",
         "items": result["items"],
     }
@@ -2299,6 +2347,8 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = De
         setup_date=deal.setup_date,
         event_date=deal.event_date,
         event_address=deal.event_address,
+        city=(deal.city or "").strip() or None,
+        shifts=float(deal.shifts) if deal.shifts is not None else 1.0,
         discount_percentage=deal.discount_percentage,
         tax_percentage=deal.tax_percentage or 0.0,
         stage=stage_id,
@@ -2480,6 +2530,8 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "setup_date": d.setup_date,
         "event_date": d.event_date,
         "event_address": d.event_address,
+        "city": getattr(d, "city", None) or "",
+        "shifts": float(getattr(d, "shifts", None) or 1),
         "discount_percentage": 0 if hide else d.discount_percentage,
         "tax_percentage": 0 if hide else _deal_tax(d),
         "final_sum": 0 if hide else d.final_sum,
@@ -2566,6 +2618,8 @@ class DealUpdate(BaseModel):
     event_date: Optional[str] = None
     setup_date: Optional[str] = None
     event_address: Optional[str] = None
+    city: Optional[str] = None
+    shifts: Optional[float] = None
     comment: Optional[str] = None
     company_id: Optional[int] = None
     contact_id: Optional[int] = None
@@ -3724,23 +3778,12 @@ def download_deal_estimate(
 
     # Клиентская смета — без позиций субаренды; внутренние итоги считаем по полному составу
     result = _calc_deal(d, exclude_subrental=(mode_norm == "client"))
-
-    rent_period = ""
-    if d.setup_date or d.event_date:
-        rent_period = f"{d.setup_date or '—'} — {d.event_date or '—'}"
-
-    manager_name = ""
-    if d.assignee:
-        manager_name = d.assignee.full_name or d.assignee.username or ""
+    header = _estimate_header_fields(d)
 
     context = {
         "number": f"CRM-{d.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
-        "company_name": d.company.name if d.company else "",
-        "event_name": d.title or "",
-        "event_address": d.event_address or "",
-        "rent_period": rent_period,
-        "manager_name": manager_name,
+        **header,
         "items": result["items"],
         "equipment_base": result.get("equipment_base", 0),
         "equipment_total": result["equipment_total"],

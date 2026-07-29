@@ -74,19 +74,43 @@ def _fmt_money(v: float) -> str:
 
 
 def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = False) -> None:
+    """Шапка как в Excel: проект, контакт, менеджер, город, выезд/возврат, смены."""
     meta_lines = []
+    project = context.get("project_name") or context.get("event_name")
+    if project:
+        meta_lines.append(f"Наименование проекта: {project}")
     if context.get("company_name"):
         meta_lines.append(f"Заказчик: {context['company_name']}")
-    if context.get("event_name"):
-        meta_lines.append(f"Мероприятие: {context['event_name']}")
-    if context.get("event_address"):
-        meta_lines.append(f"Адрес: {context['event_address']}")
-    if context.get("rent_period"):
-        meta_lines.append(f"Период аренды: {context['rent_period']}")
-    if with_assignee and context.get("assignee_name"):
-        meta_lines.append(f"Ответственный на объекте: {context['assignee_name']}")
+    if context.get("contact_name"):
+        meta_lines.append(f"Контактное лицо: {context['contact_name']}")
     if context.get("manager_name"):
         meta_lines.append(f"Менеджер: {context['manager_name']}")
+    if context.get("city"):
+        meta_lines.append(f"Город: {context['city']}")
+    if context.get("event_address"):
+        meta_lines.append(f"Адрес / площадка: {context['event_address']}")
+
+    depart = context.get("departure_date") or ""
+    ret = context.get("return_date") or ""
+    if depart or ret:
+        meta_lines.append(f"Выезд оборудования: {depart or '—'}")
+        meta_lines.append(f"Возврат оборудования: {ret or '—'}")
+    elif context.get("rent_period"):
+        meta_lines.append(f"Период аренды: {context['rent_period']}")
+
+    shifts_label = context.get("shifts_label")
+    if shifts_label is None and context.get("shifts") is not None:
+        s = context["shifts"]
+        try:
+            sf = float(s)
+            shifts_label = str(int(sf)) if sf == int(sf) else str(sf)
+        except (TypeError, ValueError):
+            shifts_label = str(s)
+    if shifts_label:
+        meta_lines.append(f"Количество смен / дней: {shifts_label}")
+
+    if with_assignee and context.get("assignee_name"):
+        meta_lines.append(f"Ответственный на объекте: {context['assignee_name']}")
     for line in meta_lines:
         doc.add_paragraph(line)
 

@@ -143,9 +143,11 @@ class Deal(Base):
     company_id = Column(Integer, ForeignKey("companies.id"))
     pipeline_id = Column(Integer, ForeignKey("pipelines.id"), nullable=True)
     stage = Column(Integer, ForeignKey("stages.id"), default=1)
-    setup_date = Column(String) # Дата монтажа
-    event_date = Column(String) # Дата мероприятия
+    setup_date = Column(String) # Выезд оборудования / монтаж
+    event_date = Column(String) # Возврат оборудования / мероприятие
     event_address = Column(String) # Адрес площадки
+    city = Column(String, nullable=True)  # Город проекта (шапка сметы)
+    shifts = Column(Float, default=1.0)  # Смены / кол-во дней в шапке
     discount_percentage = Column(Float, default=0.0)
     tax_percentage = Column(Float, default=0.0)
     final_sum = Column(Float, default=0.0)

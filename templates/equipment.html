@@ -37,10 +37,18 @@
                 <!-- Injected via JS -->
             </div>
             <div style="display: flex; gap: 0.5rem; flex-wrap:wrap;">
+                {% if request.state.user and request.state.user.role == 'admin' %}
+                <button class="btn btn-sm" type="button" onclick="document.getElementById('catalogXlsxInput').click()">⬆ Импорт Excel</button>
+                <input type="file" id="catalogXlsxInput" accept=".xlsx,.xlsm" style="display:none" onchange="importCatalogXlsx(this)">
+                {% endif %}
                 <button class="btn btn-sm" onclick="openFolderModal()">+ Новая папка</button>
                 <button class="btn btn-sm btn-primary" onclick="openEquipModal()">+ Добавить позицию</button>
             </div>
         </div>
+
+        {% if request.state.user and request.state.user.role == 'admin' %}
+        <p class="muted" id="importCatalogMsg" style="font-size:13px;margin:0 0 10px;display:none;"></p>
+        {% endif %}
 
         <div style="display:flex; gap:8px; margin-bottom:1rem; flex-wrap:wrap;">
             <button type="button" class="btn btn-sm wh-tab active" data-wh="own" onclick="setWarehouseTab('own')">Свой склад</button>
@@ -234,6 +242,49 @@
         function toggleSubrentalFields() {
             const isSub = document.getElementById('eq_warehouse_type').value === 'subrental';
             document.getElementById('subrentalFields').style.display = isSub ? 'block' : 'none';
+        }
+
+        async function importCatalogXlsx(input) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            const msg = document.getElementById('importCatalogMsg');
+            if (!file) return;
+            if (!/\.xlsx?$/i.test(file.name) && !/\.xlsm$/i.test(file.name)) {
+                alert('Нужен файл .xlsx (шаблон сметы)');
+                return;
+            }
+            if (msg) {
+                msg.style.display = 'block';
+                msg.style.color = 'var(--muted)';
+                msg.textContent = 'Импорт «' + file.name + '»…';
+            }
+            const fd = new FormData();
+            fd.append('file', file);
+            try {
+                const res = await fetch('/api/admin/import-catalog-xlsx?update_existing=true', {
+                    method: 'POST',
+                    body: fd,
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.error || ('Ошибка ' + res.status));
+                }
+                const text = `Готово: создано ${data.created || 0}, обновлено ${data.updated || 0}`
+                    + (data.folders_created ? `, папок +${data.folders_created}` : '')
+                    + ` (позиций в файле: ${data.parsed || 0}).`;
+                if (msg) {
+                    msg.style.color = '#16a34a';
+                    msg.textContent = text;
+                }
+                alert(text);
+                await loadData();
+            } catch (err) {
+                if (msg) {
+                    msg.style.color = 'var(--danger, #dc2626)';
+                    msg.textContent = err.message || 'Ошибка импорта';
+                }
+                alert(err.message || 'Ошибка импорта');
+            }
         }
 
         async function loadData() {
