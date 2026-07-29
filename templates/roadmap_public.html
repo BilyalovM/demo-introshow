@@ -73,6 +73,9 @@
       background: #eff6ff; color: var(--accent); font-weight: 800;
       font-size: 0.75rem; padding: 3px 8px; border-radius: 999px;
     }
+    .phase-id.p0 { background: #fef3c7; color: #92400e; }
+    .phase-id.p1 { background: #dbeafe; color: #1d4ed8; }
+    .phase-id.p2 { background: #f1f5f9; color: #475569; }
     .phase-meta { color: var(--muted); font-size: 0.8rem; }
     .task {
       display: flex; gap: 10px; align-items: flex-start;
@@ -175,9 +178,10 @@
 
       document.getElementById('phases').innerHTML = d.phases.map(ph => {
         const doneN = ph.tasks.filter(t => t.status === 'done').length;
+        const idClass = String(ph.id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         return `<div class="card">
           <div class="phase-head">
-            <span class="phase-id">Этап ${esc(ph.id)}</span>
+            <span class="phase-id ${esc(idClass)}">${esc(ph.id)}</span>
             <h3 style="margin:0">${esc(ph.name)}</h3>
             <span class="phase-meta">${esc(ph.duration)} · ${doneN}/${ph.tasks.length}</span>
           </div>
