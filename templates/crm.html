@@ -800,7 +800,7 @@
                     </div>
                 </div>
 
-                <div class="slider-info-card">
+                <div class="slider-info-card" style="margin-bottom:14px;">
                     <div class="slider-info-card-header"><span>Расходы проекта</span></div>
                     <div class="slider-info-card-body">
                         <div style="display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:8px; margin-bottom:8px;">
@@ -816,6 +816,20 @@
                         <input type="text" id="exp-description" placeholder="Описание (например: такси на склад)" style="width:100%; box-sizing:border-box; margin-bottom:8px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
                         <button type="button" class="btn btn-sm btn-primary" onclick="addDealExpense()">+ Расход</button>
                         <div id="deal-expenses-list" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
+                    </div>
+                </div>
+
+                <div class="slider-info-card">
+                    <div class="slider-info-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                        <span>Зарплатная ведомость</span>
+                        <button type="button" class="btn btn-sm" onclick="generateDealPayroll()">Сформировать из сметы</button>
+                    </div>
+                    <div class="slider-info-card-body">
+                        <div class="muted" style="font-size:12.5px;margin-bottom:10px;">
+                            Строки из категории «Персонал». Назначьте сотрудника и отметьте явку. Авансы вычитаются из к выплате. Автопри «Успешно реализовано».
+                        </div>
+                        <div id="deal-payroll-summary" style="margin-bottom:12px;"></div>
+                        <div id="deal-payroll-list" style="display:flex; flex-direction:column; gap:8px;"></div>
                     </div>
                 </div>
             </div>
@@ -998,7 +1012,10 @@
     let activeDealInvoices = [];
     let activeDealAdvances = [];
     let activeDealExpenses = [];
+    let activeDealPayroll = [];
+    let activeDealPayrollSummary = null;
     const EXPENSE_LABELS = { taxi: 'Такси', purchase: 'Закупка', delivery: 'Довоз / логистика', other: 'Прочее' };
+    const ATTENDANCE_LABELS = { pending: 'Ожидает', present: 'Был', absent: 'Не был', fine: 'Штраф' };
 
     async function initCrm() {
         try {
@@ -1476,6 +1493,8 @@
             activeDealInvoices = data.invoices || [];
             activeDealAdvances = data.advances || [];
             activeDealExpenses = data.expenses || [];
+            activeDealPayroll = data.payroll_lines || [];
+            activeDealPayrollSummary = data.payroll_summary || null;
             renderDealActivities();
             renderDealInvoices();
             renderDealMoney();
@@ -1630,6 +1649,99 @@
                     <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deleteDealExpense(${e.id})">Удалить</button>
                 </div>`).join('');
         }
+
+        renderDealPayroll();
+    }
+
+    function renderDealPayroll() {
+        const sumBox = document.getElementById('deal-payroll-summary');
+        const listBox = document.getElementById('deal-payroll-list');
+        if (!sumBox || !listBox) return;
+        const s = activeDealPayrollSummary || {};
+
+        sumBox.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                    <div class="muted" style="font-size:11px;">Начислено</div>
+                    <div style="font-weight:800;">${(s.total_gross||0).toLocaleString('ru-RU')} ₸</div>
+                </div>
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                    <div class="muted" style="font-size:11px;">Авансы / штрафы</div>
+                    <div style="font-weight:800;">${(s.total_advances||0).toLocaleString('ru-RU')} / ${(s.total_fines||0).toLocaleString('ru-RU')} ₸</div>
+                </div>
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                    <div class="muted" style="font-size:11px;">К выплате</div>
+                    <div style="font-weight:800;color:var(--primary);">${(s.total_net||0).toLocaleString('ru-RU')} ₸</div>
+                </div>
+            </div>
+            ${(s.by_user||[]).length ? `<div style="margin-top:10px;font-size:12.5px;">${(s.by_user||[]).map(u =>
+                `<div style="padding:4px 0;border-bottom:1px solid var(--border);"><strong>${escapeHtml(u.user_name)}</strong>: ${(u.gross||0).toLocaleString('ru-RU')} − аванс ${(u.advances||0).toLocaleString('ru-RU')} − штраф ${(u.fines||0).toLocaleString('ru-RU')} = <strong>${(u.net||0).toLocaleString('ru-RU')} ₸</strong></div>`
+            ).join('')}</div>` : ''}
+            ${s.unassigned_gross ? `<div class="muted" style="font-size:12px;margin-top:8px;">Без сотрудника (ещё не назначены): ${(s.unassigned_gross||0).toLocaleString('ru-RU')} ₸</div>` : ''}`;
+
+        if (!(activeDealPayroll || []).length) {
+            listBox.innerHTML = '<div class="muted" style="font-size:13px;">Ведомости нет. Добавьте «Персонал» в смету и нажмите «Сформировать» или переведите сделку в «Успешно реализовано».</div>';
+            return;
+        }
+
+        listBox.innerHTML = activeDealPayroll.map(p => `
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;">
+                <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                    <div>
+                        <div style="font-weight:700;">${escapeHtml(p.role_name)}</div>
+                        <div class="muted" style="font-size:12px;">${p.quantity} × ${p.days} см. × ${(p.rate||0).toLocaleString('ru-RU')} = <strong>${(p.gross||0).toLocaleString('ru-RU')} ₸</strong></div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px;align-items:center;">
+                    <select onchange="updatePayrollLine(${p.id},{user_id:this.value?parseInt(this.value):null})" style="padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                        <option value="">— сотрудник —</option>
+                        ${(crmUsers||[]).map(u => `<option value="${u.id}" ${p.user_id===u.id?'selected':''}>${escapeHtml(u.full_name||u.username)}</option>`).join('')}
+                    </select>
+                    <select onchange="onPayrollAttendance(${p.id}, this.value)" style="padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                        ${['pending','present','absent','fine'].map(a =>
+                            `<option value="${a}" ${p.attendance===a?'selected':''}>${ATTENDANCE_LABELS[a]}</option>`).join('')}
+                    </select>
+                    <input type="number" min="0" step="100" value="${p.fine_amount||0}" placeholder="Штраф"
+                        ${p.attendance==='fine'?'':'disabled'}
+                        onchange="updatePayrollLine(${p.id},{fine_amount:parseFloat(this.value)||0})"
+                        style="padding:7px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                </div>
+            </div>`).join('');
+    }
+
+    async function generateDealPayroll() {
+        if (!activeDealId) return;
+        if (activeDealPayroll.length && !confirm('Пересобрать ведомость из сметы? Текущие назначения сбросятся.')) return;
+        const res = await fetch(`/api/deals/${activeDealId}/payroll/generate`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось сформировать'); return; }
+        if (!data.created) alert('В смете нет позиций категории «Персонал»');
+        await openDealSlider(activeDealId, 'money');
+    }
+
+    async function updatePayrollLine(id, patch) {
+        const res = await fetch('/api/payroll-lines/' + id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch)
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || 'Не удалось сохранить');
+            return;
+        }
+        await openDealSlider(activeDealId, 'money');
+    }
+
+    function onPayrollAttendance(id, attendance) {
+        const patch = { attendance };
+        if (attendance === 'fine') {
+            const fine = prompt('Сумма штрафа (₸)', '0');
+            if (fine === null) { openDealSlider(activeDealId, 'money'); return; }
+            patch.fine_amount = parseFloat(fine) || 0;
+        } else {
+            patch.fine_amount = 0;
+        }
+        updatePayrollLine(id, patch);
     }
 
     async function addDealAdvance() {

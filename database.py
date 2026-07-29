@@ -372,6 +372,28 @@ class DealExpense(Base):
     deal = relationship("Deal", backref="expenses")
 
 
+class DealPayrollLine(Base):
+    """Строка зарплатной ведомости по сделке (из позиций «Персонал» сметы)."""
+    __tablename__ = "deal_payroll_lines"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True)
+    role_name = Column(String)  # название роли из сметы
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # кому платим
+    quantity = Column(Integer, default=1)  # кол-во человек / единиц
+    days = Column(Integer, default=1)  # смены / дни
+    rate = Column(Float, default=0.0)  # ставка за смену
+    gross = Column(Float, default=0.0)  # rate * quantity * days
+    attendance = Column(String, default="pending")  # pending / present / absent / fine
+    fine_amount = Column(Float, default=0.0)
+    comment = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="payroll_lines")
+    user = relationship("User", foreign_keys=[user_id])
+    equipment = relationship("Equipment")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 

@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
@@ -1792,8 +1792,114 @@ FIXED_CATEGORIES = ["Логистика", "Персонал", "Расходни�
 def _item_price(di: DealItem) -> float:
     """Цена позиции: сохранённая в смете, иначе текущая цена склада."""
     if di.price is not None:
-        return di.price
-    return di.equipment.price if di.equipment else 0
+        return float(di.price)
+    return float(di.equipment.price) if di.equipment else 0.0
+
+
+def _is_personnel_item(deal_item: DealItem) -> bool:
+    if not deal_item.equipment:
+        return False
+    cat = (deal_item.equipment.category or "").strip()
+    return cat == "Персонал" or "персонал" in cat.lower()
+
+
+def _serialize_payroll_line(line: DealPayrollLine) -> dict:
+    return {
+        "id": line.id,
+        "deal_id": line.deal_id,
+        "equipment_id": line.equipment_id,
+        "role_name": line.role_name or "",
+        "user_id": line.user_id,
+        "user_name": (line.user.full_name or line.user.username) if line.user else None,
+        "quantity": line.quantity or 1,
+        "days": line.days or 1,
+        "rate": line.rate or 0,
+        "gross": line.gross or 0,
+        "attendance": line.attendance or "pending",
+        "fine_amount": line.fine_amount or 0,
+        "comment": line.comment or "",
+    }
+
+
+def _payroll_summary(deal: Deal) -> dict:
+    lines = list(deal.payroll_lines or [])
+    advances = list(deal.advances or [])
+    adv_by_user = {}
+    for a in advances:
+        adv_by_user[a.user_id] = adv_by_user.get(a.user_id, 0) + float(a.amount or 0)
+
+    by_user = {}
+    unassigned_gross = 0.0
+    total_gross = 0.0
+    total_fines = 0.0
+    for line in lines:
+        gross = float(line.gross or 0)
+        att = line.attendance or "pending"
+        fine = float(line.fine_amount or 0) if att == "fine" else 0.0
+        if att == "absent":
+            continue
+        total_gross += gross
+        total_fines += fine
+        if not line.user_id:
+            unassigned_gross += max(0.0, gross - fine)
+            continue
+        row = by_user.setdefault(line.user_id, {
+            "user_id": line.user_id,
+            "user_name": (line.user.full_name or line.user.username) if line.user else "—",
+            "gross": 0.0,
+            "fines": 0.0,
+            "advances": float(adv_by_user.get(line.user_id, 0.0)),
+            "net": 0.0,
+        })
+        row["gross"] += gross
+        row["fines"] += fine
+
+    for row in by_user.values():
+        row["net"] = max(0.0, row["gross"] - row["fines"] - row["advances"])
+
+    total_advances = sum(float(a.amount or 0) for a in advances)
+    total_net = sum(r["net"] for r in by_user.values())
+
+    return {
+        "lines_count": len(lines),
+        "by_user": list(by_user.values()),
+        "unassigned_gross": unassigned_gross,
+        "total_gross": total_gross,
+        "total_fines": total_fines,
+        "total_advances": total_advances,
+        "total_net": total_net,
+    }
+
+
+def generate_payroll_for_deal(db: Session, deal: Deal, replace: bool = True) -> int:
+    """Создаёт строки ведомости из позиций сметы категории «Персонал»."""
+    if replace and deal.payroll_lines:
+        for line in list(deal.payroll_lines):
+            db.delete(line)
+        db.flush()
+
+    created = 0
+    for it in deal.items:
+        if not _is_personnel_item(it):
+            continue
+        qty = int(it.quantity or 1)
+        days = int(it.days or 1)
+        rate = _item_price(it)
+        gross = rate * qty * days
+        db.add(DealPayrollLine(
+            deal_id=deal.id,
+            equipment_id=it.equipment_id,
+            role_name=it.equipment.name if it.equipment else "Персонал",
+            user_id=None,
+            quantity=qty,
+            days=days,
+            rate=rate,
+            gross=gross,
+            attendance="pending",
+            fine_amount=0.0,
+        ))
+        created += 1
+    return created
 
 
 def _deal_calc_items(deal: Deal) -> list:
@@ -2008,6 +2114,17 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
     if db_deal.loss_reason and new_stage_obj and "проигра" in (new_stage_obj.name or "").lower():
         hist += f" (причина: {db_deal.loss_reason})"
     db.add(DealHistory(deal_id=deal_id, action_text=hist))
+
+    # При «Успешно» — сформировать зарплатную ведомость из строк персонала сметы (если ещё нет)
+    if new_stage_obj and "успешн" in (new_stage_obj.name or "").lower():
+        if not db_deal.payroll_lines:
+            n = generate_payroll_for_deal(db, db_deal, replace=True)
+            if n:
+                db.add(DealHistory(
+                    deal_id=deal_id,
+                    action_text=f"Сформирована зарплатная ведомость: {n} строк(и) из сметы",
+                ))
+
     db.commit()
 
     if new_stage_obj and ("Монтаж" in new_stage_obj.name or "доставлен" in new_stage_obj.name.lower()):
@@ -2132,6 +2249,8 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "expenses": expenses,
         "advances_total": sum(a["amount"] for a in advances),
         "expenses_total": sum(e["amount"] for e in expenses),
+        "payroll_lines": [_serialize_payroll_line(p) for p in sorted(d.payroll_lines, key=lambda x: x.id)],
+        "payroll_summary": _payroll_summary(d),
         "custom_values": custom_values
     }
 
@@ -2551,6 +2670,79 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), user: User = 
     ))
     db.commit()
     return {"status": "success"}
+
+
+class PayrollLineUpdate(BaseModel):
+    user_id: Optional[int] = None
+    attendance: Optional[str] = None  # pending / present / absent / fine
+    fine_amount: Optional[float] = None
+    comment: Optional[str] = None
+    quantity: Optional[int] = None
+    days: Optional[int] = None
+    rate: Optional[float] = None
+
+
+@app.post("/api/deals/{deal_id}/payroll/generate")
+def api_generate_payroll(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    n = generate_payroll_for_deal(db, deal, replace=True)
+    db.add(DealHistory(
+        deal_id=deal.id,
+        action_text=f"Зарплатная ведомость пересобрана: {n} строк(и)",
+    ))
+    db.commit()
+    db.refresh(deal)
+    return {
+        "status": "success",
+        "created": n,
+        "payroll_lines": [_serialize_payroll_line(p) for p in deal.payroll_lines],
+        "payroll_summary": _payroll_summary(deal),
+    }
+
+
+@app.put("/api/payroll-lines/{line_id}")
+def update_payroll_line(line_id: int, body: PayrollLineUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    line = db.query(DealPayrollLine).filter(DealPayrollLine.id == line_id).first()
+    if not line:
+        return JSONResponse(status_code=404, content={"error": "Строка не найдена"})
+    data = body.dict(exclude_unset=True)
+    if "user_id" in data:
+        uid = data["user_id"]
+        if uid:
+            emp = db.query(User).filter(User.id == uid).first()
+            if not emp:
+                return JSONResponse(status_code=404, content={"error": "Сотрудник не найден"})
+        line.user_id = uid or None
+    if "attendance" in data and data["attendance"]:
+        att = data["attendance"]
+        if att not in ("pending", "present", "absent", "fine"):
+            return JSONResponse(status_code=400, content={"error": "Некорректная явка"})
+        line.attendance = att
+        if att != "fine":
+            line.fine_amount = 0.0
+    if "fine_amount" in data and data["fine_amount"] is not None:
+        line.fine_amount = max(0.0, float(data["fine_amount"]))
+        if line.fine_amount > 0:
+            line.attendance = "fine"
+    if "comment" in data:
+        line.comment = (data["comment"] or "").strip() or None
+    if "quantity" in data and data["quantity"] is not None:
+        line.quantity = max(1, int(data["quantity"]))
+    if "days" in data and data["days"] is not None:
+        line.days = max(1, int(data["days"]))
+    if "rate" in data and data["rate"] is not None:
+        line.rate = float(data["rate"])
+    line.gross = float(line.rate or 0) * int(line.quantity or 1) * int(line.days or 1)
+    db.commit()
+    db.refresh(line)
+    deal = db.query(Deal).filter(Deal.id == line.deal_id).first()
+    return {
+        "status": "success",
+        "line": _serialize_payroll_line(line),
+        "payroll_summary": _payroll_summary(deal) if deal else None,
+    }
 
 
 class DealCommentRequest(BaseModel):
