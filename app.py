@@ -1988,10 +1988,11 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
 
     new_stage_obj = db.query(Stage).filter(Stage.id == stage_update.stage).first()
     if new_stage_obj and "проигра" in (new_stage_obj.name or "").lower():
-        if not (stage_update.loss_reason or db_deal.loss_reason):
+        reason = (stage_update.loss_reason or "").strip()
+        # При каждом переносе на проигранную стадию причина обязательна (текстом)
+        if not reason:
             return JSONResponse(status_code=400, content={"error": "Укажите причину отказа"})
-        if stage_update.loss_reason:
-            db_deal.loss_reason = stage_update.loss_reason
+        db_deal.loss_reason = reason
 
     old_stage = db_deal.stage
     old_name = ""

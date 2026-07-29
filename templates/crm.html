@@ -682,7 +682,7 @@
                             <div id="edit-deal-loss-wrap" style="display:none;">
                                 <label class="field">
                                     <span>Причина отказа</span>
-                                    <input type="text" id="edit-deal-loss-reason" placeholder="Дорого / выбрали конкурента / …">
+                                    <textarea id="edit-deal-loss-reason" rows="2" placeholder="Дорого / выбрали конкурента / …"></textarea>
                                 </label>
                             </div>
                         </div>
@@ -903,15 +903,20 @@
     </div>
 </div>
 
-<!-- Loss reason modal -->
-<div id="loss-reason-modal" class="slider-overlay" style="display:none; align-items:center; justify-content:center;">
-    <div class="card" style="width:420px; max-width:92%; padding:22px; position:relative;">
+<!-- Loss reason modal (обязательно при переносе в «Сделка проиграна») -->
+<div id="loss-reason-modal" class="slider-overlay" style="align-items:center; justify-content:center; z-index:1200;" onclick="if(event.target===this) cancelLossReason()">
+    <div class="card" style="width:460px; max-width:92%; padding:22px; position:relative;" onclick="event.stopPropagation()">
         <h3 style="margin-top:0;">Причина отказа</h3>
-        <p class="muted" style="font-size:13px;">Укажите, почему сделка проиграна — это нужно для аналитики.</p>
-        <input type="text" id="loss-reason-input" placeholder="Например: Выбрали конкурента" style="width:100%; box-sizing:border-box; margin:10px 0 14px;">
+        <p class="muted" style="font-size:13px; margin-bottom:10px;">Чтобы перенести сделку на «Сделка проиграна», укажите причину текстом.</p>
+        <label class="field" style="display:block; margin-bottom:14px;">
+            <span>Причина отказа *</span>
+            <textarea id="loss-reason-input" rows="3" required
+                placeholder="Например: выбрали другого подрядчика, дорого, даты не подошли…"
+                style="width:100%; box-sizing:border-box; resize:vertical; min-height:84px;"></textarea>
+        </label>
         <div style="display:flex; gap:8px;">
-            <button class="btn btn-primary" style="flex:1;" onclick="confirmLossReason()">Сохранить</button>
-            <button class="btn" style="flex:1;" onclick="cancelLossReason()">Отмена</button>
+            <button type="button" class="btn btn-primary" style="flex:1;" onclick="confirmLossReason()">Перенести</button>
+            <button type="button" class="btn" style="flex:1;" onclick="cancelLossReason()">Отмена</button>
         </div>
     </div>
 </div>
@@ -1141,6 +1146,9 @@
                         <span class="sum" style="font-size:13.5px; font-weight:800; color:var(--primary); margin:0;">${(deal.final_sum || 0).toLocaleString()} ₸</span>
                         <span style="font-size:11px; color:var(--muted);">📅 ${deal.event_date || '—'}</span>
                     </div>
+                    ${deal.loss_reason && isLostStage(crmStages.find(s => s.id === deal.stage))
+                        ? `<div style="margin-top:6px;font-size:11.5px;color:#b91c1c;line-height:1.35;">Причина: ${escapeHtml(deal.loss_reason)}</div>`
+                        : ''}
                     <div style="margin-top:8px;">${assignee}</div>
                 `;
                 
@@ -1229,22 +1237,32 @@
         }
     }
 
+    function isLostStage(stageObj) {
+        return stageObj && /проигра/i.test(stageObj.name || '');
+    }
+
+    function openLossReasonModal(dealId, stageId) {
+        pendingLossStageId = stageId;
+        const modal = document.getElementById('loss-reason-modal');
+        const input = document.getElementById('loss-reason-input');
+        input.value = '';
+        modal.dataset.dealId = dealId;
+        modal.classList.add('active');
+        setTimeout(() => input.focus(), 50);
+    }
+
     async function moveDealToStage(dealId, newStageId, lossReason) {
         const deal = crmDeals.find(d => d.id === dealId);
         const stageObj = crmStages.find(s => s.id === newStageId);
-        if (stageObj && /проигра/i.test(stageObj.name || '') && !lossReason) {
-            pendingLossStageId = newStageId;
-            document.getElementById('loss-reason-input').value = '';
-            const modal = document.getElementById('loss-reason-modal');
-            modal.style.display = 'flex';
-            modal.dataset.dealId = dealId;
+        if (isLostStage(stageObj) && !(lossReason || '').trim()) {
+            openLossReasonModal(dealId, newStageId);
             return false;
         }
         const oldStageId = deal ? deal.stage : null;
         if (deal) { deal.stage = newStageId; renderCrm(); }
         try {
             const body = { stage: newStageId };
-            if (lossReason) body.loss_reason = lossReason;
+            if (lossReason) body.loss_reason = lossReason.trim();
             const response = await fetch(`/api/deals/${dealId}/stage`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1268,18 +1286,23 @@
 
     function confirmLossReason() {
         const reason = document.getElementById('loss-reason-input').value.trim();
-        if (!reason) { alert('Укажите причину отказа'); return; }
+        if (!reason) {
+            alert('Укажите причину отказа текстом');
+            document.getElementById('loss-reason-input').focus();
+            return;
+        }
         const modal = document.getElementById('loss-reason-modal');
         const dealId = parseInt(modal.dataset.dealId || activeDealId);
         const stageId = pendingLossStageId;
-        modal.style.display = 'none';
+        modal.classList.remove('active');
         pendingLossStageId = null;
         moveDealToStage(dealId, stageId, reason);
     }
 
     function cancelLossReason() {
-        document.getElementById('loss-reason-modal').style.display = 'none';
+        document.getElementById('loss-reason-modal').classList.remove('active');
         pendingLossStageId = null;
+        renderCrm(); // вернуть карточку на место после drag
     }
 
     // Quick Deal Modal logic
