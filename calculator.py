@@ -31,14 +31,17 @@ def merge_identical_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [merged[k] for k in order]
 
 
+DEFAULT_TAX_PERCENTAGE = 16.0
+
+
 def calculate_estimate(
     items: List[Dict[str, Any]],
     discount_percentage: float,
-    tax_percentage: Optional[float] = 0.0,
+    tax_percentage: Optional[float] = DEFAULT_TAX_PERCENTAGE,
 ) -> Dict[str, Any]:
     """
     Calculates the total estimate based on selected items, their quantities,
-    duration, discount and optional tax.
+    duration, discount and tax (fixed 16% by business rule).
 
     The discount ONLY applies to items where 'category_type' == 'equipment'.
     Fixed items ('category_type' == 'fixed') are not discounted.
@@ -60,8 +63,8 @@ def calculate_estimate(
 
     if discount_percentage is None or discount_percentage < 0 or discount_percentage > 100:
         discount_percentage = 0.0
-    if tax_percentage is None or tax_percentage < 0 or tax_percentage > 100:
-        tax_percentage = 0.0
+    # Налог всегда 16% (игнорируем входящее значение, кроме явного None → тоже 16)
+    tax_percentage = DEFAULT_TAX_PERCENTAGE
 
     discount_multiplier = 1.0 - (discount_percentage / 100.0)
 

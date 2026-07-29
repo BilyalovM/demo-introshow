@@ -67,9 +67,12 @@
             <h3 style="margin-top:0">Скидка и налог</h3>
             <div class="grid cols-2">
                 <label class="field"><span>Скидка на оборудование, %</span><input id="discountInput" class="num" max="100" min="0" type="number" value="0"/></label>
-                <label class="field"><span>Налог, %</span><input id="taxInput" class="num" max="100" min="0" type="number" value="0"/></label>
+                <label class="field"><span>Налог, %</span>
+                    <input id="taxInput" class="num" type="number" value="16" readonly disabled
+                           style="opacity:0.85;cursor:not-allowed;background:var(--bg-2,#f1f5f9)" title="Налог фиксирован: 16%"/>
+                </label>
             </div>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">Скидка применяется ко всему, кроме «Логистика, Персонал, Расходники».</p>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">Скидка применяется ко всему, кроме «Логистика, Персонал, Расходники». Налог всегда 16%.</p>
         </div>
         <div class="card">
             <h3 style="margin-top:0">Итоги</h3>
@@ -90,11 +93,14 @@
             <div class="grid" style="gap:8px">
                 <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить</button>
                 <button class="btn btn-primary" onclick="downloadDoc('internal')">Для нас → Word</button>
+                <button class="btn" onclick="downloadDoc('internal_pdf')">Для нас → PDF</button>
                 <button class="btn" onclick="downloadDoc('technichka')">Техничка → Word</button>
                 <button class="btn btn-primary" onclick="downloadDoc('client')">Клиентская → Word</button>
+                <button class="btn" onclick="downloadDoc('client_pdf')">Клиентская → PDF</button>
                 <button class="btn btn-primary" onclick="downloadDoc('contract')">Договор → Word</button>
+                <button class="btn" onclick="downloadDoc('contract_pdf')">Договор → PDF</button>
             </div>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">«Для нас» — полная смета с субарендой и маржой. «Клиентская» — без субаренды. Для договора нужен выбранный клиент.</p>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">«Для нас» — полная смета с субарендой и маржой. «Клиентская» — без субаренды. Для договора нужен выбранный клиент. PDF — та же смета/спецификация в формате PDF.</p>
         </div>
     </div>
 </div>
@@ -413,7 +419,7 @@ async function loadQuote() {
     document.getElementById('rentEnd').value = deal.event_date || '';
     document.getElementById('qShifts').value = deal.shifts != null ? deal.shifts : 1;
     document.getElementById('discountInput').value = deal.discount_percentage || 0;
-    document.getElementById('taxInput').value = deal.tax_percentage || 0;
+    document.getElementById('taxInput').value = 16;
     document.getElementById('companySelect').value = deal.company_id || '';
     fillManagerSelect(deal.assignee_id);
     pendingContactId = deal.contact_id || (deal.contact && deal.contact.id) || null;
@@ -727,7 +733,7 @@ function calculateTotals() {
     });
 
     const discountPercent = parseFloat(document.getElementById('discountInput').value) || 0;
-    const taxPercent = parseFloat(document.getElementById('taxInput').value) || 0;
+    const taxPercent = 16;
     const discountSum = (eqTotal * discountPercent) / 100;
     const afterDiscount = eqTotal - discountSum + fixedTotal;
     const taxSum = (afterDiscount * taxPercent) / 100;
@@ -753,7 +759,6 @@ function calculateTotals() {
 }
 
 document.getElementById('discountInput').addEventListener('input', calculateTotals);
-document.getElementById('taxInput').addEventListener('input', calculateTotals);
 document.getElementById('qShifts').addEventListener('change', onShiftsChange);
 
 // ---------- Сохранение и документы ----------
@@ -780,7 +785,7 @@ async function saveQuote(silent) {
     }
 
     const discount = parseFloat(document.getElementById('discountInput').value) || 0;
-    const tax = parseFloat(document.getElementById('taxInput').value) || 0;
+    const tax = 16;
 
     try {
         if (savedDealId) {
@@ -852,9 +857,12 @@ async function downloadDoc(kind) {
     }
     let url = `/api/deals/${id}/estimate?mode=internal`;
     if (kind === 'contract') url = `/api/deals/${id}/contract`;
+    else if (kind === 'contract_pdf') url = `/api/deals/${id}/contract.pdf`;
     else if (kind === 'technichka') url = `/api/deals/${id}/technichka`;
     else if (kind === 'client') url = `/api/deals/${id}/estimate?mode=client`;
+    else if (kind === 'client_pdf') url = `/api/deals/${id}/estimate.pdf?mode=client`;
     else if (kind === 'internal') url = `/api/deals/${id}/estimate?mode=internal`;
+    else if (kind === 'internal_pdf') url = `/api/deals/${id}/estimate.pdf?mode=internal`;
     window.location.href = url;
 }
 

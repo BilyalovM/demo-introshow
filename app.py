@@ -34,11 +34,14 @@ from sqlalchemy.orm import Session
 from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, engine
 from sqlalchemy import text, func
 
-from calculator import calculate_estimate
+from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
 from document_generator import generate_contract, get_rubles_text
 import notifications
 import auth
 import chatbot
+
+# Налог в сметах всегда 16% (UI + DB + PDF/DOCX)
+FIXED_TAX_PERCENTAGE = DEFAULT_TAX_PERCENTAGE
 
 # Initialize the database
 init_db()
@@ -126,8 +129,8 @@ with Session(engine) as session:
         "ALTER TABLE equipment ADD COLUMN cost_price FLOAT DEFAULT 0",
         "ALTER TABLE equipment ADD COLUMN warehouse_type VARCHAR DEFAULT 'own'",
         "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
-        # Налог в смете (%)
-        "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 0",
+        # Налог в смете (%) — исторически DEFAULT 0; ниже принудительно 16
+        "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 16",
         # Шапка сметы (как в Excel)
         "ALTER TABLE deals ADD COLUMN city VARCHAR",
         "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
@@ -137,6 +140,15 @@ with Session(engine) as session:
             session.commit()
         except Exception:
             session.rollback()
+
+    # 4b2. Налог всегда 16%: выравниваем существующие сделки
+    try:
+        session.execute(
+            text("UPDATE deals SET tax_percentage = 16 WHERE tax_percentage IS NULL OR tax_percentage != 16")
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
 
     # 4c. Стадии «в работе» для проверки брони оборудования:
     # если ни одна стадия не помечена, помечаем стандартные.
@@ -240,7 +252,7 @@ class DealCreate(BaseModel):
     city: Optional[str] = None
     shifts: Optional[float] = 1.0
     discount_percentage: float = 0.0
-    tax_percentage: float = 0.0
+    tax_percentage: float = FIXED_TAX_PERCENTAGE
     items_json: Optional[str] = None
     source: Optional[str] = "manual"
     is_qualified: Optional[bool] = False
@@ -2009,7 +2021,14 @@ def _deal_calc_items(deal: Deal, exclude_subrental: bool = False) -> list:
 
 
 def _deal_tax(deal: Deal) -> float:
-    return float(getattr(deal, "tax_percentage", 0) or 0)
+    """Налог всегда 16%. При чтении подтягиваем значение в БД, если устарело."""
+    current = float(getattr(deal, "tax_percentage", 0) or 0)
+    if current != FIXED_TAX_PERCENTAGE:
+        try:
+            deal.tax_percentage = FIXED_TAX_PERCENTAGE
+        except Exception:
+            pass
+    return FIXED_TAX_PERCENTAGE
 
 
 def _calc_deal(deal: Deal, exclude_subrental: bool = False) -> dict:
@@ -2350,7 +2369,7 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = De
         city=(deal.city or "").strip() or None,
         shifts=float(deal.shifts) if deal.shifts is not None else 1.0,
         discount_percentage=deal.discount_percentage,
-        tax_percentage=deal.tax_percentage or 0.0,
+        tax_percentage=FIXED_TAX_PERCENTAGE,
         stage=stage_id,
         source=deal.source or "manual",
         is_qualified=bool(deal.is_qualified),
@@ -2601,8 +2620,7 @@ def update_deal_items(deal_id: int, update: DealItemsUpdate, db: Session = Depen
         db.add(di)
         
     d.discount_percentage = update.discount_percentage
-    if update.tax_percentage is not None:
-        d.tax_percentage = update.tax_percentage
+    d.tax_percentage = FIXED_TAX_PERCENTAGE
     db.commit()
     db.refresh(d)
     _recalc_deal_sum(db, d)
@@ -3777,26 +3795,7 @@ def download_deal_estimate(
         mode_norm = "internal"
 
     # Клиентская смета — без позиций субаренды; внутренние итоги считаем по полному составу
-    result = _calc_deal(d, exclude_subrental=(mode_norm == "client"))
-    header = _estimate_header_fields(d)
-
-    context = {
-        "number": f"CRM-{d.id}",
-        "date": datetime.today().strftime("%d.%m.%Y"),
-        **header,
-        "items": result["items"],
-        "equipment_base": result.get("equipment_base", 0),
-        "equipment_total": result["equipment_total"],
-        "fixed_total": result["fixed_total"],
-        "discount_amount": result.get("discount_amount", 0),
-        "after_discount": result.get("after_discount", result["grand_total"]),
-        "tax_percentage": result.get("tax_percentage", _deal_tax(d)),
-        "tax_amount": result.get("tax_amount", 0),
-        "grand_total": result["grand_total"],
-        "cost_total": result.get("cost_total", 0),
-        "margin": result.get("margin", 0),
-        "discount_percentage": d.discount_percentage or 0,
-    }
+    context = _build_estimate_context(d, mode_norm)
 
     from document_generator import generate_estimate_docx
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
@@ -3819,6 +3818,118 @@ def download_deal_estimate(
         temp_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=fname,
+    )
+
+
+def _build_estimate_context(d: Deal, mode_norm: str) -> dict:
+    result = _calc_deal(d, exclude_subrental=(mode_norm == "client"))
+    header = _estimate_header_fields(d)
+    return {
+        "number": f"CRM-{d.id}",
+        "date": datetime.today().strftime("%d.%m.%Y"),
+        **header,
+        "items": result["items"],
+        "equipment_base": result.get("equipment_base", 0),
+        "equipment_total": result["equipment_total"],
+        "fixed_total": result["fixed_total"],
+        "discount_amount": result.get("discount_amount", 0),
+        "after_discount": result.get("after_discount", result["grand_total"]),
+        "tax_percentage": result.get("tax_percentage", _deal_tax(d)),
+        "tax_amount": result.get("tax_amount", 0),
+        "grand_total": result["grand_total"],
+        "cost_total": result.get("cost_total", 0),
+        "margin": result.get("margin", 0),
+        "discount_percentage": d.discount_percentage or 0,
+    }
+
+
+@app.get("/api/deals/{deal_id}/estimate.pdf")
+def download_deal_estimate_pdf(
+    deal_id: int,
+    background_tasks: BackgroundTasks,
+    mode: str = "internal",
+    db: Session = Depends(get_db),
+):
+    """Скачивание сметы .pdf: mode=internal|client."""
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+
+    mode_norm = (mode or "internal").strip().lower()
+    if mode_norm not in ("internal", "client"):
+        mode_norm = "internal"
+
+    from document_generator import generate_estimate_pdf
+    context = _build_estimate_context(d, mode_norm)
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    generate_estimate_pdf(context, temp_path, mode=mode_norm)
+
+    def cleanup_file(path: str):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    background_tasks.add_task(cleanup_file, temp_path)
+    fname = (
+        f"Smeta_client_CRM-{d.id}.pdf"
+        if mode_norm == "client"
+        else f"Smeta_vnutr_CRM-{d.id}.pdf"
+    )
+    return FileResponse(temp_path, media_type="application/pdf", filename=fname)
+
+
+@app.get("/api/deals/{deal_id}/contract.pdf")
+def download_deal_contract_pdf(
+    deal_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """PDF договора: реквизиты + спецификация (без полного юр. текста Word-шаблона)."""
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    comp = d.company
+    if not comp:
+        return JSONResponse(status_code=400, content={"error": "No company linked"})
+
+    result = _calc_deal(d, exclude_subrental=True)
+    context = {
+        "contract_number": f"CRM-{d.id}",
+        "contract_date": datetime.today().strftime("%d.%m.%Y"),
+        "company_name": comp.name,
+        "director_name": comp.director_name,
+        "iin_bin": comp.bin,
+        "iban": comp.requisites,
+        "event_name": d.title,
+        "event_date": d.event_date,
+        "event_address": d.event_address,
+        "items": result["items"],
+        "equipment_total": result["equipment_total"],
+        "fixed_total": result["fixed_total"],
+        "grand_total": result["grand_total"],
+        "discount_percentage": d.discount_percentage or 0,
+        "tax_percentage": result.get("tax_percentage", FIXED_TAX_PERCENTAGE),
+        "tax_amount": result.get("tax_amount", 0),
+    }
+
+    from document_generator import generate_contract_pdf
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    generate_contract_pdf(context, temp_path)
+
+    def cleanup_file(path: str):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    background_tasks.add_task(cleanup_file, temp_path)
+    return FileResponse(
+        temp_path,
+        media_type="application/pdf",
+        filename=f"Contract_{d.id}_{comp.name}.pdf",
     )
 
 
@@ -3878,8 +3989,7 @@ async def api_calculate(request: Request):
     data = await request.json()
     items = data.get("items", [])
     discount = float(data.get("discount", 0.0))
-    tax = float(data.get("tax", data.get("tax_percentage", 0.0)) or 0.0)
-    result = calculate_estimate(items, discount, tax)
+    result = calculate_estimate(items, discount, FIXED_TAX_PERCENTAGE)
     return JSONResponse(content=result)
 
 @app.post("/api/preview-contract")

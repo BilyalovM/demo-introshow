@@ -149,7 +149,7 @@ class Deal(Base):
     city = Column(String, nullable=True)  # Город проекта (шапка сметы)
     shifts = Column(Float, default=1.0)  # Смены / кол-во дней в шапке
     discount_percentage = Column(Float, default=0.0)
-    tax_percentage = Column(Float, default=0.0)
+    tax_percentage = Column(Float, default=16.0)  # НДС/налог всегда 16%
     final_sum = Column(Float, default=0.0)
     comment = Column(String)
     contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)

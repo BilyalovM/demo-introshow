@@ -313,3 +313,311 @@ def generate_estimate_docx(
 
     doc.save(output_path)
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# PDF (fpdf2) — без системных зависимостей, работает на Vercel / Linux
+# ---------------------------------------------------------------------------
+
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "fonts")
+
+
+def _pdf_font_paths():
+    regular = os.path.join(_FONTS_DIR, "DejaVuSans.ttf")
+    bold = os.path.join(_FONTS_DIR, "DejaVuSans-Bold.ttf")
+    return regular, bold
+
+
+class _EstimatePDF:
+    """Минимальная обёртка над FPDF с кириллицей (DejaVu)."""
+
+    def __init__(self):
+        from fpdf import FPDF
+
+        self.pdf = FPDF(orientation="P", unit="mm", format="A4")
+        self.pdf.set_auto_page_break(auto=True, margin=15)
+        regular, bold = _pdf_font_paths()
+        if not os.path.exists(regular):
+            raise FileNotFoundError(f"PDF font missing: {regular}")
+        self.pdf.add_font("DejaVu", "", regular)
+        if os.path.exists(bold):
+            self.pdf.add_font("DejaVu", "B", bold)
+        else:
+            self.pdf.add_font("DejaVu", "B", regular)
+        self.pdf.add_page()
+        self.pdf.set_font("DejaVu", size=10)
+
+    def _reset_x(self):
+        self.pdf.set_x(self.pdf.l_margin)
+
+    def title(self, text: str):
+        self._reset_x()
+        self.pdf.set_font("DejaVu", "B", 14)
+        self.pdf.multi_cell(0, 8, text, align="C")
+        self._reset_x()
+        self.pdf.ln(2)
+        self.pdf.set_font("DejaVu", size=10)
+
+    def line(self, text: str, bold: bool = False):
+        self._reset_x()
+        self.pdf.set_font("DejaVu", "B" if bold else "", 10)
+        self.pdf.multi_cell(0, 5, text)
+        self._reset_x()
+        self.pdf.set_font("DejaVu", size=10)
+
+    def right(self, text: str, bold: bool = False, size: int = 10):
+        self._reset_x()
+        self.pdf.set_font("DejaVu", "B" if bold else "", size)
+        self.pdf.cell(0, 6, text, align="R", new_x="LMARGIN", new_y="NEXT")
+        self.pdf.set_font("DejaVu", size=10)
+
+    def table(self, headers: List[str], rows: List[List[str]], col_widths: List[float]):
+        self._reset_x()
+        usable = self.pdf.w - self.pdf.l_margin - self.pdf.r_margin
+        total_w = sum(col_widths)
+        if total_w > usable and total_w > 0:
+            scale = usable / total_w
+            col_widths = [w * scale for w in col_widths]
+        self.pdf.set_font("DejaVu", "B", 8)
+        for i, h in enumerate(headers):
+            self.pdf.cell(col_widths[i], 6, h[:40], border=1)
+        self.pdf.ln()
+        self._reset_x()
+        self.pdf.set_font("DejaVu", size=8)
+        for row in rows:
+            # Высота строки: одна строка текста (обрезаем длинные значения)
+            cells = [str(c)[:80] for c in row]
+            row_h = 6
+            x0 = self.pdf.l_margin
+            y0 = self.pdf.get_y()
+            if y0 + row_h > self.pdf.h - 15:
+                self.pdf.add_page()
+                self._reset_x()
+                y0 = self.pdf.get_y()
+            for i, cell in enumerate(cells):
+                x = x0 + sum(col_widths[:i])
+                self.pdf.set_xy(x, y0)
+                self.pdf.cell(col_widths[i], row_h, cell, border=1)
+            self.pdf.set_xy(x0, y0 + row_h)
+        self._reset_x()
+        self.pdf.set_font("DejaVu", size=10)
+
+    def save(self, path: str):
+        self.pdf.output(path)
+
+
+def _pdf_meta_lines(context: Dict[str, Any], with_assignee: bool = False) -> List[str]:
+    lines = []
+    project = context.get("project_name") or context.get("event_name")
+    if project:
+        lines.append(f"Наименование проекта: {project}")
+    if context.get("company_name"):
+        lines.append(f"Заказчик: {context['company_name']}")
+    if context.get("contact_name"):
+        lines.append(f"Контактное лицо: {context['contact_name']}")
+    if context.get("manager_name"):
+        lines.append(f"Менеджер: {context['manager_name']}")
+    if context.get("city"):
+        lines.append(f"Город: {context['city']}")
+    if context.get("event_address"):
+        lines.append(f"Адрес / площадка: {context['event_address']}")
+    depart = context.get("departure_date") or ""
+    ret = context.get("return_date") or ""
+    if depart or ret:
+        lines.append(f"Выезд оборудования: {depart or '—'}")
+        lines.append(f"Возврат оборудования: {ret or '—'}")
+    elif context.get("rent_period"):
+        lines.append(f"Период аренды: {context['rent_period']}")
+    shifts_label = context.get("shifts_label")
+    if shifts_label is None and context.get("shifts") is not None:
+        s = context["shifts"]
+        try:
+            sf = float(s)
+            shifts_label = str(int(sf)) if sf == int(sf) else str(sf)
+        except (TypeError, ValueError):
+            shifts_label = str(s)
+    if shifts_label:
+        lines.append(f"Количество смен / дней: {shifts_label}")
+    if with_assignee and context.get("assignee_name"):
+        lines.append(f"Ответственный на объекте: {context['assignee_name']}")
+    return lines
+
+
+def generate_estimate_pdf(
+    context: Dict[str, Any],
+    output_path: str,
+    mode: str = "internal",
+) -> str:
+    """PDF-смета: те же mode=internal|client и данные, что у DOCX."""
+    mode = (mode or "internal").strip().lower()
+    if mode not in ("internal", "client"):
+        mode = "internal"
+
+    pdf = _EstimatePDF()
+    if mode == "client":
+        title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
+    else:
+        title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
+    pdf.title(title_text)
+
+    for line in _pdf_meta_lines(context):
+        pdf.line(line)
+    pdf.pdf.ln(2)
+
+    all_items = list(context.get("items", []) or [])
+    if mode == "client":
+        main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
+        sub_items = []
+    else:
+        main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
+        sub_items = [i for i in all_items if (i.get("warehouse_type") or "own") == "subrental"]
+        if not main_items and not sub_items and all_items:
+            main_items = all_items
+
+    if main_items:
+        if mode == "internal" and sub_items:
+            pdf.line("Оборудование и услуги", bold=True)
+        rows = []
+        for idx, item in enumerate(main_items, 1):
+            rows.append([
+                str(idx),
+                str(item.get("name", ""))[:60],
+                _fmt_money(item.get("price", 0)),
+                str(item.get("quantity", 1)),
+                str(item.get("days", 1)),
+                _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
+            ])
+        pdf.table(
+            ["№", "Наименование", "Цена", "Кол-во", "Дней", "Сумма"],
+            rows,
+            [10, 70, 30, 18, 18, 34],
+        )
+    elif mode == "client":
+        pdf.line("Нет позиций для клиентской сметы.")
+
+    if mode == "internal" and sub_items:
+        pdf.pdf.ln(3)
+        pdf.line("Субаренда (только для нас)", bold=True)
+        pdf.line("Раздел не попадает в клиентскую смету.")
+        rows = []
+        for idx, item in enumerate(sub_items, 1):
+            qty = item.get("quantity", 1)
+            days = item.get("days", 1)
+            rows.append([
+                str(idx),
+                str(item.get("name", ""))[:40],
+                str(item.get("supplier") or "—")[:20],
+                _fmt_money(item.get("price", 0)),
+                _fmt_money(item.get("cost_price", 0)),
+                f"{qty}×{days}",
+                _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
+            ])
+        pdf.table(
+            ["№", "Наименование", "Поставщик", "Цена", "Себест.", "К×Д", "Сумма"],
+            rows,
+            [8, 48, 28, 24, 24, 16, 32],
+        )
+
+    disc_pct = float(context.get("discount_percentage") or 0)
+    tax_pct = float(context.get("tax_percentage") or 0)
+    eq_base = context.get("equipment_base")
+    if eq_base is None:
+        eq_base = context.get("equipment_total", 0)
+    eq_total = context.get("equipment_total", 0)
+    fixed_total = context.get("fixed_total", 0)
+    discount_amount = context.get("discount_amount")
+    if discount_amount is None and disc_pct:
+        discount_amount = float(eq_base) - float(eq_total)
+    after_discount = context.get("after_discount")
+    if after_discount is None:
+        after_discount = float(eq_total) + float(fixed_total)
+    tax_amount = context.get("tax_amount") or 0
+    grand = context.get("grand_total", 0)
+
+    pdf.pdf.ln(3)
+    pdf.right(f"Оборудование (до скидки): {_fmt_money(float(eq_base))}")
+    if disc_pct:
+        pdf.right(f"Скидка на оборудование {disc_pct:.0f}%: −{_fmt_money(float(discount_amount or 0))}")
+    pdf.right(f"Оборудование (со скидкой): {_fmt_money(float(eq_total))}")
+    pdf.right(f"Логистика и персонал: {_fmt_money(float(fixed_total))}")
+    pdf.right(f"После скидки: {_fmt_money(float(after_discount))}")
+    if tax_pct or tax_amount:
+        pdf.right(f"Налог {tax_pct:.0f}%: {_fmt_money(float(tax_amount))}")
+    pdf.right(f"ИТОГО: {_fmt_money(float(grand))}", bold=True, size=12)
+    pdf.right(get_rubles_text(float(grand or 0)))
+
+    if mode == "internal":
+        cost_total = float(context.get("cost_total") or 0)
+        margin = context.get("margin")
+        if margin is None:
+            margin = float(grand or 0) - cost_total
+        pdf.pdf.ln(2)
+        pdf.line("Маржа (внутренний блок)", bold=True)
+        pdf.right(f"Себестоимость субаренды: {_fmt_money(cost_total)}")
+        pdf.right(f"Маржа: {_fmt_money(float(margin))}", bold=True)
+
+    pdf.save(output_path)
+    return output_path
+
+
+def generate_contract_pdf(context: Dict[str, Any], output_path: str) -> str:
+    """Упрощённый PDF договора: реквизиты + спецификация (как приложение к Word-шаблону)."""
+    pdf = _EstimatePDF()
+    pdf.title(
+        f"ДОГОВОР № {context.get('contract_number', '')} от {context.get('contract_date', '')}"
+    )
+    pdf.line(f"Заказчик: {context.get('company_name') or '—'}", bold=True)
+    if context.get("director_name"):
+        pdf.line(f"Директор / представитель: {context['director_name']}")
+    if context.get("iin_bin"):
+        pdf.line(f"ИИН/БИН: {context['iin_bin']}")
+    if context.get("iban"):
+        pdf.line(f"ИБан / реквизиты: {context['iban']}")
+    if context.get("event_name"):
+        pdf.line(f"Мероприятие: {context['event_name']}")
+    if context.get("event_date"):
+        pdf.line(f"Дата: {context['event_date']}")
+    if context.get("event_address"):
+        pdf.line(f"Адрес: {context['event_address']}")
+    pdf.pdf.ln(2)
+    pdf.line("Спецификация оборудования и услуг", bold=True)
+
+    items = list(context.get("items", []) or [])
+    rows = []
+    for idx, item in enumerate(items, 1):
+        rows.append([
+            str(idx),
+            str(item.get("name", ""))[:60],
+            _fmt_money(item.get("price", 0)),
+            str(item.get("quantity", 1)),
+            str(item.get("days", 1)),
+            _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
+        ])
+    if rows:
+        pdf.table(
+            ["№", "Наименование", "Цена", "Кол-во", "Дней", "Сумма"],
+            rows,
+            [10, 70, 30, 18, 18, 34],
+        )
+    else:
+        pdf.line("Нет позиций.")
+
+    disc_pct = float(context.get("discount_percentage") or 0)
+    tax_pct = float(context.get("tax_percentage") or 0)
+    pdf.pdf.ln(3)
+    pdf.right(f"Оборудование: {_fmt_money(float(context.get('equipment_total') or 0))}")
+    pdf.right(f"Логистика и персонал: {_fmt_money(float(context.get('fixed_total') or 0))}")
+    if disc_pct:
+        pdf.right(f"Скидка: {disc_pct:.0f}%")
+    if tax_pct or context.get("tax_amount"):
+        pdf.right(f"Налог {tax_pct:.0f}%: {_fmt_money(float(context.get('tax_amount') or 0))}")
+    grand = float(context.get("grand_total") or 0)
+    pdf.right(f"ИТОГО: {_fmt_money(grand)}", bold=True, size=12)
+    pdf.right(get_rubles_text(grand))
+    pdf.pdf.ln(4)
+    pdf.line(
+        "Полный юридический текст договора см. в версии Word. "
+        "Этот PDF — спецификация и итоговая сумма для клиента."
+    )
+    pdf.save(output_path)
+    return output_path
