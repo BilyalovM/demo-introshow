@@ -30,7 +30,9 @@
 
         #qr_container { margin-top: 1.5rem; display: none; text-align: center; }
         #qr_image { max-width: 300px; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; background: white; }
-    
+        @media (max-width: 640px) {
+            #quick-add-user { grid-template-columns: 1fr !important; }
+        }
 </style>
 {% endblock %}
 
@@ -57,11 +59,35 @@
         </div>
 
 
+        {% if request.state.user and request.state.user.role == 'admin' %}
         <div class="card">
-            <h3 style="margin-top:0;">Пользователи системы</h3>
-            <p>Управление пользователями и правами доступа (макс. 10 человек).</p>
-            <button onclick="window.location.href='/users'">Перейти к управлению</button>
+            <h3 style="margin-top:0;">Сотрудники</h3>
+            <p style="margin-bottom:1rem">Добавьте логин и пароль для нового сотрудника. Права и разделы можно настроить на странице управления.</p>
+            <form id="quick-add-user" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <label style="display:block; font-size:13px; font-weight:600;">Логин
+                    <input id="qa-username" required placeholder="например: dinara" style="width:100%; box-sizing:border-box; margin-top:4px; padding:0.65rem; border:1px solid var(--border); border-radius:8px; background:var(--background); color:var(--text);">
+                </label>
+                <label style="display:block; font-size:13px; font-weight:600;">Имя
+                    <input id="qa-fullname" placeholder="Динара Беку" style="width:100%; box-sizing:border-box; margin-top:4px; padding:0.65rem; border:1px solid var(--border); border-radius:8px; background:var(--background); color:var(--text);">
+                </label>
+                <label style="display:block; font-size:13px; font-weight:600;">Пароль
+                    <input id="qa-password" type="password" required placeholder="пароль для входа" style="width:100%; box-sizing:border-box; margin-top:4px; padding:0.65rem; border:1px solid var(--border); border-radius:8px; background:var(--background); color:var(--text);">
+                </label>
+                <label style="display:block; font-size:13px; font-weight:600;">Роль
+                    <select id="qa-role" style="width:100%; box-sizing:border-box; margin-top:4px; padding:0.65rem; border:1px solid var(--border); border-radius:8px; background:var(--background); color:var(--text);">
+                        <option value="user">Сотрудник</option>
+                        <option value="manager">Менеджер</option>
+                        <option value="admin">Администратор</option>
+                    </select>
+                </label>
+                <div style="grid-column:1 / -1; display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:4px;">
+                    <button type="submit">+ Добавить сотрудника</button>
+                    <button type="button" onclick="window.location.href='/users'" style="background:transparent; color:var(--text); border:1px solid var(--border);">Все сотрудники и доступы →</button>
+                </div>
+                <p id="qa-msg" style="grid-column:1 / -1; margin:0; font-size:13px; display:none;"></p>
+            </form>
         </div>
+        {% endif %}
 
         <div class="card">
             <h3 style="margin-top:0;">Интеграция Telegram <span id="tg_conn" class="status-badge offline">не подключено</span></h3>
@@ -321,6 +347,44 @@
                 apply('ig_conn', s.instagram);
                 apply('onec_conn', s.onec);
             } catch (e) { console.error(e); }
+        }
+
+        const quickForm = document.getElementById('quick-add-user');
+        if (quickForm) {
+            quickForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const msg = document.getElementById('qa-msg');
+                const payload = {
+                    username: document.getElementById('qa-username').value.trim(),
+                    full_name: document.getElementById('qa-fullname').value.trim(),
+                    password: document.getElementById('qa-password').value,
+                    role: document.getElementById('qa-role').value,
+                    permissions: [],
+                };
+                if (!payload.username || !payload.password) return;
+                msg.style.display = 'block';
+                msg.style.color = 'var(--muted)';
+                msg.textContent = 'Сохранение…';
+                try {
+                    const res = await fetch('/api/users', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (res.ok && !data.error) {
+                        msg.style.color = '#16a34a';
+                        msg.textContent = 'Сотрудник добавлен. Логин: ' + payload.username;
+                        quickForm.reset();
+                    } else {
+                        msg.style.color = '#dc2626';
+                        msg.textContent = data.error || 'Не удалось создать сотрудника';
+                    }
+                } catch (err) {
+                    msg.style.color = '#dc2626';
+                    msg.textContent = 'Ошибка соединения';
+                }
+            });
         }
 
         window.onload = () => {

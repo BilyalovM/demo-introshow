@@ -789,8 +789,8 @@ async def read_companies(request: Request, user: User = Depends(get_current_user
 @app.get("/users", response_class=HTMLResponse)
 async def read_users(request: Request, user: User = Depends(get_current_user)):
     if user.role != "admin":
-        return HTMLResponse("Access denied", status_code=403)
-    return templates.TemplateResponse("users.html", {"request": request, "active_page": "settings"})
+        return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>Доступ только для администратора.</h3>", status_code=403)
+    return templates.TemplateResponse("users.html", {"request": request, "active_page": "users"})
 
 @app.get("/api/users")
 def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_user)):

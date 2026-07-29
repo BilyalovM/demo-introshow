@@ -203,6 +203,20 @@
   </span>
  </a>
  {% endif %}
+ {% if request.state.user and request.state.user.role == 'admin' %}
+ <a href="/users" class="nav-link {% if request.url.path == '/users' %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <circle cx="9" cy="8" r="3.2"></circle>
+    <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"></path>
+    <path d="M16 8h5M18.5 5.5v5"></path>
+   </svg>
+  </span>
+  <span>
+   Сотрудники
+  </span>
+ </a>
+ {% endif %}
  <div class="spacer">
  </div>
  <a class="nav-link" href="#" onclick="doLogout(event)" title="Выйти из системы">
