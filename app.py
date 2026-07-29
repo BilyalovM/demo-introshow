@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -919,10 +919,23 @@ TASK_STATUSES = {
     "done": "Завершена",
 }
 
+class TaskPersonIn(BaseModel):
+    user_id: Optional[int] = None
+    name: Optional[str] = None
+
+class TaskChecklistItemIn(BaseModel):
+    id: Optional[int] = None
+    text: str
+    is_done: Optional[bool] = False
+    sort_order: Optional[int] = 0
+
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     assignee: Optional[str] = None
+    assignees: Optional[List[TaskPersonIn]] = None
+    observers: Optional[List[TaskPersonIn]] = None
+    checklist: Optional[List[TaskChecklistItemIn]] = None
     due_date: Optional[str] = None
     priority: Optional[str] = "normal"
     status: Optional[str] = "open"
@@ -933,6 +946,9 @@ class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     assignee: Optional[str] = None
+    assignees: Optional[List[TaskPersonIn]] = None
+    observers: Optional[List[TaskPersonIn]] = None
+    checklist: Optional[List[TaskChecklistItemIn]] = None
     due_date: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
@@ -942,10 +958,94 @@ class TaskUpdate(BaseModel):
 class TaskCommentCreate(BaseModel):
     text: str
 
+class TaskChecklistCreate(BaseModel):
+    text: str
+    sort_order: Optional[int] = None
+
+class TaskChecklistUpdate(BaseModel):
+    text: Optional[str] = None
+    is_done: Optional[bool] = None
+    sort_order: Optional[int] = None
+
 def _task_tags_list(tags: Optional[str]) -> list:
     if not tags:
         return []
     return [x.strip() for x in str(tags).split(",") if x.strip()]
+
+def _resolve_task_person(db: Session, person: TaskPersonIn) -> tuple:
+    """Returns (user_id, display_name) or (None, None) if empty."""
+    uid = person.user_id
+    name = (person.name or "").strip()
+    if uid:
+        u = db.query(User).filter(User.id == uid).first()
+        if u:
+            return u.id, (u.full_name or u.username or name or str(u.id))
+    if name:
+        u = db.query(User).filter(
+            (User.full_name == name) | (User.username == name)
+        ).first()
+        if u:
+            return u.id, (u.full_name or u.username)
+        return None, name
+    return None, None
+
+def _sync_task_people(db: Session, task: Task, assignees=None, observers=None):
+    """Replace assignees/observers lists when provided (None = leave unchanged)."""
+    if assignees is not None:
+        db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete()
+        seen = set()
+        primary = None
+        for p in assignees or []:
+            uid, name = _resolve_task_person(db, p if isinstance(p, TaskPersonIn) else TaskPersonIn(**p))
+            if not name:
+                continue
+            key = (uid, name.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            db.add(TaskAssignee(task_id=task.id, user_id=uid, name=name))
+            if primary is None:
+                primary = name
+        task.assignee = primary
+    if observers is not None:
+        db.query(TaskObserver).filter(TaskObserver.task_id == task.id).delete()
+        seen = set()
+        for p in observers or []:
+            uid, name = _resolve_task_person(db, p if isinstance(p, TaskPersonIn) else TaskPersonIn(**p))
+            if not name:
+                continue
+            key = (uid, name.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            db.add(TaskObserver(task_id=task.id, user_id=uid, name=name))
+
+def _sync_task_checklist(db: Session, task: Task, items):
+    """Replace checklist when list provided."""
+    db.query(TaskChecklistItem).filter(TaskChecklistItem.task_id == task.id).delete()
+    for i, it in enumerate(items or []):
+        if isinstance(it, dict):
+            it = TaskChecklistItemIn(**it)
+        text = (it.text or "").strip()
+        if not text:
+            continue
+        db.add(TaskChecklistItem(
+            task_id=task.id,
+            text=text,
+            is_done=bool(it.is_done),
+            sort_order=it.sort_order if it.sort_order is not None else i,
+        ))
+
+def _ensure_legacy_assignee_rows(db: Session, task: Task):
+    """If task has assignee string but no TaskAssignee rows — seed one."""
+    if not task.assignee:
+        return
+    existing = db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).count()
+    if existing:
+        return
+    uid, name = _resolve_task_person(db, TaskPersonIn(name=task.assignee))
+    db.add(TaskAssignee(task_id=task.id, user_id=uid, name=name or task.assignee))
+    db.commit()
 
 def _task_comment_to_dict(c: TaskComment) -> dict:
     author = ""
@@ -961,14 +1061,40 @@ def _task_comment_to_dict(c: TaskComment) -> dict:
         "created_at_iso": c.created_at.isoformat() if c.created_at else "",
     }
 
+def _checklist_to_dict(it: TaskChecklistItem) -> dict:
+    return {
+        "id": it.id,
+        "task_id": it.task_id,
+        "text": it.text,
+        "is_done": bool(it.is_done),
+        "sort_order": it.sort_order or 0,
+    }
+
 def _task_to_dict(t: Task, comment_count: Optional[int] = None) -> dict:
     today = datetime.today().strftime("%Y-%m-%d")
     overdue = bool(t.due_date and t.status not in ("done",) and t.due_date[:10] < today)
     if comment_count is None:
         comment_count = len(t.comments) if t.comments is not None else 0
+    assignees = [
+        {"id": a.id, "user_id": a.user_id, "name": a.name}
+        for a in (t.assignees or [])
+    ]
+    if not assignees and t.assignee:
+        assignees = [{"id": None, "user_id": None, "name": t.assignee}]
+    observers = [
+        {"id": o.id, "user_id": o.user_id, "name": o.name}
+        for o in (t.observers or [])
+    ]
+    checklist = [_checklist_to_dict(c) for c in (t.checklist_items or [])]
+    done_n = sum(1 for c in checklist if c["is_done"])
     return {
         "id": t.id, "title": t.title, "description": t.description,
-        "assignee": t.assignee,
+        "assignee": t.assignee or (assignees[0]["name"] if assignees else None),
+        "assignees": assignees,
+        "observers": observers,
+        "checklist": checklist,
+        "checklist_done": done_n,
+        "checklist_total": len(checklist),
         "created_by": t.created_by,
         "creator_id": t.creator_id,
         "due_date": t.due_date, "priority": t.priority or "normal",
@@ -1015,10 +1141,21 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 @app.post("/api/tasks")
 def create_task(t: TaskCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     status = t.status if t.status in TASK_STATUSES else "open"
+    people = t.assignees
+    if people is None and t.assignee:
+        people = [TaskPersonIn(name=t.assignee)]
+    if not people:
+        people = [TaskPersonIn(user_id=user.id, name=user.full_name or user.username)]
+    primary = None
+    for p in people:
+        _, name = _resolve_task_person(db, p)
+        if name:
+            primary = name
+            break
     task = Task(
         title=t.title,
         description=t.description,
-        assignee=t.assignee or (user.full_name or user.username),
+        assignee=primary or (user.full_name or user.username),
         created_by=user.full_name or user.username,
         creator_id=user.id,
         due_date=t.due_date,
@@ -1028,6 +1165,10 @@ def create_task(t: TaskCreate, db: Session = Depends(get_db), user: User = Depen
         tags=t.tags,
     )
     db.add(task)
+    db.flush()
+    _sync_task_people(db, task, assignees=people, observers=t.observers if t.observers is not None else [])
+    if t.checklist is not None:
+        _sync_task_checklist(db, task, t.checklist)
     db.commit()
     db.refresh(task)
     if task.deal_id:
@@ -1040,10 +1181,18 @@ def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
-    for field in ("title", "description", "assignee", "due_date", "priority", "deal_id", "tags"):
+    for field in ("title", "description", "due_date", "priority", "deal_id", "tags"):
         value = getattr(t, field)
         if value is not None:
             setattr(task, field, value)
+    if t.assignees is not None:
+        _sync_task_people(db, task, assignees=t.assignees)
+    elif t.assignee is not None:
+        _sync_task_people(db, task, assignees=[TaskPersonIn(name=t.assignee)])
+    if t.observers is not None:
+        _sync_task_people(db, task, observers=t.observers)
+    if t.checklist is not None:
+        _sync_task_checklist(db, task, t.checklist)
     if t.status is not None:
         if t.status not in TASK_STATUSES:
             return JSONResponse(status_code=400, content={"error": "Неизвестный статус"})
@@ -1057,6 +1206,9 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if task:
         db.query(TaskComment).filter(TaskComment.task_id == task_id).delete()
+        db.query(TaskAssignee).filter(TaskAssignee.task_id == task_id).delete()
+        db.query(TaskObserver).filter(TaskObserver.task_id == task_id).delete()
+        db.query(TaskChecklistItem).filter(TaskChecklistItem.task_id == task_id).delete()
         db.delete(task)
         db.commit()
     return {"status": "success"}
@@ -1092,6 +1244,89 @@ def create_task_comment(
     db.commit()
     db.refresh(comment)
     return _task_comment_to_dict(comment)
+
+@app.get("/api/tasks/{task_id}/checklist")
+def get_task_checklist(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    items = (
+        db.query(TaskChecklistItem)
+        .filter(TaskChecklistItem.task_id == task_id)
+        .order_by(TaskChecklistItem.sort_order.asc(), TaskChecklistItem.id.asc())
+        .all()
+    )
+    return [_checklist_to_dict(i) for i in items]
+
+@app.post("/api/tasks/{task_id}/checklist")
+def add_checklist_item(
+    task_id: int,
+    body: TaskChecklistCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    text = (body.text or "").strip()
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "Пустой пункт"})
+    max_ord = db.query(func.max(TaskChecklistItem.sort_order)).filter(
+        TaskChecklistItem.task_id == task_id
+    ).scalar()
+    item = TaskChecklistItem(
+        task_id=task_id,
+        text=text,
+        is_done=False,
+        sort_order=body.sort_order if body.sort_order is not None else ((max_ord or 0) + 1),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return _checklist_to_dict(item)
+
+@app.put("/api/tasks/{task_id}/checklist/{item_id}")
+def update_checklist_item(
+    task_id: int,
+    item_id: int,
+    body: TaskChecklistUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    item = db.query(TaskChecklistItem).filter(
+        TaskChecklistItem.id == item_id,
+        TaskChecklistItem.task_id == task_id,
+    ).first()
+    if not item:
+        return JSONResponse(status_code=404, content={"error": "Пункт не найден"})
+    if body.text is not None:
+        text = body.text.strip()
+        if not text:
+            return JSONResponse(status_code=400, content={"error": "Пустой пункт"})
+        item.text = text
+    if body.is_done is not None:
+        item.is_done = bool(body.is_done)
+    if body.sort_order is not None:
+        item.sort_order = body.sort_order
+    db.commit()
+    db.refresh(item)
+    return _checklist_to_dict(item)
+
+@app.delete("/api/tasks/{task_id}/checklist/{item_id}")
+def delete_checklist_item(
+    task_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    item = db.query(TaskChecklistItem).filter(
+        TaskChecklistItem.id == item_id,
+        TaskChecklistItem.task_id == task_id,
+    ).first()
+    if item:
+        db.delete(item)
+        db.commit()
+    return {"status": "success"}
 
 @app.get("/companies", response_class=HTMLResponse)
 async def read_companies(request: Request, user: User = Depends(get_current_user)):
@@ -1377,6 +1612,66 @@ def create_equipment(item: EquipmentCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_equip)
     return db_equip
+
+@app.post("/api/equipment/{equip_id}/duplicate-subrental")
+def duplicate_equipment_to_subrental(
+    equip_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Продублировать позицию своего склада в субаренду (новый SKU warehouse_type=subrental)."""
+    src = db.query(Equipment).filter(Equipment.id == equip_id).first()
+    if not src:
+        return JSONResponse(status_code=404, content={"error": "Оборудование не найдено"})
+    name_key = (src.name or "").strip().lower()
+    existing = db.query(Equipment).filter(Equipment.warehouse_type == "subrental").all()
+    twin = next((e for e in existing if (e.name or "").strip().lower() == name_key), None)
+    if twin:
+        return {
+            "id": twin.id,
+            "status": "exists",
+            "message": "Уже есть в субаренде",
+            "equipment": {
+                "id": twin.id, "name": twin.name, "category": twin.category,
+                "price": twin.price, "cost_price": twin.cost_price or 0,
+                "stock_quantity": twin.stock_quantity,
+                "warehouse_type": "subrental", "supplier": twin.supplier,
+                "folder_id": twin.folder_id, "status": twin.status,
+            },
+        }
+    twin = Equipment(
+        name=src.name,
+        category=src.category,
+        price=src.price,
+        cost_price=float(src.cost_price or 0),
+        stock_quantity=0,
+        status=src.status or "Доступно",
+        warehouse_type="subrental",
+        supplier=src.supplier,
+        folder_id=src.folder_id,
+        description=src.description,
+        photo_url=src.photo_url,
+        weight=src.weight,
+        dimensions=src.dimensions,
+        power_w=src.power_w,
+        dispersion=src.dispersion,
+        custom_fields=dict(src.custom_fields or {}) if src.custom_fields else {},
+    )
+    db.add(twin)
+    db.commit()
+    db.refresh(twin)
+    return {
+        "id": twin.id,
+        "status": "created",
+        "message": "Создана копия в субаренде",
+        "equipment": {
+            "id": twin.id, "name": twin.name, "category": twin.category,
+            "price": twin.price, "cost_price": twin.cost_price or 0,
+            "stock_quantity": twin.stock_quantity,
+            "warehouse_type": "subrental", "supplier": twin.supplier,
+            "folder_id": twin.folder_id, "status": twin.status,
+        },
+    }
 
 @app.put("/api/equipment/{equip_id}")
 def update_equipment(equip_id: int, item: EquipmentCreate, db: Session = Depends(get_db)):
@@ -2276,7 +2571,7 @@ def assign_staff_to_deal(
     role_name: Optional[str] = None,
     note: Optional[str] = None,
 ) -> DealStaffAssignment:
-    """Назначить сотрудника: техничка → вложение → задача → напоминание за 1 день."""
+    """Назначить сотрудника: техничка → вложение → задача (высокий приоритет) → напоминание за 1 день."""
     existing = db.query(DealStaffAssignment).filter(
         DealStaffAssignment.deal_id == deal.id,
         DealStaffAssignment.user_id == emp.id,
@@ -2298,25 +2593,37 @@ def assign_staff_to_deal(
 
     event_day = (deal.event_date or deal.setup_date or "")[:10]
     setup_day = (deal.setup_date or deal.event_date or "")[:10]
+    city = (getattr(deal, "city", None) or "").strip()
+    address = (deal.event_address or "").strip()
+    place = ", ".join(x for x in [city, address] if x) or "—"
+    dates_line = f"Выезд / монтаж: {setup_day or '—'} · Возврат / мероприятие: {event_day or '—'}"
+    desc_parts = [
+        f"Вы назначены на проект «{deal.title}».",
+        f"Адрес: {place}",
+        dates_line,
+        f"Роль: {role_name or '—'}",
+        f"Техничка (вложена к сделке): {url}",
+        "Скачивать техничку из сметы не нужно — файл уже прикреплён к задаче и сделке.",
+    ]
+    if note:
+        desc_parts.append(f"Комментарий: {note}")
     task = Task(
         title=f"Выезд: {deal.title}",
-        description=(
-            f"Вы назначены на проект «{deal.title}».\n"
-            f"Адрес: {deal.event_address or '—'}\n"
-            f"Монтаж: {setup_day or '—'} · Мероприятие: {event_day or '—'}\n"
-            f"Роль: {role_name or '—'}\n"
-            f"Файл технички: {url}\n"
-            f"{('Комментарий: ' + note) if note else ''}"
-        ).strip(),
-        assignee=emp.username,
+        description="\n".join(desc_parts),
+        assignee=emp_name,
         created_by=created_by,
         due_date=event_day or setup_day or None,
         priority="high",
         deal_id=deal.id,
         status="open",
+        tags="выезд,техничка",
     )
     db.add(task)
     db.flush()
+    db.add(TaskAssignee(task_id=task.id, user_id=emp.id, name=emp_name))
+    db.add(TaskChecklistItem(task_id=task.id, text="Изучить техничку", is_done=False, sort_order=0))
+    db.add(TaskChecklistItem(task_id=task.id, text="Подготовить оборудование к выезду", is_done=False, sort_order=1))
+    db.add(TaskChecklistItem(task_id=task.id, text="Выезд / монтаж на площадке", is_done=False, sort_order=2))
 
     # Напоминание за 1 день до эвента/сборки
     remind_day = None
@@ -2350,7 +2657,7 @@ def assign_staff_to_deal(
     db.add(row)
     db.add(DealHistory(
         deal_id=deal.id,
-        action_text=f"Назначен сотрудник {emp_name}: отправлена техничка, задача и напоминание за 1 день",
+        action_text=f"Назначен сотрудник {emp_name}: техничка, задача (приоритет высокий) и напоминание за 1 день",
     ))
     return row
 
@@ -3873,10 +4180,11 @@ def create_task_from_internal_message(
     if not title:
         title = "Задача из чата"
 
+    assignee_name = body.assignee or (user.full_name or user.username)
     task = Task(
         title=title,
         description=f"Из внутреннего чата:\n{msg.text}",
-        assignee=body.assignee or (user.full_name or user.username),
+        assignee=assignee_name,
         created_by=user.full_name or user.username,
         creator_id=user.id,
         due_date=body.due_date,
@@ -3885,6 +4193,8 @@ def create_task_from_internal_message(
     )
     db.add(task)
     db.flush()
+    uid, name = _resolve_task_person(db, TaskPersonIn(name=assignee_name))
+    db.add(TaskAssignee(task_id=task.id, user_id=uid, name=name or assignee_name))
     msg.task_id = task.id
     if task.deal_id:
         db.add(DealHistory(deal_id=task.deal_id, action_text=f"Создана задача из чата: {task.title}"))

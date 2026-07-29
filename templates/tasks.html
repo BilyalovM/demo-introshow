@@ -8,7 +8,7 @@
     <div class="spacer"></div>
     <button class="btn btn-primary" onclick="openTaskForm()">+ Новая задача</button>
 </div>
-<p class="page-sub">CRM-задачи: постановщик, исполнитель, срок, статус, сделка и чат задачи.</p>
+<p class="page-sub">CRM-задачи: постановщик, ответственные, наблюдатели, чек-лист, срок, статус, сделка и чат.</p>
 
 <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
     <button class="btn btn-sm task-filter active" data-filter="all" onclick="setFilter('all', this)">Все</button>
@@ -60,10 +60,24 @@
                         <span class="task-field-label">Постановщик</span>
                         <div class="task-field-value" id="tk_creator_display">—</div>
                     </div>
-                    <label class="task-field-row">
-                        <span class="task-field-label">Исполнитель</span>
-                        <select id="tk_assignee"></select>
-                    </label>
+                    <div class="task-field-row task-field-row-stack">
+                        <span class="task-field-label">Ответственные</span>
+                        <div class="task-people-box">
+                            <select id="tk_assignee_add" class="task-people-select">
+                                <option value="">+ добавить ответственного</option>
+                            </select>
+                            <div id="tk_assignees_chips" class="task-people-chips"></div>
+                        </div>
+                    </div>
+                    <div class="task-field-row task-field-row-stack">
+                        <span class="task-field-label">Наблюдатели</span>
+                        <div class="task-people-box">
+                            <select id="tk_observer_add" class="task-people-select">
+                                <option value="">+ добавить наблюдателя</option>
+                            </select>
+                            <div id="tk_observers_chips" class="task-people-chips"></div>
+                        </div>
+                    </div>
                     <label class="task-field-row">
                         <span class="task-field-label">Крайний срок</span>
                         <input id="tk_due" type="date">
@@ -98,6 +112,19 @@
                         <input id="tk_tags" placeholder="срочно, монтаж, клиент">
                     </label>
                 </div>
+
+                <div class="task-checklist-block">
+                    <div class="task-checklist-head">
+                        <strong>Чек-лист</strong>
+                        <span class="muted" style="font-size:12px" id="tk_checklist_progress"></span>
+                    </div>
+                    <div id="tk_checklist" class="task-checklist-list"></div>
+                    <div class="task-checklist-add">
+                        <input id="tk_checklist_input" type="text" placeholder="Новый пункт…">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="addChecklistLine()">Добавить</button>
+                    </div>
+                </div>
+
                 <div id="tk_deal_link_wrap" style="display:none; margin-top:8px;">
                     <a id="tk_deal_link" href="/crm" class="task-crm-link">Открыть сделку в CRM →</a>
                 </div>
@@ -181,6 +208,39 @@
 .task-card-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; padding-top:7px; border-top:1px solid var(--border); }
 .task-comment-count { font-size: 11px; color: var(--muted); font-weight: 600; }
 .task-filter.active { background: var(--primary); color:#fff; border-color: var(--primary); }
+.task-field-row-stack { align-items: flex-start !important; }
+.task-people-box { flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }
+.task-people-select { width:100%; }
+.task-people-chips { display:flex; flex-wrap:wrap; gap:6px; min-height:0; }
+.task-chip {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:3px 8px; border-radius:999px; font-size:12px; font-weight:600;
+    background: var(--primary-soft); color: var(--primary-600, var(--primary));
+}
+.task-chip.observer { background:#f1f5f9; color:#475569; }
+.task-chip button {
+    border:none; background:transparent; cursor:pointer; color:inherit;
+    font-size:14px; line-height:1; padding:0; opacity:0.7;
+}
+.task-chip button:hover { opacity:1; }
+.task-checklist-block {
+    margin-top:14px; padding:12px; border:1px solid var(--border);
+    border-radius:10px; background: var(--bg-2, #f8fafc);
+}
+.task-checklist-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.task-checklist-list { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+.task-check-item {
+    display:flex; align-items:center; gap:8px; padding:6px 8px;
+    background: var(--surface); border:1px solid var(--border); border-radius:8px;
+}
+.task-check-item.done .task-check-text { text-decoration: line-through; color: var(--muted); }
+.task-check-text { flex:1; font-size:13px; min-width:0; }
+.task-check-item input[type=checkbox] { width:16px; height:16px; flex-shrink:0; }
+.task-checklist-add { display:flex; gap:8px; }
+.task-checklist-add input { flex:1; }
+.task-avatars { display:inline-flex; }
+.task-avatars .task-avatar { margin-left:-6px; border:2px solid var(--surface); }
+.task-avatars .task-avatar:first-child { margin-left:0; }
 
 /* Detail panel */
 .task-modal-overlay {
@@ -286,6 +346,9 @@ let usersList = [];
 let dealsList = [];
 let currentFilter = 'all';
 let currentComments = [];
+let formAssignees = [];
+let formObservers = [];
+let formChecklist = [];
 
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -310,17 +373,109 @@ function descPreview(text) {
     return t.length > 120 ? t.slice(0, 117) + '…' : t;
 }
 
+function userLabel(u) {
+    return u.full_name || u.username || String(u.id);
+}
+
+function fillPeopleSelects() {
+    const opts = '<option value="">+ добавить</option>' +
+        usersList.map(u => `<option value="${u.id}">${esc(userLabel(u))}</option>`).join('');
+    document.getElementById('tk_assignee_add').innerHTML = opts.replace('+ добавить', '+ добавить ответственного');
+    document.getElementById('tk_observer_add').innerHTML = opts.replace('+ добавить', '+ добавить наблюдателя');
+}
+
+function renderPeopleChips(kind) {
+    const list = kind === 'assignees' ? formAssignees : formObservers;
+    const box = document.getElementById(kind === 'assignees' ? 'tk_assignees_chips' : 'tk_observers_chips');
+    const cls = kind === 'assignees' ? 'task-chip' : 'task-chip observer';
+    box.innerHTML = list.map((p, i) => `
+        <span class="${cls}">
+            <span class="task-avatar" style="width:18px;height:18px;font-size:8px">${esc(initials(p.name))}</span>
+            ${esc(p.name)}
+            <button type="button" title="Убрать" onclick="removePerson('${kind}', ${i})">&times;</button>
+        </span>
+    `).join('');
+}
+
+function addPerson(kind, userId) {
+    const u = usersList.find(x => String(x.id) === String(userId));
+    if (!u) return;
+    const list = kind === 'assignees' ? formAssignees : formObservers;
+    const other = kind === 'assignees' ? formObservers : formAssignees;
+    if (list.some(p => p.user_id === u.id || p.name === userLabel(u))) return;
+    // убрать из другой роли, если уже там
+    const oi = other.findIndex(p => p.user_id === u.id || p.name === userLabel(u));
+    if (oi >= 0) other.splice(oi, 1);
+    list.push({ user_id: u.id, name: userLabel(u) });
+    renderPeopleChips('assignees');
+    renderPeopleChips('observers');
+}
+
+function removePerson(kind, index) {
+    const list = kind === 'assignees' ? formAssignees : formObservers;
+    list.splice(index, 1);
+    renderPeopleChips(kind);
+}
+
+function renderChecklistEditor() {
+    const box = document.getElementById('tk_checklist');
+    const done = formChecklist.filter(c => c.is_done).length;
+    document.getElementById('tk_checklist_progress').textContent = formChecklist.length
+        ? `${done} / ${formChecklist.length}`
+        : 'пусто';
+    if (!formChecklist.length) {
+        box.innerHTML = '<div class="muted" style="font-size:12px">Добавьте пункты — как в Битрикс24</div>';
+        return;
+    }
+    box.innerHTML = formChecklist.map((c, i) => `
+        <div class="task-check-item ${c.is_done ? 'done' : ''}">
+            <input type="checkbox" ${c.is_done ? 'checked' : ''} onchange="toggleChecklistLine(${i}, this.checked)">
+            <span class="task-check-text">${esc(c.text)}</span>
+            <button type="button" class="btn btn-sm" style="color:var(--danger);border:none;background:none" onclick="removeChecklistLine(${i})">×</button>
+        </div>
+    `).join('');
+}
+
+function addChecklistLine() {
+    const input = document.getElementById('tk_checklist_input');
+    const text = (input.value || '').trim();
+    if (!text) return;
+    formChecklist.push({ text, is_done: false, sort_order: formChecklist.length });
+    input.value = '';
+    renderChecklistEditor();
+}
+
+function toggleChecklistLine(i, done) {
+    if (!formChecklist[i]) return;
+    formChecklist[i].is_done = !!done;
+    renderChecklistEditor();
+}
+
+function removeChecklistLine(i) {
+    formChecklist.splice(i, 1);
+    renderChecklistEditor();
+}
+
 async function loadRefs() {
     try {
         const [uRes, dRes] = await Promise.all([fetch('/api/users/names'), fetch('/api/deals')]);
         usersList = uRes.ok ? await uRes.json() : [];
         dealsList = dRes.ok ? await dRes.json() : [];
-        document.getElementById('tk_assignee').innerHTML =
-            usersList.map(u => `<option value="${esc(u.full_name)}" ${u.full_name === CURRENT_USER ? 'selected' : ''}>${esc(u.full_name)}</option>`).join('');
+        fillPeopleSelects();
         document.getElementById('tk_deal').innerHTML = '<option value="">— без сделки —</option>' +
             dealsList.map(d => `<option value="${d.id}">№${d.id} — ${esc(d.title)}</option>`).join('');
     } catch (e) { console.error(e); }
 }
+
+document.getElementById('tk_assignee_add').addEventListener('change', function () {
+    if (this.value) { addPerson('assignees', this.value); this.value = ''; }
+});
+document.getElementById('tk_observer_add').addEventListener('change', function () {
+    if (this.value) { addPerson('observers', this.value); this.value = ''; }
+});
+document.getElementById('tk_checklist_input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addChecklistLine(); }
+});
 
 async function loadTasks() {
     const res = await fetch('/api/tasks');
@@ -328,8 +483,26 @@ async function loadTasks() {
     render();
 }
 
+function taskPeopleNames(t) {
+    const list = (t.assignees && t.assignees.length)
+        ? t.assignees.map(a => a.name)
+        : (t.assignee ? [t.assignee] : []);
+    return list;
+}
+
+function isMine(t) {
+    const names = taskPeopleNames(t);
+    if (names.includes(CURRENT_USER)) return true;
+    if ((t.observers || []).some(o => o.name === CURRENT_USER)) return true;
+    const me = usersList.find(u => userLabel(u) === CURRENT_USER);
+    if (!me) return false;
+    if ((t.assignees || []).some(a => a.user_id === me.id)) return true;
+    if ((t.observers || []).some(o => o.user_id === me.id)) return true;
+    return false;
+}
+
 function passesFilter(t) {
-    if (currentFilter === 'mine') return t.assignee === CURRENT_USER;
+    if (currentFilter === 'mine') return isMine(t);
     if (currentFilter === 'overdue') return t.overdue;
     return true;
 }
@@ -350,6 +523,18 @@ function renderCard(t) {
     const tags = (t.tags_list || []).slice(0, 3).map(tag =>
         `<span class="task-priority-badge">${esc(tag)}</span>`
     ).join('');
+    const people = taskPeopleNames(t);
+    const avatars = people.slice(0, 3).map(n =>
+        `<span class="task-avatar" title="${esc(n)}">${esc(initials(n))}</span>`
+    ).join('');
+    const more = people.length > 3 ? ` +${people.length - 3}` : '';
+    const peopleLabel = people.length > 1
+        ? `${people.length} отв.`
+        : (people[0] || '—');
+    const checkProg = (t.checklist_total || 0) > 0
+        ? `<span title="Чек-лист">☑ ${t.checklist_done || 0}/${t.checklist_total}</span>`
+        : '';
+    const obsN = (t.observers || []).length;
 
     card.innerHTML = `
         <div class="task-card-top">
@@ -358,12 +543,14 @@ function renderCard(t) {
         </div>
         ${preview ? `<div class="task-desc-preview">${esc(preview)}</div>` : ''}
         <div class="task-meta">
-            <div class="task-meta-row" title="Исполнитель">
-                <span class="task-avatar">${esc(initials(t.assignee))}</span>
-                <span>${esc(t.assignee || '—')}</span>
+            <div class="task-meta-row" title="Ответственные: ${esc(people.join(', ') || '—')}">
+                <span class="task-avatars">${avatars || `<span class="task-avatar">?</span>`}</span>
+                <span>${esc(peopleLabel)}${more}</span>
             </div>
+            ${obsN ? `<span title="Наблюдатели">👁 ${obsN}</span>` : ''}
             ${t.due_date ? `<span class="${t.overdue ? 'task-due-overdue' : ''}">⏰ ${fmtDate(t.due_date)}${t.overdue ? ' · просрочено' : ''}</span>` : ''}
             <span class="task-priority-badge ${t.priority === 'high' ? 'high' : ''}">${esc(PRIORITY_LABELS[t.priority] || t.priority || 'Обычный')}</span>
+            ${checkProg}
             ${t.created_by ? `<span title="Постановщик">↗ ${esc(t.created_by)}</span>` : ''}
             ${tags}
         </div>
@@ -505,16 +692,27 @@ function openTaskForm(taskId) {
         createdRow.style.display = 'none';
     }
     document.getElementById('tk_delete_btn').style.display = t ? '' : 'none';
-    if (t && t.assignee) {
-        const sel = document.getElementById('tk_assignee');
-        if (![...sel.options].some(o => o.value === t.assignee)) {
-            const opt = document.createElement('option');
-            opt.value = t.assignee;
-            opt.textContent = t.assignee;
-            sel.appendChild(opt);
-        }
-        sel.value = t.assignee;
+
+    if (t) {
+        formAssignees = (t.assignees && t.assignees.length)
+            ? t.assignees.map(a => ({ user_id: a.user_id, name: a.name }))
+            : (t.assignee ? [{ user_id: null, name: t.assignee }] : []);
+        formObservers = (t.observers || []).map(o => ({ user_id: o.user_id, name: o.name }));
+        formChecklist = (t.checklist || []).map(c => ({
+            id: c.id, text: c.text, is_done: !!c.is_done, sort_order: c.sort_order || 0,
+        }));
+    } else {
+        const me = usersList.find(u => userLabel(u) === CURRENT_USER);
+        formAssignees = me
+            ? [{ user_id: me.id, name: userLabel(me) }]
+            : (CURRENT_USER ? [{ user_id: null, name: CURRENT_USER }] : []);
+        formObservers = [];
+        formChecklist = [];
     }
+    renderPeopleChips('assignees');
+    renderPeopleChips('observers');
+    renderChecklistEditor();
+    document.getElementById('tk_checklist_input').value = '';
     document.getElementById('tk_comment_text').value = '';
     updateDealLink();
     document.getElementById('task-modal').classList.add('active');
@@ -527,10 +725,19 @@ function closeTaskForm() {
 
 async function saveTask() {
     const id = document.getElementById('tk_id').value;
+    if (!formAssignees.length) {
+        alert('Добавьте хотя бы одного ответственного');
+        return;
+    }
     const payload = {
         title: document.getElementById('tk_title').value.trim(),
         description: document.getElementById('tk_desc').value.trim() || null,
-        assignee: document.getElementById('tk_assignee').value || null,
+        assignee: formAssignees[0].name,
+        assignees: formAssignees.map(p => ({ user_id: p.user_id, name: p.name })),
+        observers: formObservers.map(p => ({ user_id: p.user_id, name: p.name })),
+        checklist: formChecklist.map((c, i) => ({
+            text: c.text, is_done: !!c.is_done, sort_order: i,
+        })),
         due_date: document.getElementById('tk_due').value || null,
         priority: document.getElementById('tk_priority').value,
         status: document.getElementById('tk_status').value,

@@ -272,7 +272,7 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String)
     description = Column(String, nullable=True)
-    assignee = Column(String, nullable=True)    # ответственный (имя / username)
+    assignee = Column(String, nullable=True)    # основной ответственный (имя) — для совместимости
     created_by = Column(String, nullable=True)  # постановщик (имя, для отображения)
     creator_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # постановщик (id)
     due_date = Column(String, nullable=True)    # YYYY-MM-DD или YYYY-MM-DDTHH:MM
@@ -287,6 +287,12 @@ class Task(Base):
     creator = relationship("User", foreign_keys=[creator_id])
     comments = relationship("TaskComment", back_populates="task", cascade="all, delete-orphan",
                             order_by="TaskComment.created_at")
+    assignees = relationship("TaskAssignee", back_populates="task", cascade="all, delete-orphan")
+    observers = relationship("TaskObserver", back_populates="task", cascade="all, delete-orphan")
+    checklist_items = relationship(
+        "TaskChecklistItem", back_populates="task", cascade="all, delete-orphan",
+        order_by="TaskChecklistItem.sort_order",
+    )
 
 
 class TaskComment(Base):
@@ -300,6 +306,43 @@ class TaskComment(Base):
 
     task = relationship("Task", back_populates="comments")
     user = relationship("User", foreign_keys=[user_id])
+
+
+class TaskAssignee(Base):
+    """Ответственные по задаче (несколько исполнителей)."""
+    __tablename__ = "task_assignees"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String, nullable=False)  # full_name / username для отображения
+
+    task = relationship("Task", back_populates="assignees")
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class TaskObserver(Base):
+    """Наблюдатели задачи — видят, но не исполнители."""
+    __tablename__ = "task_observers"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String, nullable=False)
+
+    task = relationship("Task", back_populates="observers")
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class TaskChecklistItem(Base):
+    """Пункт чек-листа задачи (как в Битрикс24)."""
+    __tablename__ = "task_checklist_items"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    text = Column(String, nullable=False)
+    is_done = Column(Boolean, default=False)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    task = relationship("Task", back_populates="checklist_items")
 
 
 class Activity(Base):

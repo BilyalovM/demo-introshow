@@ -78,11 +78,12 @@
             <h3 style="margin-top:0">Итоги</h3>
             <div class="totals">
                 <div class="row"><span class="muted">Оборудование</span><span id="tEq">0 ₸</span></div>
+                <div class="row" id="tSubRow" style="display:none"><span class="muted">Субаренда</span><span id="tSub">0 ₸</span></div>
                 <div class="row"><span class="muted">Логистика, тех. персонал</span><span id="tFixed">0 ₸</span></div>
                 <div class="row"><span class="muted">Сумма до скидки</span><span id="tBase">0 ₸</span></div>
                 <div class="row"><span class="muted" id="tDiscountLabel">Скидка 0%</span><span id="tDiscount">−0 ₸</span></div>
                 <div class="row"><span class="muted">После скидки</span><span id="tAfter">0 ₸</span></div>
-                <div class="row"><span class="muted" id="tTaxLabel">Налог 0%</span><span id="tTax">0 ₸</span></div>
+                <div class="row"><span class="muted" id="tTaxLabel">Налог 16%</span><span id="tTax">0 ₸</span></div>
                 <div class="row big"><span>Итого</span><span id="tGrand">0 ₸</span></div>
                 <div class="row" id="tCostRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)"><span class="muted">Себестоимость (субаренда)</span><span id="tCost">0 ₸</span></div>
                 <div class="row" id="tMarginRow" style="display:none"><span class="muted">Маржа</span><span id="tMargin">0 ₸</span></div>
@@ -92,15 +93,19 @@
             <h3 style="margin-top:0">Документы</h3>
             <div class="grid" style="gap:8px">
                 <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить</button>
-                <button class="btn btn-primary" onclick="downloadDoc('internal')">Для нас → Word</button>
-                <button class="btn" onclick="downloadDoc('internal_pdf')">Для нас → PDF</button>
-                <button class="btn" onclick="downloadDoc('technichka')">Техничка → Word</button>
-                <button class="btn btn-primary" onclick="downloadDoc('client')">Клиентская → Word</button>
-                <button class="btn" onclick="downloadDoc('client_pdf')">Клиентская → PDF</button>
-                <button class="btn btn-primary" onclick="downloadDoc('contract')">Договор → Word</button>
-                <button class="btn" onclick="downloadDoc('contract_pdf')">Договор → PDF</button>
+                <div class="docs-dd" id="docsDd">
+                    <button type="button" class="btn btn-primary" style="width:100%" onclick="toggleDocsMenu(event)">Документы ▾</button>
+                    <div class="docs-menu" id="docsMenu" hidden>
+                        <button type="button" class="docs-menu-item" onclick="downloadDoc('internal')">Для нас → Word</button>
+                        <button type="button" class="docs-menu-item" onclick="downloadDoc('internal_pdf')">Для нас → PDF</button>
+                        <button type="button" class="docs-menu-item" onclick="downloadDoc('client')">Клиентская → Word</button>
+                        <button type="button" class="docs-menu-item" onclick="downloadDoc('client_pdf')">Клиентская → PDF</button>
+                        <button type="button" class="docs-menu-item" onclick="downloadDoc('contract')">Договор → Word</button>
+                        <button type="button" class="docs-menu-item" onclick="downloadDoc('contract_pdf')">Договор → PDF</button>
+                    </div>
+                </div>
             </div>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">«Для нас» — полная смета с субарендой и маржой. «Клиентская» — без субаренды. Для договора нужен выбранный клиент. PDF — та же смета/спецификация в формате PDF.</p>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">«Для нас» — полная смета с субарендой и маржой. «Клиентская» — без субаренды. Техничка создаётся автоматически при назначении сотрудников в CRM → Команда. Для договора нужен выбранный клиент.</p>
         </div>
     </div>
 </div>
@@ -134,6 +139,26 @@
 .cat-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .badge-sub { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 6px; border-radius:999px; background:#fff7ed; color:#c2410c; }
 .cat-wh.active { background: var(--primary); color:#fff; border-color: var(--primary); }
+.btn-sub-dup {
+    font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px;
+    border: 1px solid #fdba74; background: #fff7ed; color: #c2410c; cursor: pointer;
+    white-space: nowrap;
+}
+.btn-sub-dup:hover { background: #ffedd5; }
+.docs-dd { position: relative; }
+.docs-menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow-md, 0 8px 24px rgba(15,23,42,0.12));
+    display: flex; flex-direction: column; padding: 4px; gap: 2px;
+}
+.docs-menu[hidden] { display: none !important; }
+.docs-menu-item {
+    display: block; width: 100%; text-align: left; padding: 9px 12px;
+    border: none; background: transparent; border-radius: 8px; cursor: pointer;
+    font: inherit; color: var(--text); font-size: 13.5px; font-weight: 600;
+}
+.docs-menu-item:hover { background: var(--bg-2, #f1f5f9); }
 .conflict-icon {
     color: #fff;
     font-weight: 800;
@@ -460,6 +485,7 @@ function mergeCartLines() {
             (item.name || '').trim().toLowerCase(),
             Number(item.price) || 0,
             parseInt(item.days) || 1,
+            item.warehouse_type || 'own',
         ].join('|');
         if (indexByKey[key] == null) {
             indexByKey[key] = merged.length;
@@ -523,10 +549,18 @@ function renderCatalog() {
                    </div>`
                 : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+</button>`;
             const isSub = (item.warehouse_type || 'own') === 'subrental';
+            const hasSubTwin = !isSub && equipment.some(e =>
+                (e.warehouse_type || 'own') === 'subrental' &&
+                (e.name || '').trim().toLowerCase() === (item.name || '').trim().toLowerCase()
+            );
             const subTag = isSub ? `<span class="badge-sub" title="${esc(item.supplier || 'субаренда')}">субаренда</span>` : '';
+            const dupBtn = !isSub
+                ? `<button type="button" class="btn-sub-dup" title="${hasSubTwin ? 'Уже есть в субаренде — открыть вкладку' : 'Продублировать товар в субаренду'}"
+                        onclick="duplicateToSubrental(${item.id})">${hasSubTwin ? 'субаренда ✓' : 'в субаренду'}</button>`
+                : '';
             const costHint = isSub && item.cost_price ? `<div class="muted" style="font-size:11px">себест. ${fmt(item.cost_price)} ₸</div>` : '';
             tr.innerHTML = `
-                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${subTag} ${conflictHtml}</span>${costHint}</td>
+                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${subTag} ${dupBtn} ${conflictHtml}</span>${costHint}</td>
                 <td class="cat-qty-cell">${badgeHtml}</td>
                 <td class="num muted cat-price">${fmt(item.price)} ₸</td>
                 <td class="num cat-actions">${actionsHtml}</td>`;
@@ -569,13 +603,14 @@ function addToCart(id) {
     if (!item) return;
 
     const defaultDays = parseFloat(document.getElementById('qShifts').value) || 1;
-    // Склеиваем одинаковые модели в одну строку (даже если в каталоге разные SKU)
+    const wh = item.warehouse_type || 'own';
     const nameKey = (item.name || '').trim().toLowerCase();
     const existing = cart.find(c =>
         (c.name || '').trim().toLowerCase() === nameKey &&
         Number(c.price) === Number(item.price) &&
-        (parseFloat(c.days) || 1) === defaultDays
-    ) || cart.find(c => (c.name || '').trim().toLowerCase() === nameKey);
+        (parseFloat(c.days) || 1) === defaultDays &&
+        (c.warehouse_type || 'own') === wh
+    );
     const newQty = (existing ? existing.qty : 0) + 1;
 
     const c = conflictsData[id];
@@ -597,29 +632,80 @@ function addToCart(id) {
         stock_price: item.price,
         qty: 1,
         days: defaultDays,
-        warehouse_type: item.warehouse_type || 'own',
+        warehouse_type: wh,
         cost_price: item.cost_price || 0,
         supplier: item.supplier || null,
     });
 
-    // Если своего не хватает — подсказать субаренду с тем же названием
+    // Если своего не хватает — предложить субаренду или продублировать товар
     const c2 = conflictsData[id];
-    if ((item.warehouse_type || 'own') === 'own' && c2) {
+    if (wh === 'own' && c2) {
         const available = item.stock_quantity - c2.booked;
         if (newQty > available) {
             const alts = equipment.filter(e =>
                 (e.warehouse_type || 'own') === 'subrental' &&
-                (e.name || '').trim().toLowerCase() === (item.name || '').trim().toLowerCase()
+                (e.name || '').trim().toLowerCase() === nameKey
             );
             if (alts.length) {
                 const names = alts.map(a => `«${a.name}»${a.supplier ? ' / ' + a.supplier : ''} — ${fmt(a.price)} ₸`).join('\n');
-                if (confirm(`На своём складе мало «${item.name}».\n\nЕсть в субаренде:\n${names}\n\nОткрыть вкладку «Субаренда» в каталоге?`)) {
+                if (confirm(`На своём складе мало «${item.name}».\n\nЕсть в субаренде:\n${names}\n\nОткрыть вкладку «Субаренда»?`)) {
                     setCatWarehouse('subrental');
                 }
+            } else if (confirm(`На своём складе мало «${item.name}».\n\nПродублировать товар в субаренду и добавить в смету?`)) {
+                duplicateToSubrental(item.id, true);
+                return;
             }
         }
     }
     renderCart();
+}
+
+async function duplicateToSubrental(equipId, addToCartAfter) {
+    const src = equipment.find(e => e.id === equipId);
+    if (!src) return;
+    const nameKey = (src.name || '').trim().toLowerCase();
+    const existingTwin = equipment.find(e =>
+        (e.warehouse_type || 'own') === 'subrental' &&
+        (e.name || '').trim().toLowerCase() === nameKey
+    );
+    if (existingTwin) {
+        if (addToCartAfter) addToCart(existingTwin.id);
+        else {
+            setCatWarehouse('subrental');
+            alert(`«${src.name}» уже есть во вкладке «Субаренда».`);
+        }
+        return;
+    }
+    try {
+        const res = await fetch(`/api/equipment/${equipId}/duplicate-subrental`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            alert(data.error || 'Не удалось продублировать');
+            return;
+        }
+        const eq = data.equipment;
+        if (eq && !equipment.some(e => e.id === eq.id)) {
+            equipment.push({
+                ...eq,
+                folder: src.folder || null,
+            });
+        } else if (eq) {
+            const idx = equipment.findIndex(e => e.id === eq.id);
+            if (idx >= 0) equipment[idx] = { ...equipment[idx], ...eq };
+        }
+        if (addToCartAfter && eq) {
+            addToCart(eq.id);
+        } else {
+            setCatWarehouse('subrental');
+            renderCatalog();
+            if (data.status === 'created') {
+                alert(`«${src.name}» продублирован в субаренду. Можно добавить из вкладки «Субаренда».`);
+            }
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Ошибка при дублировании в субаренду');
+    }
 }
 
 function removeFromCart(id) {
@@ -722,12 +808,13 @@ function renderCart() {
 const FIXED_CATS = ["Логистика, Тех персонал", "Логистика", "Персонал", "Расходники"];
 
 function calculateTotals() {
-    let eqTotal = 0, fixedTotal = 0, costTotal = 0;
+    let eqTotal = 0, fixedTotal = 0, costTotal = 0, subRev = 0;
     cart.forEach(item => {
         const sum = item.price * item.qty * item.days;
         if (FIXED_CATS.includes(item.category)) fixedTotal += sum;
         else eqTotal += sum;
         if ((item.warehouse_type || 'own') === 'subrental') {
+            subRev += sum;
             costTotal += (Number(item.cost_price) || 0) * item.qty * item.days;
         }
     });
@@ -740,6 +827,11 @@ function calculateTotals() {
     const grand = afterDiscount + taxSum;
 
     document.getElementById('tEq').textContent = fmt(eqTotal) + ' ₸';
+    const subRow = document.getElementById('tSubRow');
+    if (subRow) {
+        subRow.style.display = subRev > 0 ? 'flex' : 'none';
+        document.getElementById('tSub').textContent = fmt(subRev) + ' ₸';
+    }
     document.getElementById('tFixed').textContent = fmt(fixedTotal) + ' ₸';
     document.getElementById('tBase').textContent = fmt(eqTotal + fixedTotal) + ' ₸';
     document.getElementById('tDiscount').textContent = '−' + fmt(discountSum) + ' ₸';
@@ -749,7 +841,7 @@ function calculateTotals() {
     document.getElementById('tTaxLabel').textContent = `Налог ${taxPercent}%`;
     document.getElementById('tGrand').textContent = fmt(grand) + ' ₸';
 
-    const showCost = costTotal > 0;
+    const showCost = costTotal > 0 || subRev > 0;
     document.getElementById('tCostRow').style.display = showCost ? 'flex' : 'none';
     document.getElementById('tMarginRow').style.display = showCost ? 'flex' : 'none';
     if (showCost) {
@@ -848,17 +940,32 @@ async function saveQuote(silent) {
     }
 }
 
+function toggleDocsMenu(ev) {
+    if (ev) ev.stopPropagation();
+    const menu = document.getElementById('docsMenu');
+    if (!menu) return;
+    menu.hidden = !menu.hidden;
+}
+
+document.addEventListener('click', (e) => {
+    const dd = document.getElementById('docsDd');
+    const menu = document.getElementById('docsMenu');
+    if (!dd || !menu || menu.hidden) return;
+    if (!dd.contains(e.target)) menu.hidden = true;
+});
+
 async function downloadDoc(kind) {
+    const menu = document.getElementById('docsMenu');
+    if (menu) menu.hidden = true;
     const id = await saveQuote(true);
     if (!id) return;
-    if (kind === 'contract' && !document.getElementById('companySelect').value) {
+    if ((kind === 'contract' || kind === 'contract_pdf') && !document.getElementById('companySelect').value) {
         alert('Для договора выберите клиента (арендатора)');
         return;
     }
     let url = `/api/deals/${id}/estimate?mode=internal`;
     if (kind === 'contract') url = `/api/deals/${id}/contract`;
     else if (kind === 'contract_pdf') url = `/api/deals/${id}/contract.pdf`;
-    else if (kind === 'technichka') url = `/api/deals/${id}/technichka`;
     else if (kind === 'client') url = `/api/deals/${id}/estimate?mode=client`;
     else if (kind === 'client_pdf') url = `/api/deals/${id}/estimate.pdf?mode=client`;
     else if (kind === 'internal') url = `/api/deals/${id}/estimate?mode=internal`;
