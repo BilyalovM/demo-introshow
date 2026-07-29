@@ -21,6 +21,15 @@
     display:flex; flex-direction:column; box-shadow:var(--shadow-lg);
     animation: slideIn .18s ease;
 }
+.entity-card.is-create { width:min(1280px, 100%); }
+.entity-card.is-create .entity-body { grid-template-columns: minmax(420px, 56%) 1fr; }
+.entity-card.is-create .entity-title { border-bottom:1px dashed var(--border); padding-bottom:4px; }
+.create-sticky {
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    padding:12px 14px; border-top:1px solid var(--border); background:var(--surface);
+    position:sticky; bottom:0; margin:12px -16px -16px; padding-left:16px; padding-right:16px;
+}
+.field-hint { font-size:11px; color:var(--muted); margin-top:3px; }
 @keyframes slideIn { from { transform: translateX(24px); opacity:.6; } to { transform:none; opacity:1; } }
 
 .entity-top {
@@ -170,8 +179,9 @@
     <div class="entity-card" id="entityCard">
         <div class="entity-top">
             <div class="entity-top-row">
-                <input class="entity-title" id="entTitle" readonly />
+                <input class="entity-title" id="entTitle" readonly placeholder="Название…" />
                 <div class="entity-top-actions">
+                    <button type="button" class="btn btn-primary btn-sm" id="entSaveTop" style="display:none" onclick="saveCreate()">Сохранить</button>
                     <a class="icon-btn" id="entCall" title="Позвонить" href="#" style="display:none">📞</a>
                     <a class="icon-btn" id="entMail" title="Email" href="#" style="display:none">✉</a>
                     <a class="icon-btn" id="entWa" title="WhatsApp" href="#" target="_blank" style="display:none">💬</a>
@@ -287,10 +297,43 @@ function startCreate() {
 
 function closeEntity() {
     document.getElementById('entityOverlay').classList.remove('open');
+    document.getElementById('entityCard').classList.remove('is-create');
+    document.getElementById('entTitle').readOnly = true;
+    document.getElementById('entSaveTop').style.display = 'none';
     current = null;
 }
 
+function emptyCompany() {
+    return {
+        id: null, name: '', bin: '', director_name: '', phone: '', email: '',
+        address: '', bank_name: '', bik: '', kbe: '', requisites: '', based_on: 'Устава',
+        instagram: '', telegram_chat_id: null, company_type: 'Клиент', industry: '',
+    };
+}
+function emptyContact() {
+    return {
+        id: null, name: '', position: '', phone: '', email: '', comment: '',
+        company_id: null, company_name: '', company_address: '', is_primary: false, created_at: null,
+    };
+}
+
+function openCreateShell(type) {
+    entTab = 'general';
+    feedMode = 'comment';
+    const titleEl = document.getElementById('entTitle');
+    titleEl.readOnly = false;
+    titleEl.value = '';
+    titleEl.placeholder = type === 'company' ? 'Название компании *' : 'ФИО контакта *';
+    titleEl.focus();
+    setTopActions({});
+    document.getElementById('entSaveTop').style.display = 'inline-flex';
+    document.getElementById('entityCard').classList.add('is-create');
+    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
+    document.getElementById('entityOverlay').classList.add('open');
+}
+
 function switchEntTab(tab) {
+    if (current?.isNew && tab !== 'general') return; // сначала сохраните карточку
     entTab = tab;
     document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     renderEntity();
@@ -306,36 +349,83 @@ function setTopActions({ phone, email }) {
     if (p) { wa.href = 'https://wa.me/' + p; wa.style.display = 'grid'; } else wa.style.display = 'none';
 }
 
-async function openCompany(id) {
-    const res = await fetch('/api/companies/' + id);
-    if (!res.ok) return;
-    const data = await res.json();
-    current = { type: 'company', id, data };
-    entTab = 'general';
-    document.getElementById('entTitle').value = data.company.name || '';
-    setTopActions({ phone: data.company.phone, email: data.company.email });
-    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
-    document.getElementById('entityOverlay').classList.add('open');
-    renderEntity();
-}
-
-async function openContact(id) {
-    const res = await fetch('/api/contacts/' + id);
-    if (!res.ok) return;
-    const data = await res.json();
-    current = { type: 'contact', id, data };
-    entTab = 'general';
-    document.getElementById('entTitle').value = data.contact.name || '';
-    setTopActions({ phone: data.contact.phone, email: data.contact.email });
-    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
-    document.getElementById('entityOverlay').classList.add('open');
-    renderEntity();
-}
-
 function renderEntity() {
     if (!current) return;
     if (current.type === 'company') renderCompanyCard();
     else renderContactCard();
+}
+
+function companyFormHtml(c, isNew) {
+    return `
+        <div class="edit-form open" id="editForm">
+            <div class="form-grid">
+                <div style="grid-column:1/-1"><label>Название компании *</label>
+                    <input id="f_name" value="${esc(c.name||'')}" placeholder="Компания / ТОО / ИП">
+                </div>
+                <div><label>Тип компании</label>
+                    <select id="f_type">
+                        ${['Клиент','Партнёр','Поставщик','Другое'].map(t =>
+                            `<option ${ (c.company_type||'Клиент')===t?'selected':''}>${t}</option>`).join('')}
+                    </select>
+                </div>
+                <div><label>Сфера деятельности</label>
+                    <input id="f_industry" value="${esc(c.industry||'')}" placeholder="Напр. Ивенты, IT…">
+                </div>
+                <div><label>БИН / ИИН</label><input id="f_bin" value="${esc(c.bin||'')}" placeholder="Поиск / ввод БИН">
+                    <div class="field-hint">Реквизиты юр. лица</div></div>
+                <div><label>Руководитель</label><input id="f_director" value="${esc(c.director_name||'')}" placeholder="ФИО"></div>
+                <div><label>Телефон</label><input id="f_phone" value="${esc(c.phone||'')}" placeholder="+7 …"></div>
+                <div><label>E-mail</label><input id="f_email" value="${esc(c.email||'')}" placeholder="work@company.kz"></div>
+                <div><label>Сайт / мессенджер</label><input id="f_ig" value="${esc(c.instagram||'')}" placeholder="Instagram или сайт"></div>
+                <div style="grid-column:1/-1"><label>Адрес</label><input id="f_address" value="${esc(c.address||'')}" placeholder="Город, улица…"></div>
+                <div><label>Банк</label><input id="f_bank" value="${esc(c.bank_name||'')}"></div>
+                <div><label>БИК</label><input id="f_bik" value="${esc(c.bik||'')}"></div>
+                <div style="grid-column:1/-1"><label>ИИК / реквизиты</label><textarea id="f_req" rows="2" placeholder="ИИК, доп. реквизиты">${esc(c.requisites||'')}</textarea></div>
+            </div>
+            <div class="create-sticky">
+                <button type="button" class="btn btn-primary" onclick="${isNew ? 'saveCreate()' : 'saveCompanyEdit()'}">Сохранить</button>
+                <button type="button" class="btn" onclick="${isNew ? 'closeEntity()' : 'toggleEditForm(false)'}">${isNew ? 'Отменить' : 'Отмена'}</button>
+                ${!isNew ? `<button type="button" class="btn" style="color:var(--danger);margin-left:auto" onclick="deleteCurrentCompany()">Удалить</button>` : ''}
+            </div>
+        </div>`;
+}
+
+function contactFormHtml(c, isNew) {
+    return `
+        <div class="edit-form open" id="editForm">
+            <div class="form-grid">
+                <div style="grid-column:1/-1"><label>ФИО *</label>
+                    <input id="f_name" value="${esc(c.name||'')}" placeholder="Имя Фамилия">
+                </div>
+                <div><label>Телефон</label><input id="f_phone" value="${esc(c.phone||'')}" placeholder="+7 …"></div>
+                <div><label>E-mail</label><input id="f_email" value="${esc(c.email||'')}"></div>
+                <div><label>Должность</label><input id="f_pos" value="${esc(c.position||'')}"></div>
+                <div style="grid-column:1/-1"><label>Компания</label>
+                    <select id="f_company"><option value="">— без компании —</option>
+                    ${companiesCache.map(co => `<option value="${co.id}" ${co.id===c.company_id?'selected':''}>${esc(co.name)}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="grid-column:1/-1"><label>Комментарий</label><textarea id="f_comment" rows="2">${esc(c.comment||'')}</textarea></div>
+            </div>
+            <label style="display:flex;gap:8px;align-items:center;margin:10px 0;font-size:13px"><input type="checkbox" id="f_primary" ${c.is_primary?'checked':''}> Основной контакт компании</label>
+            <div class="create-sticky">
+                <button type="button" class="btn btn-primary" onclick="${isNew ? 'saveCreate()' : 'saveContactEdit()'}">Сохранить</button>
+                <button type="button" class="btn" onclick="${isNew ? 'closeEntity()' : 'toggleEditForm(false)'}">${isNew ? 'Отменить' : 'Отмена'}</button>
+                ${!isNew ? `<button type="button" class="btn" style="color:var(--danger);margin-left:auto" onclick="deleteCurrentContact()">Удалить</button>` : ''}
+            </div>
+        </div>`;
+}
+
+function renderCreateHint(right, kind) {
+    right.innerHTML = `
+        <div class="feed-hint" style="margin-top:8px">
+            Заполните карточку слева и нажмите <strong>Сохранить</strong>.
+            После сохранения здесь появится лента комментариев и сделок.
+        </div>
+        <div class="info-block" style="margin-top:12px">
+            <div class="info-block-h"><span>${kind === 'company' ? 'Новая компания' : 'Новый контакт'}</span></div>
+            <div class="info-row"><div class="v empty">Как в Битрикс: сначала данные «О ${kind === 'company' ? 'компании' : 'контакте'}», потом сделки и история.</div></div>
+        </div>`;
 }
 
 function renderCompanyCard() {
@@ -344,6 +434,18 @@ function renderCompanyCard() {
     const deals = current.data.deals || [];
     const left = document.getElementById('entLeft');
     const right = document.getElementById('entRight');
+    const isNew = !!current.isNew;
+
+    if (isNew) {
+        left.innerHTML = `
+            <div class="info-block">
+                <div class="info-block-h"><span>О компании</span><button type="button" onclick="closeEntity()">отменить</button></div>
+                ${companyFormHtml(c, true)}
+            </div>`;
+        renderCreateHint(right, 'company');
+        syncTitleFromName();
+        return;
+    }
 
     const contactsHtml = contacts.length ? contacts.map(ct => `
         <div class="contact-chip">
@@ -370,25 +472,7 @@ function renderCompanyCard() {
                     <div class="info-row"><div class="k">Контакты</div><div class="v">${contactsHtml}</div></div>
                     <div class="info-row"><div class="k">Реквизиты</div>${valOrEmpty(c.requisites || (c.bank_name ? c.bank_name + ' / ' + (c.bik||'') : ''))}</div>
                 </div>
-                <div class="edit-form" id="editForm">
-                    <div class="form-grid">
-                        <div><label>Название</label><input id="f_name" value="${esc(c.name||'')}"></div>
-                        <div><label>БИН/ИИН</label><input id="f_bin" value="${esc(c.bin||'')}"></div>
-                        <div><label>Руководитель</label><input id="f_director" value="${esc(c.director_name||'')}"></div>
-                        <div><label>Телефон</label><input id="f_phone" value="${esc(c.phone||'')}"></div>
-                        <div><label>Email</label><input id="f_email" value="${esc(c.email||'')}"></div>
-                        <div><label>Instagram</label><input id="f_ig" value="${esc(c.instagram||'')}"></div>
-                        <div style="grid-column:1/-1"><label>Адрес</label><input id="f_address" value="${esc(c.address||'')}"></div>
-                        <div><label>Банк</label><input id="f_bank" value="${esc(c.bank_name||'')}"></div>
-                        <div><label>БИК</label><input id="f_bik" value="${esc(c.bik||'')}"></div>
-                        <div style="grid-column:1/-1"><label>ИИК / реквизиты</label><textarea id="f_req" rows="2">${esc(c.requisites||'')}</textarea></div>
-                    </div>
-                    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="saveCompanyEdit()">Сохранить</button>
-                        <button type="button" class="btn btn-sm" onclick="toggleEditForm(false)">Отмена</button>
-                        <button type="button" class="btn btn-sm" style="color:var(--danger);margin-left:auto" onclick="deleteCurrentCompany()">Удалить</button>
-                    </div>
-                </div>
+                ${companyFormHtml(c, false).replace(' class="edit-form open"', ' class="edit-form"')}
             </div>
             <div class="info-block">
                 <div class="info-block-h"><span>Дополнительно</span></div>
@@ -434,6 +518,18 @@ function renderContactCard() {
     const deals = current.data.deals || [];
     const left = document.getElementById('entLeft');
     const right = document.getElementById('entRight');
+    const isNew = !!current.isNew;
+
+    if (isNew) {
+        left.innerHTML = `
+            <div class="info-block">
+                <div class="info-block-h"><span>О контакте</span><button type="button" onclick="closeEntity()">отменить</button></div>
+                ${contactFormHtml(c, true)}
+            </div>`;
+        renderCreateHint(right, 'contact');
+        syncTitleFromName();
+        return;
+    }
 
     if (entTab === 'general') {
         left.innerHTML = `
@@ -447,26 +543,7 @@ function renderContactCard() {
                     <div class="info-row"><div class="k">Город / адрес</div>${valOrEmpty(c.company_address)}</div>
                     <div class="info-row"><div class="k">Основной</div><span class="v">${c.is_primary ? 'Да' : 'Нет'}</span></div>
                 </div>
-                <div class="edit-form" id="editForm">
-                    <div class="form-grid">
-                        <div><label>ФИО</label><input id="f_name" value="${esc(c.name||'')}"></div>
-                        <div><label>Должность</label><input id="f_pos" value="${esc(c.position||'')}"></div>
-                        <div><label>Телефон</label><input id="f_phone" value="${esc(c.phone||'')}"></div>
-                        <div><label>Email</label><input id="f_email" value="${esc(c.email||'')}"></div>
-                        <div style="grid-column:1/-1"><label>Компания</label>
-                            <select id="f_company"><option value="">— без компании —</option>
-                            ${companiesCache.map(co => `<option value="${co.id}" ${co.id===c.company_id?'selected':''}>${esc(co.name)}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div style="grid-column:1/-1"><label>Комментарий</label><textarea id="f_comment" rows="2">${esc(c.comment||'')}</textarea></div>
-                    </div>
-                    <label style="display:flex;gap:8px;align-items:center;margin:10px 0;font-size:13px"><input type="checkbox" id="f_primary" ${c.is_primary?'checked':''}> Основной контакт компании</label>
-                    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="saveContactEdit()">Сохранить</button>
-                        <button type="button" class="btn btn-sm" onclick="toggleEditForm(false)">Отмена</button>
-                        <button type="button" class="btn btn-sm" style="color:var(--danger);margin-left:auto" onclick="deleteCurrentContact()">Удалить</button>
-                    </div>
-                </div>
+                ${contactFormHtml(c, false).replace(' class="edit-form open"', ' class="edit-form"')}
             </div>
             <div class="info-block">
                 <div class="info-block-h"><span>Дополнительно</span></div>
@@ -564,19 +641,8 @@ async function postNote(entityType, entityId) {
 
 async function saveCompanyEdit() {
     const id = current.id;
-    const payload = {
-        name: document.getElementById('f_name').value.trim(),
-        bin: document.getElementById('f_bin').value.trim(),
-        director_name: document.getElementById('f_director').value.trim(),
-        phone: document.getElementById('f_phone').value.trim(),
-        email: document.getElementById('f_email').value.trim(),
-        address: document.getElementById('f_address').value.trim(),
-        bank_name: document.getElementById('f_bank').value.trim(),
-        bik: document.getElementById('f_bik').value.trim(),
-        requisites: document.getElementById('f_req').value.trim(),
-        instagram: document.getElementById('f_ig').value.replace(/^@/, '').trim(),
-        based_on: 'Устава', kbe: '',
-    };
+    const payload = collectCompanyPayload();
+    if (!payload.name) { alert('Укажите название компании'); return; }
     await fetch('/api/companies/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     await loadAll();
     await openCompany(id);
@@ -584,15 +650,8 @@ async function saveCompanyEdit() {
 
 async function saveContactEdit() {
     const id = current.id;
-    const payload = {
-        name: document.getElementById('f_name').value.trim(),
-        position: document.getElementById('f_pos').value.trim(),
-        phone: document.getElementById('f_phone').value.trim(),
-        email: document.getElementById('f_email').value.trim(),
-        comment: document.getElementById('f_comment').value.trim(),
-        company_id: parseInt(document.getElementById('f_company').value) || null,
-        is_primary: document.getElementById('f_primary').checked,
-    };
+    const payload = collectContactPayload();
+    if (!payload.name) { alert('Укажите ФИО'); return; }
     await fetch('/api/contacts/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     await loadAll();
     await openContact(id);
@@ -651,24 +710,122 @@ async function deleteCurrentContact() {
 }
 
 function openCreateCompany() {
-    const name = prompt('Название компании (ТОО / ИП / …)');
-    if (!name) return;
-    fetch('/api/companies', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, bin: '', director_name: '', phone: '', email: '', requisites: '', based_on: 'Устава', address: '', bank_name: '', kbe: '', bik: '' })
-    }).then(r => r.json()).then(async c => { await loadAll(); if (c.id) openCompany(c.id); });
+    current = { type: 'company', id: null, isNew: true, data: { company: emptyCompany(), contacts: [], deals: [] } };
+    openCreateShell('company');
+    renderEntity();
 }
 
 function openCreateContact() {
-    const name = prompt('ФИО контакта');
-    if (!name) return;
-    fetch('/api/contacts', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, company_id: null })
-    }).then(r => r.json()).then(async c => { await loadAll(); if (c.id) openContact(c.id); });
+    current = { type: 'contact', id: null, isNew: true, data: { contact: emptyContact(), deals: [] } };
+    openCreateShell('contact');
+    renderEntity();
 }
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEntity(); });
+function syncTitleFromName() {
+    const titleEl = document.getElementById('entTitle');
+    const nameEl = document.getElementById('f_name');
+    if (!titleEl || !nameEl) return;
+    titleEl.oninput = () => { nameEl.value = titleEl.value; };
+    nameEl.oninput = () => { titleEl.value = nameEl.value; };
+}
+
+function collectCompanyPayload() {
+    const title = (document.getElementById('entTitle').value || '').trim();
+    const name = (document.getElementById('f_name')?.value || title).trim();
+    return {
+        name,
+        bin: (document.getElementById('f_bin')?.value || '').trim(),
+        director_name: (document.getElementById('f_director')?.value || '').trim(),
+        phone: (document.getElementById('f_phone')?.value || '').trim(),
+        email: (document.getElementById('f_email')?.value || '').trim(),
+        address: (document.getElementById('f_address')?.value || '').trim(),
+        bank_name: (document.getElementById('f_bank')?.value || '').trim(),
+        bik: (document.getElementById('f_bik')?.value || '').trim(),
+        requisites: (document.getElementById('f_req')?.value || '').trim(),
+        instagram: (document.getElementById('f_ig')?.value || '').replace(/^@/, '').trim(),
+        based_on: 'Устава', kbe: '',
+    };
+}
+
+function collectContactPayload() {
+    const title = (document.getElementById('entTitle').value || '').trim();
+    const name = (document.getElementById('f_name')?.value || title).trim();
+    return {
+        name,
+        position: (document.getElementById('f_pos')?.value || '').trim(),
+        phone: (document.getElementById('f_phone')?.value || '').trim(),
+        email: (document.getElementById('f_email')?.value || '').trim(),
+        comment: (document.getElementById('f_comment')?.value || '').trim(),
+        company_id: parseInt(document.getElementById('f_company')?.value) || null,
+        is_primary: !!document.getElementById('f_primary')?.checked,
+    };
+}
+
+async function saveCreate() {
+    if (!current?.isNew) return;
+    if (current.type === 'company') {
+        const payload = collectCompanyPayload();
+        if (!payload.name) { alert('Укажите название компании'); return; }
+        const res = await fetch('/api/companies', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const c = await res.json();
+        if (!c.id) { alert(c.error || 'Не удалось создать компанию'); return; }
+        await loadAll();
+        await openCompany(c.id);
+    } else {
+        const payload = collectContactPayload();
+        if (!payload.name) { alert('Укажите ФИО контакта'); return; }
+        const res = await fetch('/api/contacts', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const c = await res.json();
+        if (!c.id) { alert(c.error || 'Не удалось создать контакт'); return; }
+        await loadAll();
+        await openContact(c.id);
+    }
+}
+
+async function openCompany(id) {
+    const res = await fetch('/api/companies/' + id);
+    if (!res.ok) return;
+    const data = await res.json();
+    current = { type: 'company', id, isNew: false, data };
+    entTab = 'general';
+    document.getElementById('entityCard').classList.remove('is-create');
+    const titleEl = document.getElementById('entTitle');
+    titleEl.readOnly = true;
+    titleEl.value = data.company.name || '';
+    document.getElementById('entSaveTop').style.display = 'none';
+    setTopActions({ phone: data.company.phone, email: data.company.email });
+    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
+    document.getElementById('entityOverlay').classList.add('open');
+    renderEntity();
+}
+
+async function openContact(id) {
+    const res = await fetch('/api/contacts/' + id);
+    if (!res.ok) return;
+    const data = await res.json();
+    current = { type: 'contact', id, isNew: false, data };
+    entTab = 'general';
+    document.getElementById('entityCard').classList.remove('is-create');
+    const titleEl = document.getElementById('entTitle');
+    titleEl.readOnly = true;
+    titleEl.value = data.contact.name || '';
+    document.getElementById('entSaveTop').style.display = 'none';
+    setTopActions({ phone: data.contact.phone, email: data.contact.email });
+    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
+    document.getElementById('entityOverlay').classList.add('open');
+    renderEntity();
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeEntity();
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && current?.isNew) saveCreate();
+});
 window.onload = loadAll;
 </script>
 {% endblock %}
