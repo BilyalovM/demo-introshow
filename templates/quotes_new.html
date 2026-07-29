@@ -98,6 +98,13 @@
     white-space: nowrap;
 }
 .cat-qty-cell { width: 44px; text-align: center; vertical-align: middle; }
+.cat-actions { width: 96px; white-space: nowrap; text-align: right; }
+.cat-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.cat-stepper .btn { min-width: 32px; }
 .cat-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .conflict-icon {
     color: #fff;
@@ -391,13 +398,17 @@ function renderCatalog() {
             const badgeHtml = inCart > 0
                 ? `<span class="cat-qty-badge" title="Уже в смете">${inCart}</span>`
                 : '<span class="muted" style="font-size:12px">—</span>';
+            const actionsHtml = inCart > 0
+                ? `<div class="cat-stepper">
+                        <button type="button" class="btn btn-sm" title="Убрать из сметы" onclick="removeOneFromCart(${item.id})">−</button>
+                        <button type="button" class="btn btn-sm btn-primary" title="Добавить ещё" onclick="addToCart(${item.id})">+</button>
+                   </div>`
+                : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+</button>`;
             tr.innerHTML = `
                 <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${conflictHtml}</span></td>
                 <td class="cat-qty-cell">${badgeHtml}</td>
                 <td class="num muted cat-price">${fmt(item.price)} ₸</td>
-                <td class="num" style="width:60px">
-                    <button class="btn btn-sm btn-primary" onclick="addToCart(${item.id})">+</button>
-                </td>`;
+                <td class="num cat-actions">${actionsHtml}</td>`;
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -462,6 +473,20 @@ function addToCart(id) {
 
 function removeFromCart(id) {
     cart = cart.filter(c => c.id !== id);
+    renderCart();
+}
+
+function removeOneFromCart(id) {
+    const item = equipment.find(e => e.id === id);
+    if (!item) return;
+    const nameKey = (item.name || '').trim().toLowerCase();
+    const existing = cart.find(c => (c.name || '').trim().toLowerCase() === nameKey);
+    if (!existing) return;
+    if ((parseInt(existing.qty) || 0) <= 1) {
+        cart = cart.filter(c => c !== existing);
+    } else {
+        existing.qty -= 1;
+    }
     renderCart();
 }
 
