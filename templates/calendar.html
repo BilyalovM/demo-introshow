@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+
+{% block title %}Календарь - Intro Show{% endblock %}
+
+{% block content %}
+<div class="toolbar" style="margin-bottom:6px">
+    <h1 class="page-title" style="margin:0">Календарь проектов</h1>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="calPrev">←</button>
+    <strong id="calMonthLabel" style="min-width:160px;text-align:center"></strong>
+    <button class="btn" type="button" id="calNext">→</button>
+    <button class="btn" type="button" id="calToday">Сегодня</button>
+</div>
+<p class="page-sub">Сделки по датам мероприятий. К событию можно прикрепить ссылку на Google Docs/Sheets или загрузить файл (КП, оффер).</p>
+
+<div class="grid" style="grid-template-columns:1fr 340px;gap:16px;align-items:start">
+    <div class="card card-pad-0" style="overflow:hidden">
+        <div class="cal-weekdays">
+            <div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div><div>Сб</div><div>Вс</div>
+        </div>
+        <div id="calGrid" class="cal-grid"></div>
+    </div>
+
+    <div class="card" id="calSide">
+        <h3 style="margin-top:0" id="calSideTitle">Выберите событие</h3>
+        <p class="muted" id="calSideHint" style="font-size:13px">Кликните по проекту в календаре, чтобы добавить файлы или ссылки.</p>
+        <div id="calDealMeta" style="display:none;margin-bottom:14px">
+            <div class="muted" style="font-size:12px;margin-bottom:4px">Мероприятие</div>
+            <div id="calDealTitle" style="font-weight:700;margin-bottom:8px"></div>
+            <div class="muted" style="font-size:12px">Дата: <span id="calDealDate"></span></div>
+            <div class="muted" style="font-size:12px">Менеджер: <span id="calDealManager">—</span></div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+                <a class="btn btn-sm" id="calOpenQuote" href="#">Смета</a>
+                <a class="btn btn-sm" id="calOpenCrm" href="#">CRM</a>
+            </div>
+        </div>
+
+        <div id="calAttachBlock" style="display:none">
+            <h4 style="margin:0 0 8px">Вложения</h4>
+            <ul id="calAttachList" style="list-style:none;padding:0;margin:0 0 14px"></ul>
+
+            <label class="field"><span>Ссылка (Google Docs / Sheets / Drive)</span>
+                <input id="calLinkUrl" type="url" placeholder="https://docs.google.com/…"/>
+            </label>
+            <label class="field"><span>Название ссылки</span>
+                <input id="calLinkTitle" type="text" placeholder="КП / Оффер / Райдер…"/>
+            </label>
+            <button class="btn btn-primary" type="button" style="width:100%;margin-bottom:14px" onclick="addCalLink()">+ Добавить ссылку</button>
+
+            <label class="field"><span>Или загрузить файл</span>
+                <input id="calFile" type="file"/>
+            </label>
+            <button class="btn" type="button" style="width:100%" onclick="uploadCalFile()">⬆ Загрузить файл</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<style>
+.cal-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    background: var(--surface-2, #f3f4f6);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    text-align: center;
+}
+.cal-weekdays > div { padding: 10px 4px; }
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    min-height: 520px;
+}
+.cal-cell {
+    min-height: 96px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 6px;
+    vertical-align: top;
+}
+.cal-cell:nth-child(7n) { border-right: none; }
+.cal-daynum {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    margin-bottom: 4px;
+}
+.cal-cell.today .cal-daynum {
+    background: var(--primary);
+    color: #fff;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.cal-cell.out { opacity: 0.45; background: rgba(0,0,0,0.02); }
+.cal-event {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 6px;
+    margin-bottom: 3px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #fff;
+    background: #2563eb;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cal-event.has-files { background: #db2777; }
+.cal-event.selected { outline: 2px solid #111; outline-offset: 1px; }
+.cal-attach-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 6px;
+    background: var(--surface);
+}
+.cal-attach-item a { flex: 1; font-weight: 600; font-size: 13px; word-break: break-all; }
+.cal-attach-kind {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+    font-weight: 700;
+}
+@media (max-width: 900px) {
+    .grid[style*="grid-template-columns:1fr 340px"] { grid-template-columns: 1fr !important; }
+    .cal-cell { min-height: 72px; }
+}
+</style>
+<script>
+let calYear, calMonth; // month 0-based
+let calEvents = [];
+let selectedDealId = null;
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+
+function initCal() {
+    const now = new Date();
+    calYear = now.getFullYear();
+    calMonth = now.getMonth();
+    document.getElementById('calPrev').onclick = () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } loadMonth(); };
+    document.getElementById('calNext').onclick = () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } loadMonth(); };
+    document.getElementById('calToday').onclick = () => { const t = new Date(); calYear = t.getFullYear(); calMonth = t.getMonth(); loadMonth(); };
+    loadMonth();
+}
+
+async function loadMonth() {
+    const label = new Date(calYear, calMonth, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+    document.getElementById('calMonthLabel').textContent = label.charAt(0).toUpperCase() + label.slice(1);
+
+    const from = new Date(calYear, calMonth, 1);
+    const to = new Date(calYear, calMonth + 1, 0);
+    // захватить соседние дни сетки
+    const start = new Date(from);
+    const dow = (start.getDay() + 6) % 7; // mon=0
+    start.setDate(start.getDate() - dow);
+    const end = new Date(to);
+    const endDow = (end.getDay() + 6) % 7;
+    end.setDate(end.getDate() + (6 - endDow));
+
+    const res = await fetch(`/api/calendar/events?from=${ymd(start)}&to=${ymd(end)}`);
+    calEvents = await res.json();
+    renderGrid(start, end);
+}
+
+function renderGrid(start, end) {
+    const grid = document.getElementById('calGrid');
+    grid.innerHTML = '';
+    const todayStr = ymd(new Date());
+    const byDate = {};
+    calEvents.forEach(ev => {
+        const key = ev.date;
+        (byDate[key] = byDate[key] || []).push(ev);
+    });
+
+    const cur = new Date(start);
+    while (cur <= end) {
+        const key = ymd(cur);
+        const cell = document.createElement('div');
+        cell.className = 'cal-cell';
+        if (cur.getMonth() !== calMonth) cell.classList.add('out');
+        if (key === todayStr) cell.classList.add('today');
+        cell.innerHTML = `<div class="cal-daynum">${cur.getDate()}</div>`;
+        (byDate[key] || []).forEach(ev => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.dataset.dealId = String(ev.id);
+            btn.className = 'cal-event' + (ev.attachments_count ? ' has-files' : '') + (ev.id === selectedDealId ? ' selected' : '');
+            btn.title = ev.title + (ev.manager ? ` — ${ev.manager}` : '');
+            btn.textContent = ev.title;
+            btn.onclick = () => selectDeal(ev.id, true);
+            cell.appendChild(btn);
+        });
+        grid.appendChild(cell);
+        cur.setDate(cur.getDate() + 1);
+    }
+}
+
+async function selectDeal(dealId, scrollSide) {
+    selectedDealId = dealId;
+    document.querySelectorAll('.cal-event').forEach(el => el.classList.remove('selected'));
+
+    const res = await fetch(`/api/calendar/deals/${dealId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    document.getElementById('calSideTitle').textContent = 'Событие';
+    document.getElementById('calSideHint').style.display = 'none';
+    document.getElementById('calDealMeta').style.display = 'block';
+    document.getElementById('calAttachBlock').style.display = 'block';
+    document.getElementById('calDealTitle').textContent = data.title || 'Без названия';
+    document.getElementById('calDealDate').textContent = data.event_date || data.setup_date || '—';
+    document.getElementById('calDealManager').textContent = data.manager || '—';
+    document.getElementById('calOpenQuote').href = `/quotes/${dealId}`;
+    document.getElementById('calOpenCrm').href = `/crm?deal=${dealId}`;
+    renderAttachments(data.attachments || []);
+
+    // подсветка события на сетке + актуализация счётчика вложений
+    const ev = calEvents.find(e => e.id === dealId);
+    if (ev) ev.attachments_count = (data.attachments || []).length;
+    document.querySelectorAll('.cal-event').forEach(el => {
+        if (el.dataset.dealId === String(dealId)) {
+            el.classList.add('selected');
+            el.classList.toggle('has-files', !!(data.attachments || []).length);
+        }
+    });
+
+    if (scrollSide) document.getElementById('calSide').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderAttachments(items) {
+    const ul = document.getElementById('calAttachList');
+    if (!items.length) {
+        ul.innerHTML = '<li class="muted" style="font-size:13px;padding:6px 0">Пока нет вложений — добавьте ссылку на КП/оффер или файл.</li>';
+        return;
+    }
+    ul.innerHTML = items.map(a => `
+        <li class="cal-attach-item">
+            <span class="cal-attach-kind">${a.kind === 'file' ? 'файл' : 'ссылка'}</span>
+            <a href="${escAttr(a.url)}" target="_blank" rel="noopener">${esc(a.title || a.file_name || a.url)}</a>
+            <button class="btn btn-sm" type="button" onclick="deleteCalAttach(${a.id})" title="Удалить">×</button>
+        </li>
+    `).join('');
+}
+
+function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escAttr(s) { return esc(s).replace(/`/g, ''); }
+
+async function addCalLink() {
+    if (!selectedDealId) return;
+    const url = document.getElementById('calLinkUrl').value.trim();
+    const title = document.getElementById('calLinkTitle').value.trim();
+    if (!url) { alert('Вставьте ссылку'); return; }
+    const res = await fetch(`/api/calendar/deals/${selectedDealId}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'link', url, title: title || 'Ссылка' })
+    });
+    if (!res.ok) { alert('Не удалось сохранить ссылку'); return; }
+    document.getElementById('calLinkUrl').value = '';
+    document.getElementById('calLinkTitle').value = '';
+    const keep = selectedDealId;
+    await loadMonth();
+    await selectDeal(keep, false);
+}
+
+async function uploadCalFile() {
+    if (!selectedDealId) return;
+    const input = document.getElementById('calFile');
+    if (!input.files || !input.files[0]) { alert('Выберите файл'); return; }
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const title = document.getElementById('calLinkTitle').value.trim();
+    if (title) fd.append('title', title);
+    const res = await fetch(`/api/calendar/deals/${selectedDealId}/attachments/upload`, {
+        method: 'POST',
+        body: fd
+    });
+    if (!res.ok) { alert('Не удалось загрузить файл'); return; }
+    input.value = '';
+    const keep = selectedDealId;
+    await loadMonth();
+    await selectDeal(keep, false);
+}
+
+async function deleteCalAttach(id) {
+    if (!confirm('Удалить вложение?')) return;
+    await fetch(`/api/calendar/attachments/${id}`, { method: 'DELETE' });
+    if (selectedDealId) {
+        const keep = selectedDealId;
+        await loadMonth();
+        await selectDeal(keep, false);
+    }
+}
+
+initCal();
+</script>
+{% endblock %}

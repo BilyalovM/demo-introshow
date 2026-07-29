@@ -313,6 +313,20 @@ class Invoice(Base):
     deal = relationship("Deal", backref="invoices")
 
 
+class DealAttachment(Base):
+    """Файлы и ссылки (Google Docs/Sheets) к событию/сделке в календаре."""
+    __tablename__ = "deal_attachments"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False, index=True)
+    title = Column(String, nullable=True)
+    kind = Column(String, default="link")  # link / file
+    url = Column(String, nullable=True)   # внешняя ссылка или /uploads/...
+    file_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="attachments")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 

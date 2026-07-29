@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
@@ -426,6 +426,168 @@ def read_quote_detail(request: Request, quote_id: int, user: User = Depends(get_
 def read_quotes(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     deals = db.query(Deal).order_by(Deal.id.desc()).all()
     return templates.TemplateResponse("quotes.html", {"request": request, "active_page": "quotes", "deals": deals})
+
+@app.get("/calendar", response_class=HTMLResponse)
+def read_calendar(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("calendar.html", {"request": request, "active_page": "calendar"})
+
+@app.get("/api/calendar/events")
+def api_calendar_events(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """События календаря = сделки с датой мероприятия/монтажа в диапазоне."""
+    date_from = (request.query_params.get("from") or "").strip()
+    date_to = (request.query_params.get("to") or "").strip()
+    q = db.query(Deal).filter(Deal.is_archived == False)  # noqa: E712
+    if _user_crm_own_only(user):
+        q = q.filter(Deal.assignee_id == user.id)
+    deals = q.all()
+    out = []
+    for d in deals:
+        day = (d.event_date or d.setup_date or "")[:10]
+        if not day:
+            continue
+        if date_from and day < date_from[:10]:
+            continue
+        if date_to and day > date_to[:10]:
+            continue
+        mgr = None
+        if d.assignee:
+            mgr = d.assignee.full_name or d.assignee.username
+        att_cnt = db.query(DealAttachment).filter(DealAttachment.deal_id == d.id).count()
+        out.append({
+            "id": d.id,
+            "title": d.title or f"Сделка #{d.id}",
+            "date": day,
+            "setup_date": d.setup_date,
+            "event_date": d.event_date,
+            "manager": mgr,
+            "attachments_count": att_cnt,
+            "company": d.company.name if d.company else None,
+        })
+    out.sort(key=lambda x: (x["date"], x["id"]))
+    return out
+
+
+@app.get("/api/calendar/deals/{deal_id}")
+def api_calendar_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found")
+    if _user_crm_own_only(user) and d.assignee_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    atts = db.query(DealAttachment).filter(DealAttachment.deal_id == deal_id).order_by(DealAttachment.id.desc()).all()
+    return {
+        "id": d.id,
+        "title": d.title,
+        "setup_date": d.setup_date,
+        "event_date": d.event_date,
+        "event_address": d.event_address,
+        "manager": (d.assignee.full_name or d.assignee.username) if d.assignee else None,
+        "attachments": [{
+            "id": a.id,
+            "title": a.title,
+            "kind": a.kind,
+            "url": a.url,
+            "file_name": a.file_name,
+        } for a in atts],
+    }
+
+
+class CalendarAttachmentIn(BaseModel):
+    kind: str = "link"
+    url: Optional[str] = None
+    title: Optional[str] = None
+
+
+@app.post("/api/calendar/deals/{deal_id}/attachments")
+def api_calendar_add_link(
+    deal_id: int,
+    payload: CalendarAttachmentIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found")
+    if _user_crm_own_only(user) and d.assignee_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    url = (payload.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url required")
+    att = DealAttachment(
+        deal_id=deal_id,
+        kind="link",
+        url=url,
+        title=(payload.title or "Ссылка").strip() or "Ссылка",
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+    return {"id": att.id, "title": att.title, "kind": att.kind, "url": att.url}
+
+
+@app.post("/api/calendar/deals/{deal_id}/attachments/upload")
+async def api_calendar_upload_file(
+    deal_id: int,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found")
+    if _user_crm_own_only(user) and d.assignee_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    import uuid
+    import re
+    raw_name = file.filename or "file"
+    safe = re.sub(r"[^\w.\-()+ ]+", "_", raw_name)[:120]
+    filename = f"deal{deal_id}_{uuid.uuid4().hex[:10]}_{safe}"
+    path = os.path.join(UPLOADS_DIR, filename)
+    content = await file.read()
+    with open(path, "wb") as f:
+        f.write(content)
+
+    att = DealAttachment(
+        deal_id=deal_id,
+        kind="file",
+        url=f"/uploads/{filename}",
+        file_name=raw_name,
+        title=(title or raw_name).strip() or raw_name,
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+    return {"id": att.id, "title": att.title, "kind": att.kind, "url": att.url, "file_name": att.file_name}
+
+
+@app.delete("/api/calendar/attachments/{att_id}")
+def api_calendar_delete_attachment(
+    att_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    att = db.query(DealAttachment).filter(DealAttachment.id == att_id).first()
+    if not att:
+        raise HTTPException(status_code=404, detail="Not found")
+    d = db.query(Deal).filter(Deal.id == att.deal_id).first()
+    if d and _user_crm_own_only(user) and d.assignee_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if att.kind == "file" and att.url and att.url.startswith("/uploads/"):
+        fpath = os.path.join(UPLOADS_DIR, os.path.basename(att.url))
+        try:
+            if os.path.exists(fpath):
+                os.remove(fpath)
+        except OSError:
+            pass
+    db.delete(att)
+    db.commit()
+    return {"ok": True}
 
 @app.get("/inbox", response_class=HTMLResponse)
 async def read_inbox(request: Request, user: User = Depends(get_current_user)):

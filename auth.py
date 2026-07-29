@@ -18,6 +18,7 @@ SECTIONS = {
     "inbox": "Чаты (Inbox)",
     "crm": "CRM",
     "quotes": "Сметы и договоры",
+    "calendar": "Календарь",
     "equipment": "Склад",
     "companies": "Клиенты",
     "tasks": "Задачи",
@@ -36,6 +37,7 @@ PATH_SECTIONS = {
     "/inbox": "inbox",
     "/crm": "crm",
     "/quotes": "quotes",
+    "/calendar": "calendar",
     "/equipment": "equipment",
     "/companies": "companies",
     "/tasks": "tasks",
@@ -123,7 +125,12 @@ def user_can_access(user, section: str) -> bool:
     section_perms = [p for p in perms if p in SECTIONS]
     if not section_perms:
         return True  # только флаги без разделов = полный доступ к разделам
-    return section in section_perms
+    if section in section_perms:
+        return True
+    # Календарь доступен всем, у кого есть CRM или сметы (даже без отдельной галочки)
+    if section == "calendar" and ("crm" in section_perms or "quotes" in section_perms):
+        return True
+    return False
 
 
 def section_for_path(path: str):

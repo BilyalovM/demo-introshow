@@ -2020,8 +2020,12 @@
 
         if(!equip) return;
 
-        // Check if already in list
-        const existing = currentDealProducts.find(p => p.equipment_id === eqId);
+        // Склеиваем одинаковые модели в одну строку (по имени + цене)
+        const nameKey = (equip.name || '').trim().toLowerCase();
+        const existing = currentDealProducts.find(p =>
+            (p.name || '').trim().toLowerCase() === nameKey &&
+            Number(p.price) === Number(equip.price)
+        ) || currentDealProducts.find(p => p.equipment_id === eqId);
         if(existing) {
             existing.quantity = (existing.quantity || 0) + 1;
         } else {

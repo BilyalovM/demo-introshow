@@ -83,6 +83,22 @@
 {% block extra_scripts %}
 <style>
 .cat-row-conflict { background: var(--danger-soft) !important; }
+.cat-qty-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    margin-right: 8px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    vertical-align: middle;
+}
+.cat-name-cell { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .conflict-icon {
     color: #fff;
     font-weight: 800;
@@ -306,6 +322,32 @@ async function loadQuote() {
 
 // ---------- Каталог ----------
 
+function cartQtyForName(name) {
+    const key = (name || '').trim().toLowerCase();
+    return cart
+        .filter(c => (c.name || '').trim().toLowerCase() === key)
+        .reduce((s, c) => s + (parseInt(c.qty) || 0), 0);
+}
+
+function mergeCartLines() {
+    const merged = [];
+    const indexByKey = {};
+    cart.forEach(item => {
+        const key = [
+            (item.name || '').trim().toLowerCase(),
+            Number(item.price) || 0,
+            parseInt(item.days) || 1,
+        ].join('|');
+        if (indexByKey[key] == null) {
+            indexByKey[key] = merged.length;
+            merged.push({ ...item, qty: parseInt(item.qty) || 1 });
+        } else {
+            merged[indexByKey[key]].qty += parseInt(item.qty) || 1;
+        }
+    });
+    cart = merged;
+}
+
 function renderCatalog() {
     const container = document.getElementById('catalogContainer');
     const search = (document.getElementById('catalogSearch').value || '').toLowerCase();
@@ -345,8 +387,12 @@ function renderCatalog() {
                         data-tip="${tipAttr}"
                         onclick="showConflictPopover(event, this)">!</button>`;
             }
+            const inCart = cartQtyForName(item.name);
+            const badgeHtml = inCart > 0
+                ? `<span class="cat-qty-badge" title="Уже в смете">${inCart}</span>`
+                : '';
             tr.innerHTML = `
-                <td class="cat-name">${esc(item.name)} ${conflictHtml}</td>
+                <td class="cat-name"><span class="cat-name-cell">${badgeHtml}<span>${esc(item.name)}</span> ${conflictHtml}</span></td>
                 <td class="num muted cat-price">${fmt(item.price)} ₸</td>
                 <td class="num" style="width:60px">
                     <button class="btn btn-sm btn-primary" onclick="addToCart(${item.id})">+</button>
@@ -389,7 +435,13 @@ function addToCart(id) {
     const item = equipment.find(e => e.id === id);
     if (!item) return;
 
-    const existing = cart.find(c => c.id === id);
+    // Склеиваем одинаковые модели в одну строку (даже если в каталоге разные SKU)
+    const nameKey = (item.name || '').trim().toLowerCase();
+    const existing = cart.find(c =>
+        (c.name || '').trim().toLowerCase() === nameKey &&
+        Number(c.price) === Number(item.price) &&
+        (parseInt(c.days) || 1) === 1
+    ) || cart.find(c => (c.name || '').trim().toLowerCase() === nameKey);
     const newQty = (existing ? existing.qty : 0) + 1;
 
     const c = conflictsData[id];
@@ -416,6 +468,7 @@ function updateCartItem(id, field, val) {
     const item = cart.find(c => c.id === id);
     if (item) {
         item[field] = Math.max(1, parseInt(val) || 1);
+        if (field === 'qty' || field === 'days' || field === 'price') mergeCartLines();
         renderCart();
     }
 }
@@ -450,6 +503,7 @@ async function updateCartPrice(id, val) {
 }
 
 function renderCart() {
+    mergeCartLines();
     const container = document.getElementById('cartContainer');
     const empty = document.getElementById('cartEmpty');
     container.innerHTML = '';
@@ -457,6 +511,7 @@ function renderCart() {
     if (cart.length === 0) {
         empty.style.display = 'block';
         calculateTotals();
+        renderCatalog();
         return;
     }
     empty.style.display = 'none';
@@ -480,6 +535,7 @@ function renderCart() {
     table.appendChild(tbody);
     container.appendChild(table);
     calculateTotals();
+    renderCatalog();
 }
 
 // ---------- Итоги ----------

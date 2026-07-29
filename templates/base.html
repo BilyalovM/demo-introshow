@@ -116,6 +116,19 @@
   </span>
  </a>
  {% endif %}
+ {% if 'calendar' in sections or 'quotes' in sections or 'crm' in sections %}
+ <a href="/calendar" class="nav-link {% if request.url.path.startswith('/calendar') %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+    <path d="M16 2v4M8 2v4M3 10h18"></path>
+   </svg>
+  </span>
+  <span>
+   Календарь
+  </span>
+ </a>
+ {% endif %}
  {% if 'equipment' in sections %}
  <a href="{{ url_for('read_equipment') }}" class="nav-link {% if request.url.path == '/equipment' %}active{% endif %}">
   <span class="nav-ico">

@@ -3,19 +3,41 @@
 {% block title %}Сметы и договоры - Intro Show{% endblock %}
 
 {% block content %}
-<div class="toolbar" style="margin-bottom:6px"><h1 class="page-title" style="margin:0">Сметы и договоры</h1><div class="spacer"></div><a class="btn btn-primary" href="/quotes/new">+ Новая смета</a></div><p class="page-sub">Всего документов: {{ deals|length }}</p><div class="card card-pad-0"><table class="data cards-mobile"><thead><tr><th>№ договора</th><th>Дата</th><th>Арендатор</th><th>Мероприятие</th><th class="num">Итого ₸</th><th></th></tr></thead><tbody>
+<div class="toolbar" style="margin-bottom:6px">
+    <h1 class="page-title" style="margin:0">Сметы и договоры</h1>
+    <div class="spacer"></div>
+    <a class="btn btn-primary" href="/quotes/new">+ Новая смета</a>
+</div>
+<p class="page-sub">Всего документов: {{ deals|length }}</p>
+<div class="card card-pad-0">
+<table class="data cards-mobile">
+<thead>
+<tr>
+    <th>№ договора</th>
+    <th>Дата</th>
+    <th>Арендатор</th>
+    <th>Мероприятие</th>
+    <th>Менеджер</th>
+    <th class="num">Итого ₸</th>
+    <th></th>
+</tr>
+</thead>
+<tbody>
 {% for deal in deals %}
 <tr>
     <td class="card-head"><a href="/quotes/{{ deal.id }}" style="font-weight:700">№ {{ deal.title }}</a></td>
     <td data-label="Дата">{{ deal.setup_date }} - {{ deal.event_date }}</td>
     <td data-label="Арендатор">{% if deal.company %}{{ deal.company.name }}{% else %}-{% endif %}</td>
-    <td data-label="Мероприятие">{{ deal.event_address or '' }}</td>
+    <td data-label="Мероприятие">{{ deal.event_address or deal.title or '' }}</td>
+    <td data-label="Менеджер">{% if deal.assignee %}{{ deal.assignee.full_name or deal.assignee.username }}{% else %}—{% endif %}</td>
     <td class="num" data-label="Итого ₸"><strong>{{ deal.final_sum }}</strong></td>
     <td class="num" data-label=""><a class="btn btn-sm" href="/quotes/{{ deal.id }}">Открыть</a></td>
 </tr>
 {% endfor %}
 {% if not deals %}
-<tr><td colspan="6" style="text-align:center; color:gray; padding:20px;">Нет созданных смет</td></tr>
+<tr><td colspan="7" style="text-align:center; color:gray; padding:20px;">Нет созданных смет</td></tr>
 {% endif %}
-</tbody></table></div>
+</tbody>
+</table>
+</div>
 {% endblock %}
