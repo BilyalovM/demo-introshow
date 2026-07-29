@@ -143,7 +143,10 @@
                 </div>
                 <div class="task-chat-thread" id="tk_comments"></div>
                 <div class="task-chat-compose">
-                    <textarea id="tk_comment_text" rows="2" placeholder="Написать комментарий…" disabled></textarea>
+                    <div class="task-mention-wrap">
+                        <textarea id="tk_comment_text" rows="2" placeholder="Написать комментарий… Используйте @ чтобы отметить сотрудника" disabled></textarea>
+                        <div class="task-mention-dropdown" id="tk_mention_dd" hidden></div>
+                    </div>
                     <button class="btn btn-primary" id="tk_comment_btn" onclick="postComment()" disabled>Отправить</button>
                 </div>
             </div>
@@ -312,11 +315,32 @@
     padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface);
     display:flex; flex-direction:column; gap:8px;
 }
+.task-mention-wrap { position: relative; width: 100%; }
 .task-chat-compose textarea {
     width:100%; resize: vertical; min-height: 56px; border:1px solid var(--border);
     border-radius: 10px; padding: 8px 10px; font: inherit; background: var(--bg-2); color: var(--text);
 }
 .task-chat-compose .btn { align-self: flex-end; }
+.task-mention-dropdown {
+    position: absolute; left: 0; right: 0; bottom: calc(100% + 4px);
+    max-height: 200px; overflow-y: auto; z-index: 20;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow-md, 0 8px 24px rgba(15,23,42,0.12));
+}
+.task-mention-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; cursor: pointer; font-size: 13px;
+}
+.task-mention-item:hover, .task-mention-item.active {
+    background: var(--primary-soft, #eef2ff);
+}
+.task-mention-item .task-mention-name { font-weight: 700; }
+.task-mention-item .task-mention-user { color: var(--muted); font-size: 12px; }
+.task-mention {
+    color: var(--primary); font-weight: 700;
+    background: var(--primary-soft, #eef2ff);
+    border-radius: 4px; padding: 0 3px;
+}
 
 @media (max-width: 1024px) {
     .tasks-board { grid-template-columns: repeat(2, 1fr); }
@@ -349,9 +373,37 @@ let currentComments = [];
 let formAssignees = [];
 let formObservers = [];
 let formChecklist = [];
+let mentionState = { active: false, start: -1, query: '', index: 0, matches: [] };
 
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function escRe(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function mentionToken(u) {
+    return u.username || userLabel(u);
+}
+
+function formatCommentText(text) {
+    let html = esc(text);
+    const keys = [];
+    usersList.forEach(u => {
+        if (u.username) keys.push(u.username);
+        if (u.full_name && u.full_name.trim()) keys.push(u.full_name.trim());
+    });
+    keys.sort((a, b) => b.length - a.length);
+    const seen = new Set();
+    keys.forEach(key => {
+        const lk = key.toLowerCase();
+        if (seen.has(lk)) return;
+        seen.add(lk);
+        const re = new RegExp('(@' + escRe(key) + ')(?![\\wА-Яа-яЁё])', 'gi');
+        html = html.replace(re, '<span class="task-mention">$1</span>');
+    });
+    return html;
 }
 
 function initials(name) {
@@ -633,10 +685,83 @@ function renderComments(comments) {
                 <span class="task-comment-author">${esc(c.author || 'Сотрудник')}</span>
                 <span class="task-comment-time">${esc(c.created_at || '')}</span>
             </div>
-            <div class="task-comment-text">${esc(c.text)}</div>
+            <div class="task-comment-text">${formatCommentText(c.text)}</div>
         </div>
     `).join('');
     box.scrollTop = box.scrollHeight;
+}
+
+function hideMentionDropdown() {
+    mentionState = { active: false, start: -1, query: '', index: 0, matches: [] };
+    const dd = document.getElementById('tk_mention_dd');
+    dd.hidden = true;
+    dd.innerHTML = '';
+}
+
+function renderMentionDropdown() {
+    const dd = document.getElementById('tk_mention_dd');
+    if (!mentionState.active || !mentionState.matches.length) {
+        dd.hidden = true;
+        dd.innerHTML = '';
+        return;
+    }
+    dd.hidden = false;
+    dd.innerHTML = mentionState.matches.map((u, i) => `
+        <div class="task-mention-item${i === mentionState.index ? ' active' : ''}"
+             data-idx="${i}" role="option">
+            <span class="task-avatar" style="width:22px;height:22px;font-size:9px">${esc(initials(userLabel(u)))}</span>
+            <span class="task-mention-name">${esc(userLabel(u))}</span>
+            <span class="task-mention-user">@${esc(mentionToken(u))}</span>
+        </div>
+    `).join('');
+    dd.querySelectorAll('.task-mention-item').forEach(el => {
+        el.addEventListener('mousedown', e => {
+            e.preventDefault();
+            applyMention(parseInt(el.dataset.idx, 10));
+        });
+    });
+}
+
+function updateMentionAutocomplete() {
+    const ta = document.getElementById('tk_comment_text');
+    if (ta.disabled) { hideMentionDropdown(); return; }
+    const pos = ta.selectionStart ?? 0;
+    const before = ta.value.slice(0, pos);
+    const m = before.match(/(^|[\s([{«"'])@([^\s@]*)$/);
+    if (!m) { hideMentionDropdown(); return; }
+    const query = (m[2] || '').toLowerCase();
+    const matches = usersList.filter(u => {
+        const label = userLabel(u).toLowerCase();
+        const uname = (u.username || '').toLowerCase();
+        return !query || label.includes(query) || uname.includes(query);
+    }).slice(0, 8);
+    if (!matches.length) { hideMentionDropdown(); return; }
+    mentionState = {
+        active: true,
+        start: before.length - (m[2] || '').length - 1,
+        query,
+        index: Math.min(mentionState.index, matches.length - 1),
+        matches,
+    };
+    if (mentionState.index < 0) mentionState.index = 0;
+    renderMentionDropdown();
+}
+
+function applyMention(idx) {
+    const u = mentionState.matches[idx];
+    if (!u) return;
+    const ta = document.getElementById('tk_comment_text');
+    const start = mentionState.start;
+    const pos = ta.selectionStart ?? ta.value.length;
+    const token = mentionToken(u);
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(pos);
+    const insert = '@' + token + ' ';
+    ta.value = before + insert + after;
+    const caret = before.length + insert.length;
+    ta.focus();
+    ta.setSelectionRange(caret, caret);
+    hideMentionDropdown();
 }
 
 async function loadComments(taskId) {
@@ -714,12 +839,14 @@ function openTaskForm(taskId) {
     renderChecklistEditor();
     document.getElementById('tk_checklist_input').value = '';
     document.getElementById('tk_comment_text').value = '';
+    hideMentionDropdown();
     updateDealLink();
     document.getElementById('task-modal').classList.add('active');
     loadComments(t ? t.id : null);
 }
 
 function closeTaskForm() {
+    hideMentionDropdown();
     document.getElementById('task-modal').classList.remove('active');
 }
 
@@ -783,10 +910,21 @@ async function deleteTask() {
     loadTasks();
 }
 
+function applyObserversFromComment(taskId, observers) {
+    if (!Array.isArray(observers)) return;
+    formObservers = observers.map(o => ({ user_id: o.user_id, name: o.name }));
+    renderPeopleChips('observers');
+    const task = allTasks.find(t => t.id === taskId);
+    if (task) {
+        task.observers = observers.map(o => ({ id: o.id, user_id: o.user_id, name: o.name }));
+    }
+}
+
 async function postComment() {
     const id = document.getElementById('tk_id').value;
     const text = document.getElementById('tk_comment_text').value.trim();
     if (!id || !text) return;
+    hideMentionDropdown();
     const res = await fetch(`/api/tasks/${id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -796,9 +934,14 @@ async function postComment() {
         alert('Не удалось отправить комментарий');
         return;
     }
+    const data = await res.json().catch(() => ({}));
     document.getElementById('tk_comment_text').value = '';
-    await loadComments(parseInt(id, 10));
-    const task = allTasks.find(t => t.id === parseInt(id, 10));
+    const taskId = parseInt(id, 10);
+    if (data.observers) {
+        applyObserversFromComment(taskId, data.observers);
+    }
+    await loadComments(taskId);
+    const task = allTasks.find(t => t.id === taskId);
     if (task) {
         task.comment_count = (task.comment_count || 0) + 1;
         render();
@@ -809,11 +952,45 @@ document.getElementById('task-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('task-modal')) closeTaskForm();
 });
 
-document.getElementById('tk_comment_text').addEventListener('keydown', e => {
+const tkCommentText = document.getElementById('tk_comment_text');
+tkCommentText.addEventListener('input', updateMentionAutocomplete);
+tkCommentText.addEventListener('click', updateMentionAutocomplete);
+tkCommentText.addEventListener('keyup', e => {
+    if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key)) return;
+    updateMentionAutocomplete();
+});
+tkCommentText.addEventListener('keydown', e => {
+    if (mentionState.active && mentionState.matches.length) {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            mentionState.index = (mentionState.index + 1) % mentionState.matches.length;
+            renderMentionDropdown();
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            mentionState.index = (mentionState.index - 1 + mentionState.matches.length) % mentionState.matches.length;
+            renderMentionDropdown();
+            return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault();
+            applyMention(mentionState.index);
+            return;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            hideMentionDropdown();
+            return;
+        }
+    }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         postComment();
     }
+});
+tkCommentText.addEventListener('blur', () => {
+    setTimeout(hideMentionDropdown, 150);
 });
 
 loadRefs();

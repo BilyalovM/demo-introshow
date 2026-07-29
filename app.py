@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import json
 import os
+import re
 import tempfile
 import requests
 from datetime import datetime, timedelta
@@ -1020,6 +1021,94 @@ def _sync_task_people(db: Session, task: Task, assignees=None, observers=None):
             seen.add(key)
             db.add(TaskObserver(task_id=task.id, user_id=uid, name=name))
 
+def _mention_keys_for_user(u: User) -> list:
+    """Keys that can appear after @ in chat (longest match preferred by caller)."""
+    keys = []
+    if u.username:
+        keys.append(u.username)
+    if u.full_name and u.full_name.strip():
+        keys.append(u.full_name.strip())
+    # unique, preserve order
+    seen = set()
+    out = []
+    for k in keys:
+        lk = k.lower()
+        if lk in seen:
+            continue
+        seen.add(lk)
+        out.append(k)
+    return out
+
+def _find_mentioned_users(db: Session, text: str) -> list:
+    """Parse @username / @Имя from comment text; match staff users (longest key first)."""
+    if not text or "@" not in text:
+        return []
+    users = db.query(User).all()
+    candidates = []
+    for u in users:
+        for key in _mention_keys_for_user(u):
+            candidates.append((len(key), key, u))
+    candidates.sort(key=lambda x: (-x[0], x[1].lower()))
+    found = []
+    seen_ids = set()
+    for _, key, u in candidates:
+        # Boundary: not part of a larger word; allow spaces inside full_name keys
+        pattern = r"(?<![\w])@" + re.escape(key) + r"(?![\w])"
+        if re.search(pattern, text, flags=re.IGNORECASE | re.UNICODE):
+            if u.id not in seen_ids:
+                seen_ids.add(u.id)
+                found.append(u)
+    return found
+
+def _task_observers_payload(db: Session, task_id: int) -> list:
+    obs = (
+        db.query(TaskObserver)
+        .filter(TaskObserver.task_id == task_id)
+        .order_by(TaskObserver.id.asc())
+        .all()
+    )
+    return [{"id": o.id, "user_id": o.user_id, "name": o.name} for o in obs]
+
+def _ensure_observers_from_mentions(db: Session, task: Task, text: str) -> list:
+    """Add mentioned users as TaskObserver if they are not creator/assignee/observer.
+    Returns list of observer dicts for the task after update.
+    """
+    mentioned = _find_mentioned_users(db, text)
+    if not mentioned:
+        return _task_observers_payload(db, task.id)
+
+    assignee_uids = {a.user_id for a in (task.assignees or []) if a.user_id}
+    assignee_names = {(a.name or "").strip().lower() for a in (task.assignees or []) if a.name}
+    if task.assignee:
+        assignee_names.add(task.assignee.strip().lower())
+    observer_uids = {o.user_id for o in (task.observers or []) if o.user_id}
+    observer_names = {(o.name or "").strip().lower() for o in (task.observers or []) if o.name}
+    creator_id = task.creator_id
+    creator_name = (task.created_by or "").strip().lower()
+
+    for u in mentioned:
+        display = (u.full_name or u.username or "").strip()
+        if not display:
+            continue
+        uname = (u.username or "").strip().lower()
+        dname = display.lower()
+        if creator_id and u.id == creator_id:
+            continue
+        if creator_name and (dname == creator_name or uname == creator_name):
+            continue
+        if u.id in assignee_uids or dname in assignee_names or uname in assignee_names:
+            continue
+        if u.id in observer_uids or dname in observer_names or uname in observer_names:
+            continue
+        db.add(TaskObserver(task_id=task.id, user_id=u.id, name=display))
+        observer_uids.add(u.id)
+        observer_names.add(dname)
+        if uname:
+            observer_names.add(uname)
+
+    db.flush()
+    return _task_observers_payload(db, task.id)
+
 def _sync_task_checklist(db: Session, task: Task, items):
     """Replace checklist when list provided."""
     db.query(TaskChecklistItem).filter(TaskChecklistItem.task_id == task.id).delete()
@@ -1241,9 +1330,12 @@ def create_task_comment(
         return JSONResponse(status_code=400, content={"error": "Пустой комментарий"})
     comment = TaskComment(task_id=task_id, user_id=user.id, text=text)
     db.add(comment)
+    observers = _ensure_observers_from_mentions(db, task, text)
     db.commit()
     db.refresh(comment)
-    return _task_comment_to_dict(comment)
+    result = _task_comment_to_dict(comment)
+    result["observers"] = observers
+    return result
 
 @app.get("/api/tasks/{task_id}/checklist")
 def get_task_checklist(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
