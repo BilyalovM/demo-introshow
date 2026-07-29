@@ -57,9 +57,12 @@ class Equipment(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     category = Column(String, index=True) # Звук, Свет, Экраны, Сцена, Логистика, Персонал, Расходники
-    price = Column(Float, default=0.0) # Цена за единицу (KZT)
+    price = Column(Float, default=0.0) # Цена клиенту за единицу (KZT)
+    cost_price = Column(Float, default=0.0)  # себестоимость (для субаренды — цена у поставщика)
     stock_quantity = Column(Integer, default=0) # Общее количество на складе
     status = Column(String, default="Доступно") # Доступно / В ремонте
+    warehouse_type = Column(String, default="own")  # own — свой склад / subrental — субаренда
+    supplier = Column(String, nullable=True)  # поставщик субаренды
     folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
     description = Column(String, nullable=True)
     photo_url = Column(String, nullable=True)

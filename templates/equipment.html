@@ -32,15 +32,21 @@
     
 
     <div class="card" style="padding: 1.5rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap:wrap; gap:10px;">
             <div class="breadcrumbs" id="breadcrumbs">
                 <!-- Injected via JS -->
             </div>
-            <div style="display: flex; gap: 0.5rem;">
+            <div style="display: flex; gap: 0.5rem; flex-wrap:wrap;">
                 <button class="btn btn-sm" onclick="openFolderModal()">+ Новая папка</button>
                 <button class="btn btn-sm btn-primary" onclick="openEquipModal()">+ Добавить позицию</button>
             </div>
         </div>
+
+        <div style="display:flex; gap:8px; margin-bottom:1rem; flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm wh-tab active" data-wh="own" onclick="setWarehouseTab('own')">Свой склад</button>
+            <button type="button" class="btn btn-sm wh-tab" data-wh="subrental" onclick="setWarehouseTab('subrental')">Субаренда</button>
+        </div>
+        <p class="muted" id="whHint" style="font-size:13px;margin:0 0 1rem;">Своё оборудование. Для субаренды укажите поставщика и себестоимость.</p>
 
         <div style="margin-bottom: 1.5rem;">
             <input type="text" class="input" id="searchInput" placeholder="Поиск оборудования..." onkeyup="renderView()" style="max-width: 300px;">
@@ -57,7 +63,9 @@
                         <th>ID</th>
                         <th>Фото</th>
                         <th>Название</th>
-                        <th>Цена (₸)</th>
+                        <th>Цена клиенту</th>
+                        <th id="thCost">Себест.</th>
+                        <th id="thSupplier">Поставщик</th>
                         <th>Всего</th>
                         <th>В аренде</th>
                         <th>Доступно</th>
@@ -138,21 +146,43 @@
                     
                     <div style="display: flex; gap: 1rem;">
                         <div class="form-group" style="flex: 1;">
-                            <label>Цена (₸)</label>
+                            <label>Склад</label>
+                            <select id="eq_warehouse_type" onchange="toggleSubrentalFields()">
+                                <option value="own">Свой склад</option>
+                                <option value="subrental">Субаренда</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label>Статус</label>
+                            <select id="eq_status">
+                                <option value="Доступно">Доступно</option>
+                                <option value="В ремонте">В ремонте</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 1rem;">
+                        <div class="form-group" style="flex: 1;">
+                            <label>Цена клиенту (₸)</label>
                             <input type="number" id="eq_price" min="0" required>
                         </div>
                         <div class="form-group" style="flex: 1;">
-                            <label>Кол-во на складе</label>
+                            <label>Кол-во</label>
                             <input type="number" id="eq_qty" min="0" required>
                         </div>
                     </div>
-                    
-                    <div class="form-group">
-                        <label>Статус</label>
-                        <select id="eq_status">
-                            <option value="Доступно">Доступно</option>
-                            <option value="В ремонте">В ремонте</option>
-                        </select>
+
+                    <div id="subrentalFields" style="display:none;">
+                        <div style="display: flex; gap: 1rem;">
+                            <div class="form-group" style="flex: 1;">
+                                <label>Себестоимость / цена у поставщика (₸)</label>
+                                <input type="number" id="eq_cost" min="0" value="0">
+                            </div>
+                            <div class="form-group" style="flex: 1;">
+                                <label>Поставщик</label>
+                                <input type="text" id="eq_supplier" placeholder="Компания / контакт">
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="form-group">
@@ -179,10 +209,32 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<style>
+.wh-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.badge-sub { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; background:#fff7ed; color:#c2410c; margin-left:6px; }
+</style>
 <script>
         let equipmentData = [];
         let foldersData = [];
         let currentFolderId = null;
+        let warehouseTab = 'own';
+
+        function setWarehouseTab(tab) {
+            warehouseTab = tab;
+            document.querySelectorAll('.wh-tab').forEach(b => b.classList.toggle('active', b.dataset.wh === tab));
+            document.getElementById('whHint').textContent = tab === 'subrental'
+                ? 'Внешний склад (субаренда): позиции у поставщиков. В смете считается маржа = цена клиенту − себестоимость.'
+                : 'Своё оборудование. Для субаренды переключитесь на вкладку «Субаренда».';
+            const isSub = tab === 'subrental';
+            document.getElementById('thCost').style.display = isSub ? '' : 'none';
+            document.getElementById('thSupplier').style.display = isSub ? '' : 'none';
+            renderView();
+        }
+
+        function toggleSubrentalFields() {
+            const isSub = document.getElementById('eq_warehouse_type').value === 'subrental';
+            document.getElementById('subrentalFields').style.display = isSub ? 'block' : 'none';
+        }
 
         async function loadData() {
             try {
@@ -196,7 +248,7 @@
                 }
                 equipmentData = await eqRes.json();
                 foldersData = await fRes.json();
-                renderView();
+                setWarehouseTab(warehouseTab);
                 populateFolderSelect();
             } catch (err) { 
                 alert("Ошибка загрузки данных: " + err.message);
@@ -234,7 +286,13 @@
 
             const tbody = document.querySelector('#equipTable tbody');
             tbody.innerHTML = '';
-            equipmentData.filter(e => search ? e.name.toLowerCase().includes(search) : e.folder_id === currentFolderId).forEach(item => {
+            const isSub = warehouseTab === 'subrental';
+            equipmentData.filter(e => {
+                const w = e.warehouse_type || 'own';
+                if (w !== warehouseTab) return false;
+                if (search) return e.name.toLowerCase().includes(search);
+                return e.folder_id === currentFolderId;
+            }).forEach(item => {
                 const tr = document.createElement('tr');
                 let img = item.photo_url ? `<img src="${item.photo_url}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">` : '📷';
                 let statusBadge = `<span style="color: ${item.status === 'Доступно' ? 'green' : 'red'}">${item.status}</span>`;
@@ -245,7 +303,10 @@
                     customFieldsHtml += '</div>';
                 }
                 let availColor = item.available_quantity <= 0 ? 'color: var(--danger); font-weight: bold;' : '';
-                tr.innerHTML = `<td>${item.id}</td><td>${img}</td><td><strong>${item.name}</strong><br><small style="color:var(--text-2)">Категория: ${item.category}</small></td><td>${item.price.toLocaleString()} ₸</td><td>${item.stock_quantity}</td><td>${item.rented_quantity}</td><td style="${availColor}">${item.available_quantity}</td><td>${statusBadge}</td><td><div style="font-size: 0.85rem;">${item.description || ''}</div>${customFieldsHtml}</td><td class="actions"><div style="display:flex;gap:0.5rem;"><button class="btn btn-sm" onclick='openEquipModal(${JSON.stringify(item).replace(/'/g, "&apos;")})'>Редакт.</button> <button class="btn btn-sm btn-danger" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button></div></td>`;
+                const subBadge = isSub ? '<span class="badge-sub">субаренда</span>' : '';
+                const costCell = isSub ? `<td>${Number(item.cost_price || 0).toLocaleString()} ₸</td>` : '<td style="display:none"></td>';
+                const supCell = isSub ? `<td>${item.supplier || '—'}</td>` : '<td style="display:none"></td>';
+                tr.innerHTML = `<td>${item.id}</td><td>${img}</td><td><strong>${item.name}</strong>${subBadge}<br><small style="color:var(--text-2)">Категория: ${item.category}</small></td><td>${Number(item.price).toLocaleString()} ₸</td>${costCell}${supCell}<td>${item.stock_quantity}</td><td>${item.rented_quantity}</td><td style="${availColor}">${item.available_quantity}</td><td>${statusBadge}</td><td><div style="font-size: 0.85rem;">${item.description || ''}</div>${customFieldsHtml}</td><td class="actions"><div style="display:flex;gap:0.5rem;"><button class="btn btn-sm" onclick='openEquipModal(${JSON.stringify(item).replace(/'/g, "&apos;")})'>Редакт.</button> <button class="btn btn-sm btn-danger" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button></div></td>`;
                 tbody.appendChild(tr);
             });
         }
@@ -313,6 +374,9 @@
                 document.getElementById('eq_qty').value = item.stock_quantity;
                 document.getElementById('eq_status').value = item.status;
                 document.getElementById('eq_desc').value = item.description || '';
+                document.getElementById('eq_warehouse_type').value = item.warehouse_type || 'own';
+                document.getElementById('eq_cost').value = item.cost_price || 0;
+                document.getElementById('eq_supplier').value = item.supplier || '';
                 if (item.custom_fields) for (const [k, v] of Object.entries(item.custom_fields)) addCustomField(k, v);
                 photoPreview.innerHTML = item.photo_url ? `<img src="${item.photo_url}">` : '<span style="color:var(--text-light)">Нет фото</span>';
                 document.getElementById('eq_photo_input').style.display = 'block';
@@ -320,9 +384,13 @@
                 document.getElementById('eq_modal_title').innerText = "Добавить оборудование";
                 document.getElementById('eq_id').value = '';
                 document.getElementById('eq_folder_id').value = currentFolderId || '';
+                document.getElementById('eq_warehouse_type').value = warehouseTab;
+                document.getElementById('eq_cost').value = 0;
+                document.getElementById('eq_supplier').value = '';
                 photoPreview.innerHTML = `<span style="color:var(--text-light)">Сохраните позицию перед загрузкой фото</span>`;
                 document.getElementById('eq_photo_input').style.display = 'none';
             }
+            toggleSubrentalFields();
             document.getElementById('equipModal').style.display = 'flex';
         }
 
@@ -343,6 +411,9 @@
                 status: document.getElementById('eq_status').value,
                 folder_id: document.getElementById('eq_folder_id').value || null,
                 description: document.getElementById('eq_desc').value,
+                warehouse_type: document.getElementById('eq_warehouse_type').value || 'own',
+                cost_price: parseFloat(document.getElementById('eq_cost').value) || 0,
+                supplier: document.getElementById('eq_supplier').value.trim() || null,
                 custom_fields
             };
 

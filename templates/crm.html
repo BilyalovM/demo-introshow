@@ -495,9 +495,11 @@
                     <option value="whatsapp">WhatsApp</option>
                     <option value="telegram">Telegram</option>
                     <option value="instagram">Instagram</option>
+                    <option value="site">Сайт</option>
+                    <option value="maps">Карты</option>
+                    <option value="onec">1С</option>
                     <option value="manual">Вручную</option>
                     <option value="referral">Рекомендация</option>
-                    <option value="site">Сайт</option>
                     <option value="other">Другое</option>
                 </select>
             </label>
@@ -666,8 +668,10 @@
                                         <option value="whatsapp">WhatsApp</option>
                                         <option value="telegram">Telegram</option>
                                         <option value="instagram">Instagram</option>
-                                        <option value="referral">Рекомендация</option>
                                         <option value="site">Сайт</option>
+                                        <option value="maps">Карты</option>
+                                        <option value="onec">1С</option>
+                                        <option value="referral">Рекомендация</option>
                                         <option value="other">Другое</option>
                                     </select>
                                 </label>
@@ -879,8 +883,10 @@
                 <span>Источник</span>
                 <select id="new-deal-source">
                     <option value="manual">Вручную</option>
-                    <option value="referral">Рекомендация</option>
                     <option value="site">Сайт</option>
+                    <option value="maps">Карты</option>
+                    <option value="onec">1С</option>
+                    <option value="referral">Рекомендация</option>
                     <option value="other">Другое</option>
                 </select>
             </label>
@@ -1122,7 +1128,7 @@
                 card.addEventListener('dragstart', dragStart);
                 card.addEventListener('click', () => openDealSlider(deal.id));
 
-                const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣' }[deal.chat_channel || deal.source] || '';
+                const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣', site: '🌐', maps: '📍', onec: '🧮' }[deal.chat_channel || deal.source] || '';
                 const overdueBadge = deal.has_overdue_activity ? '<span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700;">!</span>' : '';
                 const assignee = deal.assignee_name ? `<span style="font-size:11px;color:var(--muted);">👤 ${escapeHtml(deal.assignee_name)}</span>` : '';
                 card.innerHTML = `

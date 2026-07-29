@@ -59,6 +59,18 @@
         </div>
 
 
+        <div class="card">
+            <h3 style="margin-top:0;">Источники лидов</h3>
+            <p style="margin-bottom:10px">Публичная форма создаёт сделку в CRM. Можно встроить на сайт или дать ссылку для карт.</p>
+            <ul style="margin:0 0 12px 1.2rem; line-height:1.6; font-size:14px;">
+                <li>Сайт: <a href="/lead?source=site" target="_blank" style="color:var(--primary)">/lead?source=site</a></li>
+                <li>Карты: <a href="/lead?source=maps" target="_blank" style="color:var(--primary)">/lead?source=maps</a></li>
+                <li>API: <code>POST /api/leads</code> (JSON: name, phone, source…)</li>
+                <li>1С: <code>POST /api/1c/leads</code> (ключ ONEC_API_KEY)</li>
+            </ul>
+            <p class="muted" style="font-size:12.5px;margin:0">Опционально защитите форму переменной окружения <code>LEAD_API_KEY</code> (заголовок X-Lead-Key).</p>
+        </div>
+
         {% if request.state.user and request.state.user.role == 'admin' %}
         <div class="card">
             <h3 style="margin-top:0;">Сотрудники</h3>

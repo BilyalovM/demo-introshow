@@ -122,6 +122,10 @@ with Session(engine) as session:
         "ALTER TABLE deals ADD COLUMN is_qualified BOOLEAN DEFAULT 0",
         "ALTER TABLE deals ADD COLUMN is_archived BOOLEAN DEFAULT 0",
         "ALTER TABLE contacts ADD COLUMN is_primary BOOLEAN DEFAULT 0",
+        # Субаренда / внешний склад
+        "ALTER TABLE equipment ADD COLUMN cost_price FLOAT DEFAULT 0",
+        "ALTER TABLE equipment ADD COLUMN warehouse_type VARCHAR DEFAULT 'own'",
+        "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
     ]:
         try:
             session.execute(text(ddl))
@@ -199,6 +203,21 @@ class EquipmentCreate(BaseModel):
     power_w: Optional[float] = None
     dispersion: Optional[str] = None
     custom_fields: Optional[Dict[str, str]] = {}
+    cost_price: Optional[float] = 0.0
+    warehouse_type: Optional[str] = "own"  # own | subrental
+    supplier: Optional[str] = None
+
+LEAD_SOURCES = {
+    "manual": "Вручную",
+    "whatsapp": "WhatsApp",
+    "telegram": "Telegram",
+    "instagram": "Instagram",
+    "site": "Сайт",
+    "maps": "Карты (2GIS / Google / Яндекс)",
+    "onec": "1С",
+    "referral": "Рекомендация",
+    "other": "Другое",
+}
     
 class FolderCreate(BaseModel):
     name: str
@@ -286,6 +305,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/tg/webhook", "/api/wa/webhook", "/api/ig/webhook",
     "/tracking/", "/api/push/", "/api/1c/", "/favicon", "/docs", "/openapi.json",
     "/roadmap",  # публичный статус/roadmap для клиента
+    "/lead", "/api/leads",  # публичный захват лидов с сайта/карт
 )
 
 
@@ -332,6 +352,146 @@ async def read_login(request: Request):
 async def read_roadmap_public(request: Request):
     """Публичная страница статуса CRM (без логина) — обновляется через static/roadmap.json."""
     return templates.TemplateResponse("roadmap_public.html", {"request": request})
+
+@app.get("/lead", response_class=HTMLResponse)
+async def read_lead_form(request: Request, source: str = "site"):
+    """Публичная форма заявки (сайт / карты). Можно встраивать iframe или давать прямую ссылку."""
+    src = source if source in LEAD_SOURCES else "site"
+    return templates.TemplateResponse(
+        "lead_public.html",
+        {"request": request, "source": src, "sources": LEAD_SOURCES},
+    )
+
+
+class PublicLeadIn(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    company: Optional[str] = None
+    message: Optional[str] = None
+    event_date: Optional[str] = None
+    event_address: Optional[str] = None
+    source: Optional[str] = "site"  # site / maps / onec / other
+
+
+def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str] = None) -> dict:
+    """Создаёт компанию/контакт + сделку на первой стадии воронки."""
+    source = (force_source or payload.source or "site").strip().lower()
+    if source not in LEAD_SOURCES:
+        source = "other"
+
+    name = (payload.name or "").strip() or "Клиент"
+    phone = (payload.phone or "").strip() or None
+    email = (payload.email or "").strip() or None
+    company_name = (payload.company or "").strip() or name
+    message = (payload.message or "").strip()
+    event_date = (payload.event_date or "").strip() or datetime.today().strftime("%Y-%m-%d")
+    event_address = (payload.event_address or "").strip() or None
+
+    company = None
+    if phone:
+        company = db.query(Company).filter(Company.phone == phone).first()
+    if not company and email:
+        company = db.query(Company).filter(Company.email == email).first()
+    if not company:
+        company = Company(
+            name=company_name,
+            bin="",
+            director_name=name,
+            phone=phone or "",
+            email=email or "",
+            requisites="",
+        )
+        db.add(company)
+        db.commit()
+        db.refresh(company)
+
+    contact = db.query(Contact).filter(
+        Contact.company_id == company.id,
+        Contact.name == name,
+    ).first()
+    if not contact:
+        contact = Contact(
+            name=name,
+            phone=phone,
+            email=email,
+            company_id=company.id,
+            is_primary=True,
+            comment=message or None,
+        )
+        db.add(contact)
+        db.commit()
+        db.refresh(contact)
+
+    pipeline = db.query(Pipeline).order_by(Pipeline.id).first()
+    stage = None
+    if pipeline:
+        stage = db.query(Stage).filter(Stage.pipeline_id == pipeline.id).order_by(Stage.order_index, Stage.id).first()
+
+    title_bits = [f"Заявка: {name}"]
+    if source in LEAD_SOURCES:
+        title_bits.append(f"({LEAD_SOURCES[source]})")
+    title = " ".join(title_bits)
+
+    deal = Deal(
+        title=title[:200],
+        company_id=company.id,
+        contact_id=contact.id,
+        pipeline_id=pipeline.id if pipeline else None,
+        stage=stage.id if stage else 1,
+        setup_date=event_date,
+        event_date=event_date,
+        event_address=event_address,
+        comment=message or None,
+        source=source,
+        assignee_id=_default_assignee_id(db),
+        is_qualified=False,
+    )
+    db.add(deal)
+    db.commit()
+    db.refresh(deal)
+    db.add(DealHistory(
+        deal_id=deal.id,
+        action_text=f"Лид создан из источника «{LEAD_SOURCES.get(source, source)}»",
+    ))
+    db.commit()
+    return {
+        "ok": True,
+        "deal_id": deal.id,
+        "company_id": company.id,
+        "contact_id": contact.id,
+        "source": source,
+        "title": deal.title,
+    }
+
+
+@app.get("/api/leads/sources")
+def api_lead_sources():
+    return LEAD_SOURCES
+
+
+@app.post("/api/leads")
+def api_public_lead(payload: PublicLeadIn, request: Request, db: Session = Depends(get_db)):
+    """Публичный захват лида (сайт / карты). Опционально LEAD_API_KEY в заголовке X-Lead-Key."""
+    expected = (os.getenv("LEAD_API_KEY") or "").strip()
+    if expected:
+        got = (request.headers.get("X-Lead-Key") or request.query_params.get("key") or "").strip()
+        if got != expected:
+            raise HTTPException(status_code=401, detail="Invalid lead API key")
+    if not (payload.name or "").strip() and not (payload.phone or "").strip():
+        raise HTTPException(status_code=400, detail="Укажите имя или телефон")
+    return _ingest_lead(db, payload)
+
+
+@app.post("/api/1c/leads")
+def api_1c_leads(payload: PublicLeadIn, request: Request, db: Session = Depends(get_db)):
+    """Приём лидов из 1С (тот же ключ ONEC_API_KEY)."""
+    expected = (os.getenv("ONEC_API_KEY") or "").strip()
+    key = (request.headers.get("X-API-Key") or request.headers.get("X-1C-Key") or "").strip()
+    if expected and key != expected:
+        raise HTTPException(status_code=401, detail="Invalid 1C API key")
+    payload.source = payload.source or "onec"
+    return _ingest_lead(db, payload, force_source="onec")
 
 @app.post("/api/login")
 async def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
@@ -932,8 +1092,11 @@ def create_folder(f: FolderCreate, db: Session = Depends(get_db)):
 
 # -- Equipment --
 @app.get("/api/equipment")
-def get_equipment(db: Session = Depends(get_db)):
-    equip_list = db.query(Equipment).all()
+def get_equipment(warehouse_type: Optional[str] = None, db: Session = Depends(get_db)):
+    q = db.query(Equipment)
+    if warehouse_type in ("own", "subrental"):
+        q = q.filter(Equipment.warehouse_type == warehouse_type)
+    equip_list = q.all()
     
     # Calculate rented quantities based on stages
     rented_counts = db.query(
@@ -950,6 +1113,7 @@ def get_equipment(db: Session = Depends(get_db)):
     for eq in equip_list:
         rented = rented_map.get(eq.id, 0)
         stock = eq.stock_quantity or 0
+        wtype = getattr(eq, "warehouse_type", None) or "own"
         
         # Build dictionary
         eq_dict = {
@@ -957,6 +1121,9 @@ def get_equipment(db: Session = Depends(get_db)):
             "name": eq.name,
             "category": eq.category,
             "price": eq.price,
+            "cost_price": getattr(eq, "cost_price", None) or 0,
+            "warehouse_type": wtype,
+            "supplier": getattr(eq, "supplier", None),
             "stock_quantity": stock,
             "status": eq.status,
             "folder_id": eq.folder_id,
@@ -1055,7 +1222,12 @@ def get_settings_status(user: User = Depends(get_current_user)):
 
 @app.post("/api/equipment")
 def create_equipment(item: EquipmentCreate, db: Session = Depends(get_db)):
-    db_equip = Equipment(**item.dict())
+    data = item.dict()
+    wtype = (data.get("warehouse_type") or "own").strip().lower()
+    data["warehouse_type"] = "subrental" if wtype == "subrental" else "own"
+    data["cost_price"] = float(data.get("cost_price") or 0)
+    data["supplier"] = (data.get("supplier") or None) or None
+    db_equip = Equipment(**data)
     db.add(db_equip)
     db.commit()
     db.refresh(db_equip)
@@ -1065,7 +1237,11 @@ def create_equipment(item: EquipmentCreate, db: Session = Depends(get_db)):
 def update_equipment(equip_id: int, item: EquipmentCreate, db: Session = Depends(get_db)):
     db_equip = db.query(Equipment).filter(Equipment.id == equip_id).first()
     if db_equip:
-        for k, v in item.dict().items():
+        data = item.dict()
+        wtype = (data.get("warehouse_type") or "own").strip().lower()
+        data["warehouse_type"] = "subrental" if wtype == "subrental" else "own"
+        data["cost_price"] = float(data.get("cost_price") or 0)
+        for k, v in data.items():
             setattr(db_equip, k, v)
         db.commit()
     return {"status": "success"}

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Заявка — Intro Show</title>
+  <style>
+    :root { --bg:#f4f6f8; --surface:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --primary:#2563eb; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width: 480px; margin: 0 auto; padding: 28px 16px 48px; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:22px 20px; }
+    h1 { font-size:1.35rem; margin:0 0 6px; }
+    .sub { color:var(--muted); font-size:0.92rem; margin:0 0 18px; }
+    label { display:block; font-size:13px; font-weight:600; margin:12px 0 6px; }
+    input, select, textarea {
+      width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:10px;
+      font: inherit; background:#fff; color:var(--text);
+    }
+    button {
+      width:100%; margin-top:18px; padding:12px 14px; border:none; border-radius:10px;
+      background:var(--primary); color:#fff; font-weight:700; font-size:15px; cursor:pointer;
+    }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .ok { background:#dcfce7; color:#166534; border-radius:10px; padding:12px; margin-top:14px; font-size:14px; display:none; }
+    .err { background:#fee2e2; color:#991b1b; border-radius:10px; padding:12px; margin-top:14px; font-size:14px; display:none; }
+    .brand { font-size:12px; color:var(--muted); margin-bottom:14px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">Intro Show Rental</div>
+    <div class="card">
+      <h1>Оставить заявку</h1>
+      <p class="sub">Мы свяжемся с вами и подготовим смету под мероприятие.</p>
+      <form id="leadForm">
+        <label>Имя *</label>
+        <input id="name" required placeholder="Как к вам обращаться" />
+        <label>Телефон *</label>
+        <input id="phone" required placeholder="+7 …" />
+        <label>Email</label>
+        <input id="email" type="email" placeholder="optional@mail.kz" />
+        <label>Компания</label>
+        <input id="company" placeholder="ТОО / ИП / частное лицо" />
+        <label>Источник</label>
+        <select id="source">
+          {% for key, label in sources.items() %}
+          <option value="{{ key }}" {% if key == source %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <label>Дата мероприятия</label>
+        <input id="event_date" type="date" />
+        <label>Адрес / площадка</label>
+        <input id="event_address" placeholder="Город, площадка" />
+        <label>Комментарий</label>
+        <textarea id="message" rows="3" placeholder="Что нужно: звук, свет, сцена…"></textarea>
+        <button type="submit" id="btn">Отправить заявку</button>
+      </form>
+      <div class="ok" id="ok"></div>
+      <div class="err" id="err"></div>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.get('source')) {
+      const sel = document.getElementById('source');
+      if ([...sel.options].some(o => o.value === params.get('source'))) sel.value = params.get('source');
+    }
+    document.getElementById('leadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btn');
+      const ok = document.getElementById('ok');
+      const err = document.getElementById('err');
+      ok.style.display = err.style.display = 'none';
+      btn.disabled = true;
+      const payload = {
+        name: document.getElementById('name').value.trim(),
+        phone: document.getElementById('phone').value.trim(),
+        email: document.getElementById('email').value.trim(),
+        company: document.getElementById('company').value.trim(),
+        source: document.getElementById('source').value,
+        event_date: document.getElementById('event_date').value || null,
+        event_address: document.getElementById('event_address').value.trim(),
+        message: document.getElementById('message').value.trim(),
+      };
+      try {
+        const res = await fetch('/api/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'Ошибка отправки');
+        ok.style.display = 'block';
+        ok.textContent = 'Заявка принята. Номер сделки: #' + data.deal_id;
+        e.target.reset();
+        if (params.get('source')) document.getElementById('source').value = params.get('source');
+      } catch (ex) {
+        err.style.display = 'block';
+        err.textContent = ex.message || 'Не удалось отправить';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

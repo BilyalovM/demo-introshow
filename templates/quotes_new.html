@@ -28,6 +28,11 @@
         </div>
         <div class="card">
             <h3 style="margin-top:0">Каталог — добавить позиции</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+                <button type="button" class="btn btn-sm cat-wh active" data-wh="all" onclick="setCatWarehouse('all')">Все</button>
+                <button type="button" class="btn btn-sm cat-wh" data-wh="own" onclick="setCatWarehouse('own')">Свой склад</button>
+                <button type="button" class="btn btn-sm cat-wh" data-wh="subrental" onclick="setCatWarehouse('subrental')">Субаренда</button>
+            </div>
             <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:10px" oninput="renderCatalog()"/>
             <div id="catalogContainer"></div>
         </div>
@@ -65,6 +70,8 @@
                 <div class="row"><span class="muted">После скидки</span><span id="tAfter">0 ₸</span></div>
                 <div class="row"><span class="muted" id="tTaxLabel">Налог 0%</span><span id="tTax">0 ₸</span></div>
                 <div class="row big"><span>Итого</span><span id="tGrand">0 ₸</span></div>
+                <div class="row" id="tCostRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)"><span class="muted">Себестоимость (субаренда)</span><span id="tCost">0 ₸</span></div>
+                <div class="row" id="tMarginRow" style="display:none"><span class="muted">Маржа</span><span id="tMargin">0 ₸</span></div>
             </div>
         </div>
         <div class="card">
@@ -106,6 +113,8 @@
 }
 .cat-stepper .btn { min-width: 32px; }
 .cat-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.badge-sub { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 6px; border-radius:999px; background:#fff7ed; color:#c2410c; }
+.cat-wh.active { background: var(--primary); color:#fff; border-color: var(--primary); }
 .conflict-icon {
     color: #fff;
     font-weight: 800;
@@ -231,7 +240,14 @@ const QUOTE_ID = {{ quote_id or 'null' }};
 let equipment = [];
 let folders = [];
 let companies = [];
-let cart = [];               // {id, name, category, price, stock_price, qty, days}
+let cart = [];               // {id, name, category, price, stock_price, qty, days, warehouse_type, cost_price, supplier}
+let catalogWarehouse = 'all';
+
+function setCatWarehouse(tab) {
+    catalogWarehouse = tab;
+    document.querySelectorAll('.cat-wh').forEach(b => b.classList.toggle('active', b.dataset.wh === tab));
+    renderCatalog();
+}
 let conflictsData = {};      // { eq_id: { booked, conflicts: [] } }
 let savedDealId = QUOTE_ID;
 
@@ -321,6 +337,9 @@ async function loadQuote() {
             stock_price: it.stock_price,
             qty: it.quantity,
             days: it.days,
+            warehouse_type: eq ? (eq.warehouse_type || 'own') : 'own',
+            cost_price: eq ? (eq.cost_price || 0) : 0,
+            supplier: eq ? eq.supplier : null,
         });
     });
     renderCart();
@@ -362,6 +381,8 @@ function renderCatalog() {
 
     const grouped = {};
     equipment.forEach(eq => {
+        const w = eq.warehouse_type || 'own';
+        if (catalogWarehouse !== 'all' && w !== catalogWarehouse) return;
         if (search && !eq.name.toLowerCase().includes(search)) return;
         const fname = eq.folder ? eq.folder.name : (eq.category || 'Без категории');
         (grouped[fname] = grouped[fname] || []).push(eq);
@@ -404,8 +425,11 @@ function renderCatalog() {
                         <button type="button" class="btn btn-sm btn-primary" title="Добавить ещё" onclick="addToCart(${item.id})">+</button>
                    </div>`
                 : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+</button>`;
+            const isSub = (item.warehouse_type || 'own') === 'subrental';
+            const subTag = isSub ? `<span class="badge-sub" title="${esc(item.supplier || 'субаренда')}">субаренда</span>` : '';
+            const costHint = isSub && item.cost_price ? `<div class="muted" style="font-size:11px">себест. ${fmt(item.cost_price)} ₸</div>` : '';
             tr.innerHTML = `
-                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${conflictHtml}</span></td>
+                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${subTag} ${conflictHtml}</span>${costHint}</td>
                 <td class="cat-qty-cell">${badgeHtml}</td>
                 <td class="num muted cat-price">${fmt(item.price)} ₸</td>
                 <td class="num cat-actions">${actionsHtml}</td>`;
@@ -467,7 +491,36 @@ function addToCart(id) {
     }
 
     if (existing) existing.qty += 1;
-    else cart.push({ id: item.id, name: item.name, category: item.category, price: item.price, stock_price: item.price, qty: 1, days: 1 });
+    else cart.push({
+        id: item.id,
+        name: item.name,
+        category: item.category,
+        price: item.price,
+        stock_price: item.price,
+        qty: 1,
+        days: 1,
+        warehouse_type: item.warehouse_type || 'own',
+        cost_price: item.cost_price || 0,
+        supplier: item.supplier || null,
+    });
+
+    // Если своего не хватает — подсказать субаренду с тем же названием
+    const c2 = conflictsData[id];
+    if ((item.warehouse_type || 'own') === 'own' && c2) {
+        const available = item.stock_quantity - c2.booked;
+        if (newQty > available) {
+            const alts = equipment.filter(e =>
+                (e.warehouse_type || 'own') === 'subrental' &&
+                (e.name || '').trim().toLowerCase() === (item.name || '').trim().toLowerCase()
+            );
+            if (alts.length) {
+                const names = alts.map(a => `«${a.name}»${a.supplier ? ' / ' + a.supplier : ''} — ${fmt(a.price)} ₸`).join('\n');
+                if (confirm(`На своём складе мало «${item.name}».\n\nЕсть в субаренде:\n${names}\n\nОткрыть вкладку «Субаренда» в каталоге?`)) {
+                    setCatWarehouse('subrental');
+                }
+            }
+        }
+    }
     renderCart();
 }
 
@@ -548,9 +601,11 @@ function renderCart() {
 
     cart.forEach(item => {
         const changed = item.price !== item.stock_price;
+        const sub = (item.warehouse_type || 'own') === 'subrental'
+            ? ' <span class="badge-sub">субаренда</span>' : '';
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td class="ct-name">${esc(item.name)}${changed ? ' <span class="muted" style="font-size:11px">(цена изменена)</span>' : ''}</td>
+            <td class="ct-name">${esc(item.name)}${sub}${changed ? ' <span class="muted" style="font-size:11px">(цена изменена)</span>' : ''}</td>
             <td class="num ct-qty"><input type="number" class="num" style="width:52px;padding:4px" value="${item.qty}" min="1" onchange="updateCartItem(${item.id}, 'qty', this.value)"> шт</td>
             <td class="num ct-days"><input type="number" class="num" style="width:52px;padding:4px" value="${item.days}" min="1" onchange="updateCartItem(${item.id}, 'days', this.value)"> дн</td>
             <td class="num ct-price"><input type="number" class="price-input" value="${item.price}" min="0" onchange="updateCartPrice(${item.id}, this.value)"> ₸</td>
@@ -569,11 +624,14 @@ function renderCart() {
 const FIXED_CATS = ["Логистика, Тех персонал", "Логистика", "Персонал", "Расходники"];
 
 function calculateTotals() {
-    let eqTotal = 0, fixedTotal = 0;
+    let eqTotal = 0, fixedTotal = 0, costTotal = 0;
     cart.forEach(item => {
         const sum = item.price * item.qty * item.days;
         if (FIXED_CATS.includes(item.category)) fixedTotal += sum;
         else eqTotal += sum;
+        if ((item.warehouse_type || 'own') === 'subrental') {
+            costTotal += (Number(item.cost_price) || 0) * item.qty * item.days;
+        }
     });
 
     const discountPercent = parseFloat(document.getElementById('discountInput').value) || 0;
@@ -581,6 +639,7 @@ function calculateTotals() {
     const discountSum = (eqTotal * discountPercent) / 100;
     const afterDiscount = eqTotal - discountSum + fixedTotal;
     const taxSum = (afterDiscount * taxPercent) / 100;
+    const grand = afterDiscount + taxSum;
 
     document.getElementById('tEq').textContent = fmt(eqTotal) + ' ₸';
     document.getElementById('tFixed').textContent = fmt(fixedTotal) + ' ₸';
@@ -590,7 +649,15 @@ function calculateTotals() {
     document.getElementById('tAfter').textContent = fmt(afterDiscount) + ' ₸';
     document.getElementById('tTax').textContent = fmt(taxSum) + ' ₸';
     document.getElementById('tTaxLabel').textContent = `Налог ${taxPercent}%`;
-    document.getElementById('tGrand').textContent = fmt(afterDiscount + taxSum) + ' ₸';
+    document.getElementById('tGrand').textContent = fmt(grand) + ' ₸';
+
+    const showCost = costTotal > 0;
+    document.getElementById('tCostRow').style.display = showCost ? 'flex' : 'none';
+    document.getElementById('tMarginRow').style.display = showCost ? 'flex' : 'none';
+    if (showCost) {
+        document.getElementById('tCost').textContent = fmt(costTotal) + ' ₸';
+        document.getElementById('tMargin').textContent = fmt(grand - costTotal) + ' ₸';
+    }
 }
 
 document.getElementById('discountInput').addEventListener('input', calculateTotals);
