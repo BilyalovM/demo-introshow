@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
@@ -1352,7 +1352,79 @@ def get_company_detail(company_id: int, db: Session = Depends(get_db)):
         "contacts": [{
             "id": c.id, "name": c.name, "position": c.position,
             "phone": c.phone, "email": c.email, "comment": c.comment,
+            "is_primary": bool(c.is_primary),
         } for c in db_comp.contacts],
+    }
+
+
+@app.get("/api/contacts/{contact_id}")
+def get_contact_detail(contact_id: int, db: Session = Depends(get_db)):
+    c = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not c:
+        return JSONResponse(status_code=404, content={"error": "Контакт не найден"})
+    deals = db.query(Deal).filter(Deal.contact_id == contact_id).order_by(Deal.id.desc()).all()
+    if not deals and c.company_id:
+        deals = db.query(Deal).filter(Deal.company_id == c.company_id).order_by(Deal.id.desc()).limit(20).all()
+    return {
+        "contact": {
+            "id": c.id, "name": c.name, "position": c.position,
+            "phone": c.phone, "email": c.email, "comment": c.comment,
+            "company_id": c.company_id, "is_primary": bool(c.is_primary),
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "company_name": c.company.name if c.company else None,
+            "company_phone": c.company.phone if c.company else None,
+            "company_address": c.company.address if c.company else None,
+        },
+        "deals": [{
+            "id": d.id, "title": d.title,
+            "stage_name": d.stage_obj.name if d.stage_obj else "",
+            "event_date": d.event_date, "final_sum": d.final_sum or 0,
+            "source": d.source or d.chat_channel or "manual",
+        } for d in deals],
+    }
+
+
+class CrmNoteIn(BaseModel):
+    text: str
+
+
+@app.get("/api/crm-notes")
+def get_crm_notes(entity_type: str, entity_id: int, db: Session = Depends(get_db)):
+    notes = db.query(CrmNote).filter(
+        CrmNote.entity_type == entity_type,
+        CrmNote.entity_id == entity_id,
+    ).order_by(CrmNote.created_at.desc()).all()
+    return [{
+        "id": n.id, "text": n.text, "author": n.author,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    } for n in notes]
+
+
+@app.post("/api/crm-notes")
+def create_crm_note(
+    entity_type: str,
+    entity_id: int,
+    payload: CrmNoteIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if entity_type not in ("company", "contact"):
+        raise HTTPException(status_code=400, detail="entity_type must be company|contact")
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text required")
+    note = CrmNote(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        text=text,
+        author=(user.full_name or user.username),
+    )
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    return {
+        "id": note.id, "text": note.text, "author": note.author,
+        "created_at": note.created_at.isoformat() if note.created_at else None,
     }
 
 @app.put("/api/companies/{company_id}")

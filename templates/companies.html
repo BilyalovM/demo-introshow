@@ -1,427 +1,674 @@
 {% extends "base.html" %}
 
-{% block title %}Companies - Intro Show{% endblock %}
+{% block title %}Клиенты - Intro Show{% endblock %}
 
 {% block extra_head %}
 <style>
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
-    .modal-content { background: var(--surface); padding: 2rem; border-radius: var(--r-md); width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
-    
-    .btn-whatsapp { background-color: #25D366; color: white; display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; padding: 0.5rem 1rem; border-radius: var(--r-sm); font-weight: bold; }
-    .btn-whatsapp:hover { background-color: #128C7E; }
-    .close {
-        position: absolute;
-        right: 1.5rem;
-        top: 1.5rem;
-        font-size: 1.5rem;
-        font-weight: bold;
-        color: var(--text-2);
-        cursor: pointer;
-        line-height: 1;
-    }
-    .close:hover {
-        color: var(--text);
-    }
+.clients-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+.list-tabs { display:flex; gap:4px; background:var(--bg-2); padding:4px; border-radius:10px; }
+.list-tab { border:none; background:transparent; padding:8px 14px; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; color:var(--text-2); }
+.list-tab.active { background:var(--surface); color:var(--text); box-shadow:var(--shadow-xs); }
+.clients-search { max-width:280px; }
 
-    .history-item { background: var(--bg-2); padding: 1rem; border-radius: var(--r-md); margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;}
+/* Bitrix-like card overlay */
+.entity-overlay {
+    display:none; position:fixed; inset:0; z-index:1200;
+    background:rgba(15,23,42,.45); padding:0;
+}
+.entity-overlay.open { display:flex; justify-content:flex-end; }
+.entity-card {
+    width:min(1120px, 100%); height:100%; background:var(--bg);
+    display:flex; flex-direction:column; box-shadow:var(--shadow-lg);
+    animation: slideIn .18s ease;
+}
+@keyframes slideIn { from { transform: translateX(24px); opacity:.6; } to { transform:none; opacity:1; } }
+
+.entity-top {
+    background:var(--surface); border-bottom:1px solid var(--border);
+    padding:14px 20px 0; flex:none;
+}
+.entity-top-row { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.entity-title {
+    font-size:1.35rem; font-weight:800; margin:0; letter-spacing:-.02em;
+    border:none; background:transparent; color:var(--text); width:100%; padding:0;
+}
+.entity-title:focus { outline:none; }
+.entity-top-actions { display:flex; gap:6px; align-items:center; flex:none; }
+.icon-btn {
+    width:36px; height:36px; border-radius:10px; border:1px solid var(--border);
+    background:var(--surface); display:grid; place-items:center; cursor:pointer; color:var(--text-2); text-decoration:none;
+}
+.icon-btn:hover { border-color:var(--primary); color:var(--primary); }
+.entity-tabs { display:flex; gap:2px; margin-top:12px; overflow-x:auto; }
+.entity-tab {
+    padding:10px 14px; font-size:13px; font-weight:600; color:var(--muted);
+    border:none; background:transparent; cursor:pointer; border-bottom:2px solid transparent; white-space:nowrap;
+}
+.entity-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+
+.entity-body {
+    flex:1; overflow:hidden; display:grid;
+    grid-template-columns: minmax(320px, 42%) 1fr;
+}
+.entity-left { overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+.entity-right {
+    overflow-y:auto; padding:16px; border-left:1px solid var(--border);
+    background:var(--surface);
+}
+
+.info-block {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden;
+}
+.info-block-h {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; background:var(--bg-2); border-bottom:1px solid var(--border);
+    font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+}
+.info-block-h button { font-size:12px; font-weight:600; border:none; background:transparent; color:var(--primary); cursor:pointer; }
+.info-row {
+    display:grid; grid-template-columns:140px 1fr; gap:10px;
+    padding:10px 14px; border-bottom:1px solid var(--border); font-size:13.5px;
+}
+.info-row:last-child { border-bottom:none; }
+.info-row .k { color:var(--muted); }
+.info-row .v { font-weight:600; word-break:break-word; }
+.info-row .v.empty { color:var(--muted); font-weight:500; }
+.info-row .v a { color:var(--primary); text-decoration:none; }
+
+.contact-chip {
+    display:flex; justify-content:space-between; gap:8px; align-items:flex-start;
+    padding:8px 0; border-bottom:1px solid var(--border);
+}
+.contact-chip:last-child { border-bottom:none; }
+.contact-chip .name { font-weight:700; cursor:pointer; color:var(--primary); }
+.contact-chip .meta { font-size:12.5px; color:var(--text-2); margin-top:2px; }
+
+.feed-tabs { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:12px; }
+.feed-tab {
+    border:1px solid var(--border); background:var(--bg); border-radius:999px;
+    padding:6px 12px; font-size:12.5px; font-weight:600; cursor:pointer; color:var(--text-2);
+}
+.feed-tab.active { background:var(--primary-soft); border-color:transparent; color:var(--primary); }
+.feed-compose {
+    border:1px solid var(--border); border-radius:12px; padding:12px; background:var(--bg);
+    margin-bottom:14px;
+}
+.feed-compose textarea {
+    width:100%; border:none; background:transparent; resize:vertical; min-height:56px;
+    font:inherit; color:var(--text); outline:none;
+}
+.feed-compose-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+.feed-hint {
+    display:flex; gap:10px; align-items:flex-start; padding:12px 14px;
+    background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; margin-bottom:14px;
+    font-size:13px; color:#065f46;
+}
+.tl-item {
+    display:grid; grid-template-columns:16px 1fr; gap:12px;
+    padding:0 0 18px; position:relative;
+}
+.tl-item::before {
+    content:""; position:absolute; left:7px; top:16px; bottom:0; width:2px; background:var(--border);
+}
+.tl-item:last-child::before { display:none; }
+.tl-dot {
+    width:16px; height:16px; border-radius:50%; background:var(--primary);
+    border:3px solid var(--primary-soft); margin-top:2px; z-index:1;
+}
+.tl-dot.note { background:#10b981; border-color:#d1fae5; }
+.tl-dot.deal { background:#2563eb; }
+.tl-card {
+    background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:12px 14px;
+}
+.tl-meta { font-size:12px; color:var(--muted); margin-bottom:4px; }
+.tl-title { font-weight:700; font-size:14px; }
+.tl-text { font-size:13.5px; margin-top:4px; white-space:pre-wrap; }
+.deal-link { color:var(--primary); text-decoration:none; font-weight:700; }
+
+.edit-form { display:none; padding:14px; }
+.edit-form.open { display:block; }
+.edit-form .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.edit-form label { display:block; font-size:12px; font-weight:600; margin-bottom:4px; color:var(--muted); }
+.edit-form input, .edit-form textarea, .edit-form select {
+    width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px;
+    background:var(--surface); color:var(--text); font:inherit;
+}
+
+@media (max-width: 900px) {
+    .entity-body { grid-template-columns:1fr; }
+    .entity-right { border-left:none; border-top:1px solid var(--border); }
+    .edit-form .form-grid { grid-template-columns:1fr; }
+    .info-row { grid-template-columns:1fr; gap:2px; }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-
-    
-
-    <div class="card" style="padding: 1.5rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-            <h2 style="margin: 0; font-size: 1.25rem;">Клиенты (Компании)</h2>
-            <button class="btn btn-primary" onclick="openCompanyModal()">+ Добавить Клиента</button>
-        </div>
-
-        <div style="overflow-x: auto;">
-            <table class="data">
-                <thead>
-                    <tr>
-                        <th>Название / ТОО / ИП</th>
-                        <th>БИН/ИИН</th>
-                        <th>Директор / Контактное лицо</th>
-                        <th>Телефон</th>
-                        <th>Email</th>
-                    </tr>
-                </thead>
-                <tbody id="companies_list">
-                    <!-- Заполняется через JS -->
-                </tbody>
-            </table>
+<div class="clients-toolbar">
+    <div>
+        <h1 class="page-title" style="margin:0 0 6px">Клиенты</h1>
+        <div class="list-tabs">
+            <button type="button" class="list-tab active" data-list="companies" onclick="switchList('companies')">Компании</button>
+            <button type="button" class="list-tab" data-list="contacts" onclick="switchList('contacts')">Контакты</button>
         </div>
     </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input class="input clients-search" id="listSearch" placeholder="Поиск…" oninput="renderList()">
+        <button class="btn btn-primary" id="btnAdd" onclick="startCreate()">+ Добавить</button>
+    </div>
+</div>
 
-    <!-- Edit/Add Company Modal -->
-    <div id="companyModal" class="modal">
-        <div class="modal-content" style="display: flex; gap: 2rem; position: relative;">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <div style="flex: 1;">
-                <h3 style="margin-top:0;" id="modal_title">Компания</h3>
-                <form onsubmit="saveCompany(event)">
-                    <input type="hidden" id="comp_id">
-                    <div class="form-group"><label>Название (с формой собственности, например ТОО Ромашка)</label><input type="text" id="comp_name" required></div>
-                    <div class="form-group"><label>БИН/ИИН</label><input type="text" id="comp_bin"></div>
-                    <div class="form-group"><label>ФИО Руководителя / Контакта</label><input type="text" id="comp_director"></div>
-                    <div class="form-group"><label>Действует на основании</label><input type="text" id="comp_based_on" value="Устава"></div>
-                    <div class="form-group"><label>Телефон</label><input type="text" id="comp_phone"></div>
-                    <div class="form-group"><label>Email</label><input type="email" id="comp_email"></div>
-                    <div class="form-group"><label>Instagram (username, без @)</label><input type="text" id="comp_instagram" placeholder="например: intro_show_almaty"></div>
-                    <div class="form-group"><label>Юридический адрес</label><input type="text" id="comp_address"></div>
-                    <div class="form-group"><label>Наименование Банка</label><input type="text" id="comp_bank_name"></div>
-                    <div class="form-group"><label>БИК</label><input type="text" id="comp_bik"></div>
-                    <div class="form-group"><label>КБЕ</label><input type="text" id="comp_kbe"></div>
-                    <div class="form-group"><label>ИИК (Расчетный счет)</label><textarea id="comp_req" rows="2"></textarea></div>
-                    
-                    <div style="display:flex; justify-content:space-between; margin-top: 1.5rem; gap: 0.5rem;">
-                        <button type="submit" class="btn btn-primary" id="btn_save">Сохранить</button>
-                        <button type="button" class="btn btn-danger" id="btn_delete" onclick="deleteCompany()" style="display:none; background: var(--danger); border-color: var(--danger);">Удалить</button>
-                        <button type="button" class="btn" onclick="closeModal()">Отмена</button>
-                    </div>
-                </form>
+<div class="card card-pad-0">
+    <table class="data cards-mobile">
+        <thead id="listHead"></thead>
+        <tbody id="listBody"></tbody>
+    </table>
+</div>
+
+<!-- Entity card (Bitrix style) -->
+<div class="entity-overlay" id="entityOverlay" onclick="if(event.target===this) closeEntity()">
+    <div class="entity-card" id="entityCard">
+        <div class="entity-top">
+            <div class="entity-top-row">
+                <input class="entity-title" id="entTitle" readonly />
+                <div class="entity-top-actions">
+                    <a class="icon-btn" id="entCall" title="Позвонить" href="#" style="display:none">📞</a>
+                    <a class="icon-btn" id="entMail" title="Email" href="#" style="display:none">✉</a>
+                    <a class="icon-btn" id="entWa" title="WhatsApp" href="#" target="_blank" style="display:none">💬</a>
+                    <button type="button" class="icon-btn" onclick="closeEntity()" title="Закрыть">✕</button>
+                </div>
             </div>
-            
-            <div style="flex: 1; border-left: 1px solid var(--border); padding-left: 2rem; display: none;" id="company_extra_panel">
-                <div style="margin-bottom: 2rem; display: flex; flex-direction: column; gap: 0.5rem;">
-                    <a href="#" id="wa_link" class="btn-whatsapp" style="width: fit-content;">
-                        <svg viewBox="0 0 32 32" width="20" height="20" fill="currentColor"><path d="M16 2.01A14.02 14.02 0 0 0 2 16.03a13.9 13.9 0 0 0 1.86 6.96L2 29.99l7.15-1.85A13.9 13.9 0 0 0 16 30.01a14.02 14.02 0 0 0 14-13.98A14.02 14.02 0 0 0 16 2.01zM16 27.64c-1.92 0-3.8-.52-5.46-1.5l-.39-.23-4.06 1.05 1.07-3.96-.25-.4A11.58 11.58 0 0 1 4.36 16.03a11.66 11.66 0 0 1 11.64-11.64 11.66 11.66 0 0 1 11.64 11.64A11.66 11.66 0 0 1 16 27.64zm6.38-8.7c-.35-.18-2.07-1.02-2.39-1.14-.32-.11-.55-.18-.78.18-.23.35-.9 1.14-1.11 1.38-.2.23-.41.25-.76.08a9.4 9.4 0 0 1-2.76-1.7 10.4 10.4 0 0 1-1.92-2.39c-.21-.36 0-.54.16-.72.15-.15.35-.41.52-.61.18-.21.23-.36.35-.59.12-.23.06-.44-.03-.61-.09-.18-.78-1.89-1.07-2.59-.28-.68-.57-.59-.78-.6h-.66c-.23 0-.61.09-.93.44s-1.22 1.2-1.22 2.92c0 1.73 1.25 3.4 1.43 3.63.17.24 2.48 3.78 6 5.3 3.51 1.52 3.51 1.01 4.15.95.64-.06 2.07-.84 2.36-1.66.29-.81.29-1.5.21-1.65-.09-.14-.32-.23-.67-.41z"></path></svg>
-                        Написать в WhatsApp
-                    </a>
-                    <a href="#" id="ig_link" target="_blank" style="display:none; align-items:center; gap:0.5rem; text-decoration:none; color:white; width:fit-content; background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888); padding:0.5rem 1rem; border-radius:var(--r-sm); font-weight:bold;">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"></rect><circle cx="12" cy="12" r="4"></circle><circle cx="17.5" cy="6.5" r="0.7" fill="currentColor"></circle></svg>
-                        Написать в Instagram Direct
-                    </a>
-                    <a href="#" id="tg_link" class="btn btn-info" style="display:inline-flex; align-items:center; gap:0.5rem; text-decoration:none; color:white; width: fit-content; background: #0088cc; border:none;">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.223-.548.223l.188-2.85 5.18-4.686c.223-.195-.054-.306-.346-.112l-6.4 4.027-2.76-.864c-.6-.188-.612-.6.126-.89l10.78-4.155c.498-.184.94.11.78.335z"/></svg>
-                        Скопировать ссылку на бота
-                    </a>
-                    <div id="tg_status" style="font-size: 0.85rem; color: #28a745; display: none;">✅ Telegram подключен</div>
-                </div>
-                
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
-                    <h4 style="margin:0;">Контакты компании</h4>
-                    <button type="button" class="btn btn-sm" onclick="openContactForm()">+ Контакт</button>
-                </div>
-                <div id="company_contacts_list" style="margin-bottom:1.5rem;"></div>
-                <div id="contact_form" style="display:none;background:var(--bg-2);padding:1rem;border-radius:var(--r-md);margin-bottom:1.5rem;">
-                    <input type="hidden" id="ct_id">
-                    <div class="form-group"><label>ФИО *</label><input type="text" id="ct_name"></div>
-                    <div class="form-group"><label>Должность</label><input type="text" id="ct_position" placeholder="Директор, менеджер…"></div>
-                    <div class="form-group"><label>Телефон</label><input type="text" id="ct_phone"></div>
-                    <div class="form-group"><label>Email</label><input type="email" id="ct_email"></div>
-                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0;">
-                        <input type="checkbox" id="ct_primary"> Основной контакт компании
-                    </label>
-                    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="saveContact()">Сохранить</button>
-                        <button type="button" class="btn btn-sm" onclick="document.getElementById('contact_form').style.display='none'">Отмена</button>
-                    </div>
-                </div>
-
-                <h4 style="margin-top:0;">Сделки с клиентом</h4>
-                <div id="company_deals_list">
-                    <!-- Сделки -->
-                </div>
+            <div class="entity-tabs" id="entTabs">
+                <button type="button" class="entity-tab active" data-tab="general" onclick="switchEntTab('general')">Общие</button>
+                <button type="button" class="entity-tab" data-tab="deals" onclick="switchEntTab('deals')">Сделки</button>
+                <button type="button" class="entity-tab" data-tab="history" onclick="switchEntTab('history')">История</button>
             </div>
         </div>
+        <div class="entity-body">
+            <div class="entity-left" id="entLeft"></div>
+            <div class="entity-right" id="entRight"></div>
+        </div>
     </div>
-
-    
-
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-        async function loadData() {
-            try {
-                const res = await fetch('/api/companies');
-                const companies = await res.json();
-                const tbody = document.getElementById('companies_list');
-                tbody.innerHTML = '';
-                companies.forEach(c => {
-                    const tr = document.createElement('tr');
-                    tr.onclick = () => openCompanyDetail(c.id);
-                    tr.innerHTML = `
-                        <td><strong>${c.name}</strong></td>
-                        <td>${c.bin || ''}</td>
-                        <td>${c.director_name || ''}</td>
-                        <td>${c.phone || ''}</td>
-                        <td>${c.email || ''}</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-            } catch(e) { console.error(e); }
-        }
+let listMode = 'companies'; // companies | contacts
+let companiesCache = [];
+let contactsCache = [];
+let current = null; // { type, id, data }
+let entTab = 'general';
+let feedMode = 'comment'; // comment | deal
 
-        function formatPhoneForWA(phone) {
-            if(!phone) return '';
-            let cleaned = ('' + phone).replace(/\D/g, '');
-            if(cleaned.length > 0 && cleaned[0] === '8') {
-                cleaned = '7' + cleaned.substring(1);
-            }
-            return cleaned;
-        }
+const SOURCE_LABELS = {
+    manual:'Вручную', whatsapp:'WhatsApp', telegram:'Telegram', instagram:'Instagram',
+    site:'Сайт', maps:'Карты', onec:'1С', referral:'Рекомендация', other:'Другое'
+};
 
-        async function openCompanyDetail(id) {
-            const res = await fetch(`/api/companies/${id}`);
-            const data = await res.json();
-            const c = data.company;
-            
-            document.getElementById('comp_id').value = c.id;
-            document.getElementById('comp_name').value = c.name || '';
-            document.getElementById('comp_bin').value = c.bin || '';
-            document.getElementById('comp_director').value = c.director_name || '';
-            document.getElementById('comp_based_on').value = c.based_on || 'Устава';
-            document.getElementById('comp_phone').value = c.phone || '';
-            document.getElementById('comp_email').value = c.email || '';
-            document.getElementById('comp_address').value = c.address || '';
-            document.getElementById('comp_bank_name').value = c.bank_name || '';
-            document.getElementById('comp_bik').value = c.bik || '';
-            document.getElementById('comp_kbe').value = c.kbe || '';
-            document.getElementById('comp_req').value = c.requisites || '';
-            document.getElementById('comp_instagram').value = c.instagram || '';
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtMoney(n) { return Number(n || 0).toLocaleString('ru-RU') + ' ₸'; }
+function fmtDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleString('ru-RU', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+function waPhone(phone) {
+    let c = String(phone || '').replace(/\D/g, '');
+    if (c[0] === '8') c = '7' + c.slice(1);
+    return c;
+}
+function valOrEmpty(v) {
+    return v ? `<span class="v">${esc(v)}</span>` : `<span class="v empty">не заполнено</span>`;
+}
 
-            document.getElementById('modal_title').innerText = 'Редактировать Клиента';
-            document.getElementById('btn_delete').style.display = 'block';
-            
-            const extraPanel = document.getElementById('company_extra_panel');
-            extraPanel.style.display = 'block';
-            
-            const waPhone = formatPhoneForWA(c.phone);
-            const waLink = document.getElementById('wa_link');
-            if(waPhone) {
-                waLink.onclick = function(e) {
-                    e.preventDefault();
-                    window.open(`https://wa.me/${waPhone}`, '_blank');
-                };
-                waLink.style.display = 'inline-flex';
-            } else {
-                waLink.style.display = 'none';
-            }
+function switchList(mode) {
+    listMode = mode;
+    document.querySelectorAll('.list-tab').forEach(b => b.classList.toggle('active', b.dataset.list === mode));
+    document.getElementById('btnAdd').textContent = mode === 'companies' ? '+ Компания' : '+ Контакт';
+    renderList();
+}
 
-            // Instagram Direct link
-            const igLink = document.getElementById('ig_link');
-            const igUser = (c.instagram || '').replace(/^@/, '').trim();
-            if (igUser) {
-                igLink.href = `https://ig.me/m/${igUser}`;
-                igLink.style.display = 'inline-flex';
-            } else {
-                igLink.style.display = 'none';
-            }
-            
-            // Telegram Bot Link
-            const tgLink = document.getElementById('tg_link');
-            tgLink.onclick = function(e) {
-                e.preventDefault();
-                // Replace RentalAppBot with your real bot username
-                const botUrl = `https://t.me/RentalAppBot?start=company_${c.id}`;
-                navigator.clipboard.writeText(botUrl).then(() => {
-                    alert('Ссылка скопирована! Отправьте её клиенту, чтобы он запустил бота.');
-                });
-            };
-            
-            // Telegram Status
-            const tgStatus = document.getElementById('tg_status');
-            if (c.telegram_chat_id) {
-                tgStatus.style.display = 'block';
-            } else {
-                tgStatus.style.display = 'none';
-            }
-            
-            renderContacts(data.contacts || []);
+async function loadAll() {
+    const [cRes, tRes] = await Promise.all([fetch('/api/companies'), fetch('/api/contacts')]);
+    companiesCache = await cRes.json();
+    contactsCache = await tRes.json();
+    renderList();
+}
 
-            const dealsList = document.getElementById('company_deals_list');
-            dealsList.innerHTML = '';
-            if (data.deals && data.deals.length > 0) {
-                data.deals.forEach(d => {
-                    dealsList.innerHTML += `
-                        <div class="history-item">
-                            <div>
-                                <div style="font-weight:bold; color:var(--primary);">${d.title}</div>
-                                <div style="font-size:0.8rem; color:var(--text-light);">${d.event_date} &bull; ${d.pipeline_name} &bull; ${d.stage_name}</div>
-                            </div>
-                            <div style="font-weight:bold;">${d.final_sum.toLocaleString('ru-RU')} ₸</div>
-                        </div>
-                    `;
-                });
-            } else {
-                dealsList.innerHTML = '<div style="color:var(--text-light); font-size:0.9rem;">Нет сделок.</div>';
-            }
+function renderList() {
+    const q = (document.getElementById('listSearch').value || '').toLowerCase();
+    const head = document.getElementById('listHead');
+    const body = document.getElementById('listBody');
+    body.innerHTML = '';
 
-            document.getElementById('companyModal').style.display = 'flex';
-        }
-
-        // ---------- Контакты компании (как в Битрикс24) ----------
-
-        function escHtml(s) {
-            return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        }
-
-        let currentContacts = [];
-
-        function renderContacts(contacts) {
-            currentContacts = contacts;
-            const list = document.getElementById('company_contacts_list');
-            list.innerHTML = '';
-            if (!contacts.length) {
-                list.innerHTML = '<div style="color:var(--muted);font-size:0.9rem;">Контакты не добавлены.</div>';
-                return;
-            }
-            contacts.forEach(ct => {
-                const waPhone = formatPhoneForWA(ct.phone);
-                list.innerHTML += `
-                    <div class="history-item" style="align-items:flex-start;">
-                        <div>
-                            <div style="font-weight:bold;">${ct.is_primary ? '★ ' : ''}${escHtml(ct.name)}${ct.position ? ` <span style="font-weight:normal;color:var(--muted);font-size:0.85rem;">— ${escHtml(ct.position)}</span>` : ''}</div>
-                            <div style="font-size:0.85rem;color:var(--text-2);">
-                                ${ct.phone ? `📞 ${escHtml(ct.phone)}` : ''} ${ct.email ? ` ✉ ${escHtml(ct.email)}` : ''}
-                            </div>
-                        </div>
-                        <div style="display:flex;gap:6px;flex:none;">
-                            ${waPhone ? `<a class="btn btn-sm" title="WhatsApp" target="_blank" href="https://wa.me/${waPhone}">💬</a>` : ''}
-                            <button type="button" class="btn btn-sm" onclick="openContactForm(${ct.id})">✎</button>
-                            <button type="button" class="btn btn-sm" style="color:var(--danger)" onclick="deleteContact(${ct.id})">×</button>
-                        </div>
-                    </div>`;
+    if (listMode === 'companies') {
+        head.innerHTML = `<tr><th>Компания</th><th>БИН</th><th>Контакт</th><th>Телефон</th><th>Email</th></tr>`;
+        companiesCache.filter(c => !q || (c.name||'').toLowerCase().includes(q) || (c.phone||'').includes(q) || (c.bin||'').includes(q))
+            .forEach(c => {
+                const tr = document.createElement('tr');
+                tr.style.cursor = 'pointer';
+                tr.onclick = () => openCompany(c.id);
+                tr.innerHTML = `
+                    <td class="card-head"><strong>${esc(c.name)}</strong></td>
+                    <td data-label="БИН">${esc(c.bin || '—')}</td>
+                    <td data-label="Контакт">${esc(c.director_name || '—')}</td>
+                    <td data-label="Телефон">${esc(c.phone || '—')}</td>
+                    <td data-label="Email">${esc(c.email || '—')}</td>`;
+                body.appendChild(tr);
             });
-        }
+        if (!body.children.length) body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Нет компаний</td></tr>`;
+    } else {
+        head.innerHTML = `<tr><th>Контакт</th><th>Компания</th><th>Телефон</th><th>Email</th><th>Должность</th></tr>`;
+        contactsCache.filter(c => !q || (c.name||'').toLowerCase().includes(q) || (c.phone||'').includes(q) || (c.company_name||'').toLowerCase().includes(q))
+            .forEach(c => {
+                const tr = document.createElement('tr');
+                tr.style.cursor = 'pointer';
+                tr.onclick = () => openContact(c.id);
+                tr.innerHTML = `
+                    <td class="card-head"><strong>${c.is_primary ? '★ ' : ''}${esc(c.name)}</strong></td>
+                    <td data-label="Компания">${esc(c.company_name || '—')}</td>
+                    <td data-label="Телефон">${esc(c.phone || '—')}</td>
+                    <td data-label="Email">${esc(c.email || '—')}</td>
+                    <td data-label="Должность">${esc(c.position || '—')}</td>`;
+                body.appendChild(tr);
+            });
+        if (!body.children.length) body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Нет контактов</td></tr>`;
+    }
+}
 
-        function openContactForm(contactId) {
-            const ct = currentContacts.find(c => c.id === contactId) || {};
-            document.getElementById('ct_id').value = ct.id || '';
-            document.getElementById('ct_name').value = ct.name || '';
-            document.getElementById('ct_position').value = ct.position || '';
-            document.getElementById('ct_phone').value = ct.phone || '';
-            document.getElementById('ct_email').value = ct.email || '';
-            document.getElementById('ct_primary').checked = !!ct.is_primary;
-            document.getElementById('contact_form').style.display = 'block';
-        }
+function startCreate() {
+    if (listMode === 'companies') openCreateCompany();
+    else openCreateContact();
+}
 
-        async function saveContact() {
-            const companyId = document.getElementById('comp_id').value;
-            const ctId = document.getElementById('ct_id').value;
-            const payload = {
-                name: document.getElementById('ct_name').value.trim(),
-                position: document.getElementById('ct_position').value.trim(),
-                phone: document.getElementById('ct_phone').value.trim(),
-                email: document.getElementById('ct_email').value.trim(),
-                company_id: parseInt(companyId),
-                is_primary: document.getElementById('ct_primary').checked,
-            };
-            if (!payload.name) { alert('Укажите ФИО контакта'); return; }
-            if (ctId) {
-                await fetch(`/api/contacts/${ctId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-            } else {
-                await fetch('/api/contacts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-            }
-            document.getElementById('contact_form').style.display = 'none';
-            const res = await fetch(`/api/contacts?company_id=${companyId}`);
-            renderContacts(await res.json());
-        }
+function closeEntity() {
+    document.getElementById('entityOverlay').classList.remove('open');
+    current = null;
+}
 
-        async function deleteContact(id) {
-            if (!confirm('Удалить контакт?')) return;
-            await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
-            const companyId = document.getElementById('comp_id').value;
-            const res = await fetch(`/api/contacts?company_id=${companyId}`);
-            renderContacts(await res.json());
-        }
+function switchEntTab(tab) {
+    entTab = tab;
+    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    renderEntity();
+}
 
-        function openCompanyModal() {
-            document.getElementById('comp_id').value = '';
-            document.getElementById('comp_name').value = '';
-            document.getElementById('comp_bin').value = '';
-            document.getElementById('comp_director').value = '';
-            document.getElementById('comp_based_on').value = 'Устава';
-            document.getElementById('comp_phone').value = '';
-            document.getElementById('comp_email').value = '';
-            document.getElementById('comp_address').value = '';
-            document.getElementById('comp_bank_name').value = '';
-            document.getElementById('comp_bik').value = '';
-            document.getElementById('comp_kbe').value = '';
-            document.getElementById('comp_req').value = '';
-            document.getElementById('comp_instagram').value = '';
-            
-            document.getElementById('modal_title').innerText = 'Новый Клиент';
-            document.getElementById('btn_delete').style.display = 'none';
-            document.getElementById('company_extra_panel').style.display = 'none';
-            document.getElementById('companyModal').style.display = 'flex';
-        }
+function setTopActions({ phone, email }) {
+    const call = document.getElementById('entCall');
+    const mail = document.getElementById('entMail');
+    const wa = document.getElementById('entWa');
+    if (phone) { call.href = 'tel:' + phone; call.style.display = 'grid'; } else call.style.display = 'none';
+    if (email) { mail.href = 'mailto:' + email; mail.style.display = 'grid'; } else mail.style.display = 'none';
+    const p = waPhone(phone);
+    if (p) { wa.href = 'https://wa.me/' + p; wa.style.display = 'grid'; } else wa.style.display = 'none';
+}
 
-        function closeModal() {
-            document.getElementById('companyModal').style.display = 'none';
-        }
+async function openCompany(id) {
+    const res = await fetch('/api/companies/' + id);
+    if (!res.ok) return;
+    const data = await res.json();
+    current = { type: 'company', id, data };
+    entTab = 'general';
+    document.getElementById('entTitle').value = data.company.name || '';
+    setTopActions({ phone: data.company.phone, email: data.company.email });
+    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
+    document.getElementById('entityOverlay').classList.add('open');
+    renderEntity();
+}
 
-        async function saveCompany(e) {
-            e.preventDefault();
-            const id = document.getElementById('comp_id').value;
-            const data = {
-                name: document.getElementById('comp_name').value, bin: document.getElementById('comp_bin').value,
-                director_name: document.getElementById('comp_director').value, phone: document.getElementById('comp_phone').value,
-                email: document.getElementById('comp_email').value, requisites: document.getElementById('comp_req').value,
-                based_on: document.getElementById('comp_based_on').value, address: document.getElementById('comp_address').value,
-                bank_name: document.getElementById('comp_bank_name').value, kbe: document.getElementById('comp_kbe').value,
-                bik: document.getElementById('comp_bik').value,
-                instagram: document.getElementById('comp_instagram').value.replace(/^@/, '').trim()
-            };
+async function openContact(id) {
+    const res = await fetch('/api/contacts/' + id);
+    if (!res.ok) return;
+    const data = await res.json();
+    current = { type: 'contact', id, data };
+    entTab = 'general';
+    document.getElementById('entTitle').value = data.contact.name || '';
+    setTopActions({ phone: data.contact.phone, email: data.contact.email });
+    document.querySelectorAll('.entity-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'general'));
+    document.getElementById('entityOverlay').classList.add('open');
+    renderEntity();
+}
 
-            // Предупреждение о дублях (не блокирует)
-            try {
-                const params = new URLSearchParams();
-                if (data.phone) params.set('phone', data.phone);
-                if (data.bin) params.set('bin', data.bin);
-                if (id) params.set('exclude_id', id);
-                const dupRes = await fetch('/api/companies/check-duplicates?' + params.toString());
-                const dupData = await dupRes.json();
-                if (dupData.has_duplicates) {
-                    const names = dupData.duplicates.map(d => `${d.name} (${d.field}: ${d.value})`).join('\n');
-                    if (!confirm('Возможный дубль:\n' + names + '\n\nВсё равно сохранить?')) return;
-                }
-            } catch (err) { console.error(err); }
-            
-            if (id) {
-                await fetch(`/api/companies/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
-            } else {
-                await fetch('/api/companies', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
-            }
-            
-            closeModal();
-            loadData();
-        }
+function renderEntity() {
+    if (!current) return;
+    if (current.type === 'company') renderCompanyCard();
+    else renderContactCard();
+}
 
-        async function deleteCompany() {
-            const id = document.getElementById('comp_id').value;
-            if(!id) return;
-            if(!confirm('Удалить этого клиента навсегда?')) return;
-            
-            const res = await fetch(`/api/companies/${id}`, { method: 'DELETE' });
-            const data = await res.json();
-            if (data.error) {
-                alert(data.error);
-                return;
-            }
-            closeModal();
-            loadData();
-        }
+function renderCompanyCard() {
+    const c = current.data.company;
+    const contacts = current.data.contacts || [];
+    const deals = current.data.deals || [];
+    const left = document.getElementById('entLeft');
+    const right = document.getElementById('entRight');
 
-        // Close modal on ESC key
-        document.addEventListener('keydown', function(event) {
-            if (event.key === "Escape") {
-                closeModal();
-            }
-        });
+    const contactsHtml = contacts.length ? contacts.map(ct => `
+        <div class="contact-chip">
+            <div>
+                <div class="name" onclick="openContact(${ct.id})">${ct.is_primary ? '★ ' : ''}${esc(ct.name)}</div>
+                <div class="meta">${esc(ct.position || '')}${ct.phone ? ' · ' + esc(ct.phone) : ''}</div>
+            </div>
+            <div style="display:flex;gap:4px;">
+                ${ct.phone ? `<a class="icon-btn" style="width:30px;height:30px;font-size:13px" href="https://wa.me/${waPhone(ct.phone)}" target="_blank">💬</a>` : ''}
+            </div>
+        </div>`).join('') : '<div class="v empty">Контакты не добавлены</div>';
 
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            const modal = document.getElementById('companyModal');
-            if (event.target == modal) {
-                closeModal();
-            }
-        }
+    if (entTab === 'general') {
+        left.innerHTML = `
+            <div class="info-block">
+                <div class="info-block-h"><span>О компании</span><button type="button" onclick="toggleEditForm()">Изменить</button></div>
+                <div id="viewBlock">
+                    <div class="info-row"><div class="k">Тип</div>${valOrEmpty('Клиент')}</div>
+                    <div class="info-row"><div class="k">БИН / ИИН</div>${valOrEmpty(c.bin)}</div>
+                    <div class="info-row"><div class="k">Руководитель</div>${valOrEmpty(c.director_name)}</div>
+                    <div class="info-row"><div class="k">Телефон</div>${c.phone ? `<span class="v"><a href="tel:${esc(c.phone)}">${esc(c.phone)}</a></span>` : valOrEmpty('')}</div>
+                    <div class="info-row"><div class="k">E-mail</div>${c.email ? `<span class="v"><a href="mailto:${esc(c.email)}">${esc(c.email)}</a></span>` : valOrEmpty('')}</div>
+                    <div class="info-row"><div class="k">Адрес</div>${valOrEmpty(c.address)}</div>
+                    <div class="info-row"><div class="k">Контакты</div><div class="v">${contactsHtml}</div></div>
+                    <div class="info-row"><div class="k">Реквизиты</div>${valOrEmpty(c.requisites || (c.bank_name ? c.bank_name + ' / ' + (c.bik||'') : ''))}</div>
+                </div>
+                <div class="edit-form" id="editForm">
+                    <div class="form-grid">
+                        <div><label>Название</label><input id="f_name" value="${esc(c.name||'')}"></div>
+                        <div><label>БИН/ИИН</label><input id="f_bin" value="${esc(c.bin||'')}"></div>
+                        <div><label>Руководитель</label><input id="f_director" value="${esc(c.director_name||'')}"></div>
+                        <div><label>Телефон</label><input id="f_phone" value="${esc(c.phone||'')}"></div>
+                        <div><label>Email</label><input id="f_email" value="${esc(c.email||'')}"></div>
+                        <div><label>Instagram</label><input id="f_ig" value="${esc(c.instagram||'')}"></div>
+                        <div style="grid-column:1/-1"><label>Адрес</label><input id="f_address" value="${esc(c.address||'')}"></div>
+                        <div><label>Банк</label><input id="f_bank" value="${esc(c.bank_name||'')}"></div>
+                        <div><label>БИК</label><input id="f_bik" value="${esc(c.bik||'')}"></div>
+                        <div style="grid-column:1/-1"><label>ИИК / реквизиты</label><textarea id="f_req" rows="2">${esc(c.requisites||'')}</textarea></div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="saveCompanyEdit()">Сохранить</button>
+                        <button type="button" class="btn btn-sm" onclick="toggleEditForm(false)">Отмена</button>
+                        <button type="button" class="btn btn-sm" style="color:var(--danger);margin-left:auto" onclick="deleteCurrentCompany()">Удалить</button>
+                    </div>
+                </div>
+            </div>
+            <div class="info-block">
+                <div class="info-block-h"><span>Дополнительно</span></div>
+                <div class="info-row"><div class="k">Instagram</div>${valOrEmpty(c.instagram ? '@'+c.instagram : '')}</div>
+                <div class="info-row"><div class="k">Telegram</div>${valOrEmpty(c.telegram_chat_id ? 'подключён' : '')}</div>
+                <div class="info-row"><div class="k">Сделок</div><span class="v">${deals.length}</span></div>
+            </div>
+            <button type="button" class="btn btn-sm" onclick="openAddContactForm()">+ Добавить контакт</button>
+            <div id="addContactBox" style="display:none" class="info-block">
+                <div class="edit-form open">
+                    <div class="form-grid">
+                        <div><label>ФИО</label><input id="nc_name"></div>
+                        <div><label>Должность</label><input id="nc_pos"></div>
+                        <div><label>Телефон</label><input id="nc_phone"></div>
+                        <div><label>Email</label><input id="nc_email"></div>
+                    </div>
+                    <label style="display:flex;gap:8px;align-items:center;margin:10px 0;font-size:13px"><input type="checkbox" id="nc_primary"> Основной контакт</label>
+                    <div style="display:flex;gap:8px">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="saveNewContact()">Сохранить</button>
+                        <button type="button" class="btn btn-sm" onclick="document.getElementById('addContactBox').style.display='none'">Отмена</button>
+                    </div>
+                </div>
+            </div>`;
+    } else if (entTab === 'deals') {
+        left.innerHTML = `<div class="info-block"><div class="info-block-h"><span>Сделки компании</span></div>
+            ${deals.length ? deals.map(d => `
+                <div class="info-row">
+                    <div class="k">${esc(d.event_date || '')}</div>
+                    <div class="v"><a class="deal-link" href="/crm?deal=${d.id}">${esc(d.title)}</a>
+                    <div style="font-size:12px;color:var(--muted);font-weight:500">${esc(d.stage_name)} · ${fmtMoney(d.final_sum)}</div></div>
+                </div>`).join('') : '<div class="info-row"><div class="v empty">Нет сделок</div></div>'}
+        </div>`;
+    } else {
+        left.innerHTML = `<div class="info-block"><div class="info-block-h"><span>История</span></div>
+            <div class="info-row"><div class="v empty">События также в ленте справа →</div></div></div>`;
+    }
 
-        window.onload = loadData;
-    </script>
+    renderFeed(right, 'company', c.id, deals);
+}
+
+function renderContactCard() {
+    const c = current.data.contact;
+    const deals = current.data.deals || [];
+    const left = document.getElementById('entLeft');
+    const right = document.getElementById('entRight');
+
+    if (entTab === 'general') {
+        left.innerHTML = `
+            <div class="info-block">
+                <div class="info-block-h"><span>О контакте</span><button type="button" onclick="toggleEditForm()">Изменить</button></div>
+                <div id="viewBlock">
+                    <div class="info-row"><div class="k">Телефон</div>${c.phone ? `<span class="v"><a href="tel:${esc(c.phone)}">${esc(c.phone)}</a></span>` : valOrEmpty('')}</div>
+                    <div class="info-row"><div class="k">E-mail</div>${c.email ? `<span class="v"><a href="mailto:${esc(c.email)}">${esc(c.email)}</a></span>` : valOrEmpty('')}</div>
+                    <div class="info-row"><div class="k">Должность</div>${valOrEmpty(c.position)}</div>
+                    <div class="info-row"><div class="k">Компания</div>${c.company_id ? `<span class="v"><a href="#" onclick="event.preventDefault();openCompany(${c.company_id})">${esc(c.company_name||'Компания')}</a></span>` : valOrEmpty('')}</div>
+                    <div class="info-row"><div class="k">Город / адрес</div>${valOrEmpty(c.company_address)}</div>
+                    <div class="info-row"><div class="k">Основной</div><span class="v">${c.is_primary ? 'Да' : 'Нет'}</span></div>
+                </div>
+                <div class="edit-form" id="editForm">
+                    <div class="form-grid">
+                        <div><label>ФИО</label><input id="f_name" value="${esc(c.name||'')}"></div>
+                        <div><label>Должность</label><input id="f_pos" value="${esc(c.position||'')}"></div>
+                        <div><label>Телефон</label><input id="f_phone" value="${esc(c.phone||'')}"></div>
+                        <div><label>Email</label><input id="f_email" value="${esc(c.email||'')}"></div>
+                        <div style="grid-column:1/-1"><label>Компания</label>
+                            <select id="f_company"><option value="">— без компании —</option>
+                            ${companiesCache.map(co => `<option value="${co.id}" ${co.id===c.company_id?'selected':''}>${esc(co.name)}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div style="grid-column:1/-1"><label>Комментарий</label><textarea id="f_comment" rows="2">${esc(c.comment||'')}</textarea></div>
+                    </div>
+                    <label style="display:flex;gap:8px;align-items:center;margin:10px 0;font-size:13px"><input type="checkbox" id="f_primary" ${c.is_primary?'checked':''}> Основной контакт компании</label>
+                    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="saveContactEdit()">Сохранить</button>
+                        <button type="button" class="btn btn-sm" onclick="toggleEditForm(false)">Отмена</button>
+                        <button type="button" class="btn btn-sm" style="color:var(--danger);margin-left:auto" onclick="deleteCurrentContact()">Удалить</button>
+                    </div>
+                </div>
+            </div>
+            <div class="info-block">
+                <div class="info-block-h"><span>Дополнительно</span></div>
+                <div class="info-row"><div class="k">Источник</div>${valOrEmpty(deals[0] ? (SOURCE_LABELS[deals[0].source] || deals[0].source) : '')}</div>
+                <div class="info-row"><div class="k">Сделок</div><span class="v">${deals.length}</span></div>
+            </div>`;
+    } else if (entTab === 'deals') {
+        left.innerHTML = `<div class="info-block"><div class="info-block-h"><span>Сделки</span></div>
+            ${deals.length ? deals.map(d => `
+                <div class="info-row">
+                    <div class="k">${esc(d.event_date || '')}</div>
+                    <div class="v"><a class="deal-link" href="/crm?deal=${d.id}">${esc(d.title)}</a>
+                    <div style="font-size:12px;color:var(--muted);font-weight:500">${esc(d.stage_name)} · ${fmtMoney(d.final_sum)}</div></div>
+                </div>`).join('') : '<div class="info-row"><div class="v empty">Нет сделок</div></div>'}
+        </div>`;
+    } else {
+        left.innerHTML = `<div class="info-block"><div class="info-block-h"><span>История</span></div>
+            <div class="info-row"><div class="v empty">События в ленте справа →</div></div></div>`;
+    }
+
+    renderFeed(right, 'contact', c.id, deals, c);
+}
+
+async function renderFeed(container, entityType, entityId, deals, contact) {
+    const notesRes = await fetch(`/api/crm-notes?entity_type=${entityType}&entity_id=${entityId}`);
+    const notes = notesRes.ok ? await notesRes.json() : [];
+
+    const events = [];
+    notes.forEach(n => events.push({
+        kind: 'note', at: n.created_at, title: 'Комментарий',
+        text: n.text, author: n.author || '',
+    }));
+    (deals || []).forEach(d => events.push({
+        kind: 'deal', at: d.event_date || '', title: d.title,
+        text: `${d.stage_name || ''} · ${fmtMoney(d.final_sum)}`, dealId: d.id,
+    }));
+    if (entityType === 'contact' && contact && contact.created_at) {
+        events.push({ kind: 'system', at: contact.created_at, title: 'Контакт создан', text: contact.name });
+    }
+    if (entityType === 'company') {
+        events.push({ kind: 'system', at: '', title: 'Компания в базе', text: 'Карточка открыта в CRM' });
+    }
+    events.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+
+    container.innerHTML = `
+        <div class="feed-tabs">
+            <button type="button" class="feed-tab ${feedMode==='comment'?'active':''}" onclick="feedMode='comment';renderEntity()">Комментарий</button>
+            <button type="button" class="feed-tab ${feedMode==='deal'?'active':''}" onclick="feedMode='deal';renderEntity()">Сделка</button>
+        </div>
+        <div class="feed-compose">
+            ${feedMode === 'comment' ? `
+                <textarea id="noteText" placeholder="Что нужно сделать / комментарий…"></textarea>
+                <div class="feed-compose-actions">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="postNote('${entityType}', ${entityId})">Отправить</button>
+                </div>` : `
+                <div style="font-size:13px;color:var(--muted);margin-bottom:8px">Создать сделку для этой ${entityType==='company'?'компании':'контакта'}</div>
+                <input id="newDealTitle" placeholder="Название сделки / мероприятия" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+                <input id="newDealDate" type="date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+                <div class="feed-compose-actions">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="createDealFromEntity()">Создать сделку</button>
+                </div>`}
+        </div>
+        <div class="feed-hint">Создайте дело или комментарий — запланируйте следующий шаг, чтобы не забыть о важном.</div>
+        <div id="timeline">
+            ${events.map(ev => `
+                <div class="tl-item">
+                    <div class="tl-dot ${esc(ev.kind)}"></div>
+                    <div class="tl-card">
+                        <div class="tl-meta">${esc(fmtDate(ev.at) || '—')}${ev.author ? ' · ' + esc(ev.author) : ''}</div>
+                        <div class="tl-title">${ev.dealId ? `<a class="deal-link" href="/crm?deal=${ev.dealId}">${esc(ev.title)}</a>` : esc(ev.title)}</div>
+                        ${ev.text ? `<div class="tl-text">${esc(ev.text)}</div>` : ''}
+                    </div>
+                </div>`).join('') || '<div class="v empty">Пока нет событий</div>'}
+        </div>`;
+}
+
+function toggleEditForm(open) {
+    const form = document.getElementById('editForm');
+    const view = document.getElementById('viewBlock');
+    if (!form) return;
+    const show = open === undefined ? !form.classList.contains('open') : open;
+    form.classList.toggle('open', show);
+    if (view) view.style.display = show ? 'none' : 'block';
+}
+
+async function postNote(entityType, entityId) {
+    const text = document.getElementById('noteText').value.trim();
+    if (!text) return;
+    await fetch(`/api/crm-notes?entity_type=${entityType}&entity_id=${entityId}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+    });
+    renderEntity();
+}
+
+async function saveCompanyEdit() {
+    const id = current.id;
+    const payload = {
+        name: document.getElementById('f_name').value.trim(),
+        bin: document.getElementById('f_bin').value.trim(),
+        director_name: document.getElementById('f_director').value.trim(),
+        phone: document.getElementById('f_phone').value.trim(),
+        email: document.getElementById('f_email').value.trim(),
+        address: document.getElementById('f_address').value.trim(),
+        bank_name: document.getElementById('f_bank').value.trim(),
+        bik: document.getElementById('f_bik').value.trim(),
+        requisites: document.getElementById('f_req').value.trim(),
+        instagram: document.getElementById('f_ig').value.replace(/^@/, '').trim(),
+        based_on: 'Устава', kbe: '',
+    };
+    await fetch('/api/companies/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    await loadAll();
+    await openCompany(id);
+}
+
+async function saveContactEdit() {
+    const id = current.id;
+    const payload = {
+        name: document.getElementById('f_name').value.trim(),
+        position: document.getElementById('f_pos').value.trim(),
+        phone: document.getElementById('f_phone').value.trim(),
+        email: document.getElementById('f_email').value.trim(),
+        comment: document.getElementById('f_comment').value.trim(),
+        company_id: parseInt(document.getElementById('f_company').value) || null,
+        is_primary: document.getElementById('f_primary').checked,
+    };
+    await fetch('/api/contacts/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    await loadAll();
+    await openContact(id);
+}
+
+function openAddContactForm() {
+    document.getElementById('addContactBox').style.display = 'block';
+}
+
+async function saveNewContact() {
+    const payload = {
+        name: document.getElementById('nc_name').value.trim(),
+        position: document.getElementById('nc_pos').value.trim(),
+        phone: document.getElementById('nc_phone').value.trim(),
+        email: document.getElementById('nc_email').value.trim(),
+        company_id: current.id,
+        is_primary: document.getElementById('nc_primary').checked,
+    };
+    if (!payload.name) { alert('Укажите ФИО'); return; }
+    await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    await loadAll();
+    await openCompany(current.id);
+}
+
+async function createDealFromEntity() {
+    const title = document.getElementById('newDealTitle').value.trim() || 'Новая сделка';
+    const event_date = document.getElementById('newDealDate').value || new Date().toISOString().slice(0, 10);
+    const payload = {
+        title, event_date, source: 'manual',
+        company_id: current.type === 'company' ? current.id : (current.data.contact.company_id || null),
+        contact_id: current.type === 'contact' ? current.id : null,
+    };
+    const res = await fetch('/api/deals', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.id) location.href = '/crm?deal=' + data.id;
+    else alert(data.error || 'Не удалось создать сделку');
+}
+
+async function deleteCurrentCompany() {
+    if (!confirm('Удалить компанию?')) return;
+    const res = await fetch('/api/companies/' + current.id, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    closeEntity();
+    loadAll();
+}
+
+async function deleteCurrentContact() {
+    if (!confirm('Удалить контакт?')) return;
+    await fetch('/api/contacts/' + current.id, { method: 'DELETE' });
+    closeEntity();
+    loadAll();
+}
+
+function openCreateCompany() {
+    const name = prompt('Название компании (ТОО / ИП / …)');
+    if (!name) return;
+    fetch('/api/companies', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, bin: '', director_name: '', phone: '', email: '', requisites: '', based_on: 'Устава', address: '', bank_name: '', kbe: '', bik: '' })
+    }).then(r => r.json()).then(async c => { await loadAll(); if (c.id) openCompany(c.id); });
+}
+
+function openCreateContact() {
+    const name = prompt('ФИО контакта');
+    if (!name) return;
+    fetch('/api/contacts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, company_id: null })
+    }).then(r => r.json()).then(async c => { await loadAll(); if (c.id) openContact(c.id); });
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEntity(); });
+window.onload = loadAll;
+</script>
 {% endblock %}

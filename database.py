@@ -316,6 +316,17 @@ class Invoice(Base):
     deal = relationship("Deal", backref="invoices")
 
 
+class CrmNote(Base):
+    """Комментарии/заметки в карточке компании или контакта (таймлайн как в Битрикс24)."""
+    __tablename__ = "crm_notes"
+    id = Column(Integer, primary_key=True, index=True)
+    entity_type = Column(String, index=True)  # company | contact
+    entity_id = Column(Integer, index=True)
+    text = Column(String)
+    author = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class DealAttachment(Base):
     """Файлы и ссылки (Google Docs/Sheets) к событию/сделке в календаре."""
     __tablename__ = "deal_attachments"
