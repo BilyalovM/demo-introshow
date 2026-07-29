@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate
@@ -2080,6 +2080,21 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "status": i.status, "company_bin": i.company_bin, "company_name": i.company_name,
     } for i in sorted(d.invoices, key=lambda x: x.id, reverse=True)]
 
+    advances = [{
+        "id": a.id, "user_id": a.user_id,
+        "user_name": (a.user.full_name or a.user.username) if a.user else "—",
+        "amount": a.amount or 0, "date": a.date or "",
+        "comment": a.comment or "", "created_by": a.created_by or "",
+        "created_at": a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+    } for a in sorted(d.advances, key=lambda x: x.id, reverse=True)]
+
+    expenses = [{
+        "id": e.id, "category": e.category or "other",
+        "amount": e.amount or 0, "date": e.date or "",
+        "description": e.description or "", "created_by": e.created_by or "",
+        "created_at": e.created_at.strftime("%Y-%m-%d %H:%M") if e.created_at else "",
+    } for e in sorted(d.expenses, key=lambda x: x.id, reverse=True)]
+
     return {
         "id": d.id,
         "title": d.title,
@@ -2113,6 +2128,10 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "history": history,
         "activities": activities,
         "invoices": invoices,
+        "advances": advances,
+        "expenses": expenses,
+        "advances_total": sum(a["amount"] for a in advances),
+        "expenses_total": sum(e["amount"] for e in expenses),
         "custom_values": custom_values
     }
 
@@ -2385,6 +2404,152 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db), user: User = 
     if row:
         db.delete(row)
         db.commit()
+    return {"status": "success"}
+
+
+# -- Авансы и расходы проекта (P0) --
+
+class AdvanceCreate(BaseModel):
+    deal_id: int
+    user_id: int
+    amount: float
+    date: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class ExpenseCreate(BaseModel):
+    deal_id: int
+    amount: float
+    category: Optional[str] = "other"  # taxi / purchase / delivery / other
+    date: Optional[str] = None
+    description: Optional[str] = None
+
+
+EXPENSE_CATEGORIES = {
+    "taxi": "Такси",
+    "purchase": "Закупка",
+    "delivery": "Довоз / логистика",
+    "other": "Прочее",
+}
+
+
+@app.get("/api/advances")
+def list_advances(deal_id: Optional[int] = None, user_id: Optional[int] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = db.query(DealAdvance)
+    if deal_id:
+        q = q.filter(DealAdvance.deal_id == deal_id)
+    if user_id:
+        q = q.filter(DealAdvance.user_id == user_id)
+    return [{
+        "id": a.id, "deal_id": a.deal_id, "user_id": a.user_id,
+        "user_name": (a.user.full_name or a.user.username) if a.user else "—",
+        "amount": a.amount or 0, "date": a.date or "",
+        "comment": a.comment or "", "created_by": a.created_by or "",
+        "deal_title": a.deal.title if a.deal else "",
+    } for a in q.order_by(DealAdvance.id.desc()).all()]
+
+
+@app.post("/api/advances")
+def create_advance(body: AdvanceCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == body.deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    emp = db.query(User).filter(User.id == body.user_id).first()
+    if not emp:
+        return JSONResponse(status_code=404, content={"error": "Сотрудник не найден"})
+    if body.amount is None or body.amount <= 0:
+        return JSONResponse(status_code=400, content={"error": "Укажите сумму аванса"})
+    row = DealAdvance(
+        deal_id=deal.id,
+        user_id=emp.id,
+        amount=float(body.amount),
+        date=body.date or datetime.utcnow().strftime("%Y-%m-%d"),
+        comment=(body.comment or "").strip() or None,
+        created_by=user.full_name or user.username,
+    )
+    db.add(row)
+    emp_name = emp.full_name or emp.username
+    db.add(DealHistory(
+        deal_id=deal.id,
+        action_text=f"Аванс {row.amount:,.0f} ₸ → {emp_name}".replace(",", " "),
+    ))
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "status": "success"}
+
+
+@app.delete("/api/advances/{advance_id}")
+def delete_advance(advance_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(DealAdvance).filter(DealAdvance.id == advance_id).first()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Не найдено"})
+    deal_id = row.deal_id
+    emp_name = (row.user.full_name or row.user.username) if row.user else "—"
+    amount = row.amount or 0
+    db.delete(row)
+    db.add(DealHistory(
+        deal_id=deal_id,
+        action_text=f"Аванс удалён: {amount:,.0f} ₸ ({emp_name})".replace(",", " "),
+    ))
+    db.commit()
+    return {"status": "success"}
+
+
+@app.get("/api/expenses")
+def list_expenses(deal_id: Optional[int] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = db.query(DealExpense)
+    if deal_id:
+        q = q.filter(DealExpense.deal_id == deal_id)
+    return [{
+        "id": e.id, "deal_id": e.deal_id, "category": e.category or "other",
+        "category_label": EXPENSE_CATEGORIES.get(e.category or "other", e.category),
+        "amount": e.amount or 0, "date": e.date or "",
+        "description": e.description or "", "created_by": e.created_by or "",
+        "deal_title": e.deal.title if e.deal else "",
+    } for e in q.order_by(DealExpense.id.desc()).all()]
+
+
+@app.post("/api/expenses")
+def create_expense(body: ExpenseCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    deal = db.query(Deal).filter(Deal.id == body.deal_id).first()
+    if not deal:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    if body.amount is None or body.amount <= 0:
+        return JSONResponse(status_code=400, content={"error": "Укажите сумму расхода"})
+    cat = body.category if body.category in EXPENSE_CATEGORIES else "other"
+    row = DealExpense(
+        deal_id=deal.id,
+        category=cat,
+        amount=float(body.amount),
+        date=body.date or datetime.utcnow().strftime("%Y-%m-%d"),
+        description=(body.description or "").strip() or None,
+        created_by=user.full_name or user.username,
+    )
+    db.add(row)
+    label = EXPENSE_CATEGORIES.get(cat, cat)
+    db.add(DealHistory(
+        deal_id=deal.id,
+        action_text=f"Расход {label}: {row.amount:,.0f} ₸".replace(",", " "),
+    ))
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "status": "success"}
+
+
+@app.delete("/api/expenses/{expense_id}")
+def delete_expense(expense_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(DealExpense).filter(DealExpense.id == expense_id).first()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Не найдено"})
+    deal_id = row.deal_id
+    label = EXPENSE_CATEGORIES.get(row.category or "other", row.category)
+    amount = row.amount or 0
+    db.delete(row)
+    db.add(DealHistory(
+        deal_id=deal_id,
+        action_text=f"Расход удалён ({label}): {amount:,.0f} ₸".replace(",", " "),
+    ))
+    db.commit()
     return {"status": "success"}
 
 

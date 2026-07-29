@@ -341,6 +341,37 @@ class DealAttachment(Base):
     deal = relationship("Deal", backref="attachments")
 
 
+class DealAdvance(Base):
+    """Аванс сотруднику по проекту/сделке — вычитается из зарплаты."""
+    __tablename__ = "deal_advances"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    amount = Column(Float, default=0.0)
+    date = Column(String, nullable=True)  # YYYY-MM-DD
+    comment = Column(String, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="advances")
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class DealExpense(Base):
+    """Расход компании внутри проекта (такси, закупка, довоз и т.п.)."""
+    __tablename__ = "deal_expenses"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False, index=True)
+    category = Column(String, default="other")  # taxi / purchase / delivery / other
+    amount = Column(Float, default=0.0)
+    date = Column(String, nullable=True)  # YYYY-MM-DD
+    description = Column(String, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    deal = relationship("Deal", backref="expenses")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 

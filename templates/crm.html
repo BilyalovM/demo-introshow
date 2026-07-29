@@ -614,6 +614,7 @@
     <div class="slider-tabs-row">
         <div id="tab-btn-info" class="slider-tab-item active" onclick="switchSliderTab('info')">Общие (Параметры)</div>
         <div id="tab-btn-products" class="slider-tab-item" onclick="switchSliderTab('products')">Товары (Смета)</div>
+        <div id="tab-btn-money" class="slider-tab-item" onclick="switchSliderTab('money')">Деньги</div>
         <div id="tab-btn-invoices" class="slider-tab-item" onclick="switchSliderTab('invoices')">Счета</div>
         <div id="tab-btn-chat" class="slider-tab-item" onclick="switchSliderTab('chat')" style="display:none;">💬 Чат с клиентом</div>
     </div>
@@ -779,6 +780,44 @@
                     <div>Итого с учетом скидки: <span id="modal-total-label" style="color: var(--primary);">0 ₸</span></div>
                 </div>
                 <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
+            </div>
+
+            <!-- Tab Content: Advances + project expenses -->
+            <div id="tab-content-money" class="tab-pane">
+                <div id="deal-money-totals" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;"></div>
+
+                <div class="slider-info-card" style="margin-bottom:14px;">
+                    <div class="slider-info-card-header"><span>Авансы сотрудникам</span></div>
+                    <div class="slider-info-card-body">
+                        <div style="display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+                            <select id="adv-user" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);"></select>
+                            <input type="number" id="adv-amount" min="0" step="100" placeholder="Сумма ₸" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                            <input type="date" id="adv-date" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                        </div>
+                        <input type="text" id="adv-comment" placeholder="Комментарий (необязательно)" style="width:100%; box-sizing:border-box; margin-bottom:8px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="addDealAdvance()">+ Аванс</button>
+                        <div id="deal-advances-list" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
+                    </div>
+                </div>
+
+                <div class="slider-info-card">
+                    <div class="slider-info-card-header"><span>Расходы проекта</span></div>
+                    <div class="slider-info-card-body">
+                        <div style="display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+                            <select id="exp-category" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                                <option value="taxi">Такси</option>
+                                <option value="purchase">Закупка</option>
+                                <option value="delivery">Довоз / логистика</option>
+                                <option value="other">Прочее</option>
+                            </select>
+                            <input type="number" id="exp-amount" min="0" step="100" placeholder="Сумма ₸" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                            <input type="date" id="exp-date" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                        </div>
+                        <input type="text" id="exp-description" placeholder="Описание (например: такси на склад)" style="width:100%; box-sizing:border-box; margin-bottom:8px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text);">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="addDealExpense()">+ Расход</button>
+                        <div id="deal-expenses-list" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Tab Content: Invoices -->
@@ -957,6 +996,9 @@
     let dealLoadTimer = null;
     let activeDealActivities = [];
     let activeDealInvoices = [];
+    let activeDealAdvances = [];
+    let activeDealExpenses = [];
+    const EXPENSE_LABELS = { taxi: 'Такси', purchase: 'Закупка', delivery: 'Довоз / логистика', other: 'Прочее' };
 
     async function initCrm() {
         try {
@@ -1403,7 +1445,7 @@
     // Bitrix24 Slider Logic
     let activeDealId = null;
 
-    async function openDealSlider(dealId) {
+    async function openDealSlider(dealId, preferredTab) {
         activeDealId = dealId;
         
         // Fetch detailed deal info
@@ -1432,8 +1474,17 @@
             await loadContactsForCompany(data.company_id, data.contact_id);
             activeDealActivities = data.activities || [];
             activeDealInvoices = data.invoices || [];
+            activeDealAdvances = data.advances || [];
+            activeDealExpenses = data.expenses || [];
             renderDealActivities();
             renderDealInvoices();
+            renderDealMoney();
+            fillAdvanceUserSelect();
+            const today = new Date().toISOString().slice(0, 10);
+            const advDate = document.getElementById('adv-date');
+            const expDate = document.getElementById('exp-date');
+            if (advDate && !advDate.value) advDate.value = today;
+            if (expDate && !expDate.value) expDate.value = today;
 
             // Set quick actions
             const callBtn = document.getElementById('deal-call-btn');
@@ -1495,8 +1546,8 @@
             drawProductRows();
             drawTimeline(data.history || [], data.activities || []);
 
-            // Set Info tab active by default
-            switchSliderTab('info');
+            // Set Info tab active by default (or keep money after edits)
+            switchSliderTab(preferredTab || 'info');
             switchActivityTab('delo');
 
             // Slide in
@@ -1514,7 +1565,7 @@
     }
 
     function switchSliderTab(tabName) {
-        ['info', 'products', 'invoices', 'chat'].forEach(t => {
+        ['info', 'products', 'money', 'invoices', 'chat'].forEach(t => {
             const btn = document.getElementById('tab-btn-' + t);
             const pane = document.getElementById('tab-content-' + t);
             if (btn) btn.classList.toggle('active', tabName === t);
@@ -1522,6 +1573,112 @@
         });
         if (tabName === 'chat') loadDealChat();
         if (tabName === 'invoices') renderDealInvoices();
+        if (tabName === 'money') renderDealMoney();
+    }
+
+    function fillAdvanceUserSelect() {
+        const sel = document.getElementById('adv-user');
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">Сотрудник…</option>' +
+            (crmUsers || []).map(u =>
+                `<option value="${u.id}">${escapeHtml(u.full_name || u.username)}</option>`
+            ).join('');
+        if (cur) sel.value = cur;
+    }
+
+    function renderDealMoney() {
+        const totals = document.getElementById('deal-money-totals');
+        const advBox = document.getElementById('deal-advances-list');
+        const expBox = document.getElementById('deal-expenses-list');
+        if (!totals || !advBox || !expBox) return;
+
+        const advSum = (activeDealAdvances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+        const expSum = (activeDealExpenses || []).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        totals.innerHTML = `
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg-2);">
+                <div class="muted" style="font-size:12px;">Авансы</div>
+                <div style="font-weight:800;font-size:1.15rem;margin-top:4px;">${advSum.toLocaleString('ru-RU')} ₸</div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg-2);">
+                <div class="muted" style="font-size:12px;">Расходы проекта</div>
+                <div style="font-weight:800;font-size:1.15rem;margin-top:4px;">${expSum.toLocaleString('ru-RU')} ₸</div>
+            </div>`;
+
+        if (!(activeDealAdvances || []).length) {
+            advBox.innerHTML = '<div class="muted" style="font-size:13px;">Авансов пока нет.</div>';
+        } else {
+            advBox.innerHTML = activeDealAdvances.map(a => `
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+                    <div>
+                        <div style="font-weight:700;">${escapeHtml(a.user_name || '—')} · ${(Number(a.amount)||0).toLocaleString('ru-RU')} ₸</div>
+                        <div class="muted" style="font-size:12px;margin-top:2px;">${escapeHtml(a.date || '')}${a.comment ? ' · ' + escapeHtml(a.comment) : ''}</div>
+                    </div>
+                    <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deleteDealAdvance(${a.id})">Удалить</button>
+                </div>`).join('');
+        }
+
+        if (!(activeDealExpenses || []).length) {
+            expBox.innerHTML = '<div class="muted" style="font-size:13px;">Расходов пока нет.</div>';
+        } else {
+            expBox.innerHTML = activeDealExpenses.map(e => `
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+                    <div>
+                        <div style="font-weight:700;">${escapeHtml(EXPENSE_LABELS[e.category] || e.category)} · ${(Number(e.amount)||0).toLocaleString('ru-RU')} ₸</div>
+                        <div class="muted" style="font-size:12px;margin-top:2px;">${escapeHtml(e.date || '')}${e.description ? ' · ' + escapeHtml(e.description) : ''}</div>
+                    </div>
+                    <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deleteDealExpense(${e.id})">Удалить</button>
+                </div>`).join('');
+        }
+    }
+
+    async function addDealAdvance() {
+        if (!activeDealId) return;
+        const userId = parseInt(document.getElementById('adv-user').value) || 0;
+        const amount = parseFloat(document.getElementById('adv-amount').value) || 0;
+        const date = document.getElementById('adv-date').value || null;
+        const comment = document.getElementById('adv-comment').value.trim();
+        if (!userId) { alert('Выберите сотрудника'); return; }
+        if (amount <= 0) { alert('Укажите сумму аванса'); return; }
+        const res = await fetch('/api/advances', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deal_id: activeDealId, user_id: userId, amount, date, comment })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось сохранить аванс'); return; }
+        document.getElementById('adv-amount').value = '';
+        document.getElementById('adv-comment').value = '';
+        await openDealSlider(activeDealId, 'money');
+    }
+
+    async function deleteDealAdvance(id) {
+        if (!confirm('Удалить аванс?')) return;
+        await fetch('/api/advances/' + id, { method: 'DELETE' });
+        await openDealSlider(activeDealId, 'money');
+    }
+
+    async function addDealExpense() {
+        if (!activeDealId) return;
+        const category = document.getElementById('exp-category').value || 'other';
+        const amount = parseFloat(document.getElementById('exp-amount').value) || 0;
+        const date = document.getElementById('exp-date').value || null;
+        const description = document.getElementById('exp-description').value.trim();
+        if (amount <= 0) { alert('Укажите сумму расхода'); return; }
+        const res = await fetch('/api/expenses', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deal_id: activeDealId, category, amount, date, description })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось сохранить расход'); return; }
+        document.getElementById('exp-amount').value = '';
+        document.getElementById('exp-description').value = '';
+        await openDealSlider(activeDealId, 'money');
+    }
+
+    async function deleteDealExpense(id) {
+        if (!confirm('Удалить расход?')) return;
+        await fetch('/api/expenses/' + id, { method: 'DELETE' });
+        await openDealSlider(activeDealId, 'money');
     }
 
     // ---- Чат с клиентом внутри сделки (диалог мессенджера) ----
