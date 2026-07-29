@@ -776,9 +776,18 @@
                         <!-- Loaded by JS -->
                     </tbody>
                 </table>
-                <div style="display: flex; justify-content: flex-end; margin-top: 16px; gap: 16px; font-weight: 700; font-size: 14px;">
+                <div style="display: flex; justify-content: flex-end; margin-top: 16px; gap: 16px; font-weight: 700; font-size: 14px; flex-wrap: wrap;">
                     <div>Скидка: <span id="modal-discount-label">0%</span></div>
-                    <div>Итого с учетом скидки: <span id="modal-total-label" style="color: var(--primary);">0 ₸</span></div>
+                    <div>Итого: <span id="modal-total-label" style="color: var(--primary);">0 ₸</span></div>
+                </div>
+                <div id="modal-margin-block" style="display:none; margin-top:10px; padding:10px 12px; background:var(--bg-2); border-radius:8px; font-size:12.5px;">
+                    <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                        <span class="muted">Оборудование: <strong id="modal-eq-total">0</strong></span>
+                        <span class="muted">Логистика/персонал: <strong id="modal-fixed-total">0</strong></span>
+                        <span class="muted">Налог: <strong id="modal-tax-total">0</strong></span>
+                        <span class="muted">Себест. субаренды: <strong id="modal-cost-total">0</strong></span>
+                        <span>Маржа: <strong id="modal-margin-total" style="color:var(--primary)">0</strong></span>
+                    </div>
                 </div>
                 <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="saveDealProducts()">Сохранить смету</button>
             </div>
@@ -1591,7 +1600,8 @@
             
             // Labels
             document.getElementById('modal-discount-label').innerText = `${data.discount_percentage}%`;
-            document.getElementById('modal-total-label').innerText = `${data.final_sum.toLocaleString()} ₸`;
+            document.getElementById('modal-total-label').innerText = `${(data.final_sum || 0).toLocaleString()} ₸`;
+            renderDealMarginBlock(data.totals);
 
             // Draw stages progress bar
             drawStagesProgressBar(data.stage);
@@ -2353,10 +2363,13 @@
             const qty = prod.quantity || 1;
             const days = prod.days || 1;
             const total = price * qty * days;
+            const subBadge = (prod.warehouse_type || 'own') === 'subrental'
+                ? ' <span style="font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:999px;background:#fff7ed;color:#c2410c;">субаренда</span>'
+                : '';
 
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td style="font-weight:600;">${prod.name}</td>
+                <td style="font-weight:600;">${escapeHtml(prod.name || '')}${subBadge}</td>
                 <td><input type="number" min="0" value="${price}" style="width:90px;" onchange="updateProductPrice(${index}, this.value)"> ₸</td>
                 <td><input type="number" min="1" value="${qty}" onchange="updateProductField(${index}, 'quantity', this.value)"></td>
                 <td><input type="number" min="1" value="${days}" onchange="updateProductField(${index}, 'days', this.value)"></td>
@@ -2428,7 +2441,9 @@
                 stock_price: equip.price,
                 quantity: 1,
                 days: 1,
-                category_type: ["Логистика", "Персонал", "Расходники"].includes(equip.category) ? 'fixed' : 'equipment'
+                category_type: ["Логистика", "Персонал", "Расходники", "Логистика, Тех персонал"].includes(equip.category) ? 'fixed' : 'equipment',
+                warehouse_type: equip.warehouse_type || 'own',
+                cost_price: equip.cost_price || 0,
             });
         }
 
@@ -2440,27 +2455,55 @@
         recalculateSliderTotal();
     }
 
+    function renderDealMarginBlock(totals) {
+        const block = document.getElementById('modal-margin-block');
+        if (!block) return;
+        if (!totals || dealHidePrices) {
+            block.style.display = 'none';
+            return;
+        }
+        const fmt = (n) => Math.round(n || 0).toLocaleString('ru-RU') + ' ₸';
+        document.getElementById('modal-eq-total').textContent = fmt(totals.equipment_total ?? totals.equipment_base);
+        document.getElementById('modal-fixed-total').textContent = fmt(totals.fixed_total);
+        document.getElementById('modal-tax-total').textContent = fmt(totals.tax_amount);
+        document.getElementById('modal-cost-total').textContent = fmt(totals.cost_total);
+        document.getElementById('modal-margin-total').textContent = fmt(totals.margin);
+        block.style.display = 'block';
+    }
+
     function recalculateSliderTotal() {
         const discount = parseFloat(document.getElementById('edit-deal-discount').value) || 0;
         
         let equipTotal = 0;
         let fixedTotal = 0;
+        let costTotal = 0;
 
         currentDealProducts.forEach(p => {
-            const rowTotal = p.price * p.quantity * p.days;
+            const rowTotal = (p.price || 0) * (p.quantity || 1) * (p.days || 1);
             if (p.category_type === 'fixed') {
                 fixedTotal += rowTotal;
             } else {
                 equipTotal += rowTotal;
             }
+            if ((p.warehouse_type || 'own') === 'subrental') {
+                costTotal += (Number(p.cost_price) || 0) * (p.quantity || 1) * (p.days || 1);
+            }
         });
 
         const discountedEquip = equipTotal * (1 - discount / 100);
-        const grandTotal = Math.round(discountedEquip + fixedTotal);
+        const after = discountedEquip + fixedTotal;
+        const grandTotal = Math.round(after);
 
         document.getElementById('modal-discount-label').innerText = `${discount}%`;
         document.getElementById('modal-total-label').innerText = `${grandTotal.toLocaleString()} ₸`;
         document.getElementById('edit-deal-sum').value = grandTotal;
+        renderDealMarginBlock({
+            equipment_total: discountedEquip,
+            fixed_total: fixedTotal,
+            tax_amount: 0,
+            cost_total: costTotal,
+            margin: after - costTotal,
+        });
     }
 
     // Submit products update to backend
@@ -2488,9 +2531,10 @@
             if(response.ok) {
                 const data = await response.json();
                 document.getElementById('edit-deal-sum').value = data.final_sum;
+                if (data.totals) renderDealMarginBlock(data.totals);
                 await loadDeals();
                 renderCrm();
-                openDealSlider(activeDealId);
+                openDealSlider(activeDealId, 'products');
                 alert('Смета успешно сохранена!');
             } else {
                 alert('Не удалось обновить смету');

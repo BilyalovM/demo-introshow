@@ -126,6 +126,8 @@ with Session(engine) as session:
         "ALTER TABLE equipment ADD COLUMN cost_price FLOAT DEFAULT 0",
         "ALTER TABLE equipment ADD COLUMN warehouse_type VARCHAR DEFAULT 'own'",
         "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
+        # Налог в смете (%)
+        "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 0",
     ]:
         try:
             session.execute(text(ddl))
@@ -233,6 +235,7 @@ class DealCreate(BaseModel):
     event_date: str
     event_address: Optional[str] = None
     discount_percentage: float = 0.0
+    tax_percentage: float = 0.0
     items_json: Optional[str] = None
     source: Optional[str] = "manual"
     is_qualified: Optional[bool] = False
@@ -1268,6 +1271,43 @@ def update_equipment(equip_id: int, item: EquipmentCreate, db: Session = Depends
 class PriceUpdate(BaseModel):
     price: float
 
+@app.post("/api/admin/import-catalog-xlsx")
+async def import_catalog_xlsx(
+    file: UploadFile = File(...),
+    update_existing: bool = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Импорт каталога из Excel-шаблона сметы (лист «Для нас»). Только admin."""
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Только администратор"})
+    fname = (file.filename or "").lower()
+    if not fname.endswith((".xlsx", ".xlsm")):
+        return JSONResponse(status_code=400, content={"error": "Нужен файл .xlsx"})
+    try:
+        from catalog_import import import_catalog_from_xlsx
+    except ImportError:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Не установлен openpyxl. Выполните: pip install openpyxl"},
+        )
+    fd, temp_path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    try:
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        result = import_catalog_from_xlsx(db, temp_path, update_existing=update_existing)
+        return result
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Ошибка импорта: {e}"})
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
 @app.put("/api/equipment/{equip_id}/price")
 def update_equipment_price(equip_id: int, upd: PriceUpdate, db: Session = Depends(get_db)):
     """Быстрое обновление цены на складе (из сметы)."""
@@ -1805,7 +1845,22 @@ def get_equipment_availability(start_date: str = None, end_date: str = None, db:
             
     return [{"equipment_id": k, "booked": v["booked"], "conflicts": v["conflicts"]} for k, v in booked_items.items()]
 
-FIXED_CATEGORIES = ["Логистика", "Персонал", "Расходники"]
+FIXED_CATEGORIES = [
+    "Логистика",
+    "Персонал",
+    "Расходники",
+    "Логистика, Тех персонал",
+    "Логистика/Тех персонал/Расходники",
+]
+
+
+def _is_fixed_category(category: Optional[str]) -> bool:
+    if not category:
+        return False
+    if category in FIXED_CATEGORIES:
+        return True
+    low = category.lower()
+    return any(k in low for k in ("логистика", "персонал", "расходник"))
 
 
 def _item_price(di: DealItem) -> float:
@@ -1921,13 +1976,16 @@ def generate_payroll_for_deal(db: Session, deal: Deal, replace: bool = True) -> 
     return created
 
 
-def _deal_calc_items(deal: Deal) -> list:
+def _deal_calc_items(deal: Deal, exclude_subrental: bool = False) -> list:
     items = []
     for di in deal.items:
         eq = di.equipment
         if not eq:
             continue
-        cat_type = "fixed" if eq.category in FIXED_CATEGORIES else "equipment"
+        wtype = getattr(eq, "warehouse_type", None) or "own"
+        if exclude_subrental and wtype == "subrental":
+            continue
+        cat_type = "fixed" if _is_fixed_category(eq.category) else "equipment"
         items.append({
             "name": eq.name,
             "price": _item_price(di),
@@ -1936,14 +1994,46 @@ def _deal_calc_items(deal: Deal) -> list:
             "category_type": cat_type,
             "photo_url": eq.photo_url,
             "description": eq.description,
+            "warehouse_type": wtype,
+            "cost_price": float(getattr(eq, "cost_price", 0) or 0),
+            "equipment_id": eq.id,
+            "category": eq.category,
+            "supplier": getattr(eq, "supplier", None),
         })
     return items
 
 
+def _deal_tax(deal: Deal) -> float:
+    return float(getattr(deal, "tax_percentage", 0) or 0)
+
+
+def _calc_deal(deal: Deal, exclude_subrental: bool = False) -> dict:
+    return calculate_estimate(
+        _deal_calc_items(deal, exclude_subrental=exclude_subrental),
+        deal.discount_percentage or 0,
+        _deal_tax(deal),
+    )
+
+
 def _recalc_deal_sum(db: Session, deal: Deal) -> None:
-    result = calculate_estimate(_deal_calc_items(deal), deal.discount_percentage or 0)
+    result = _calc_deal(deal)
     deal.final_sum = result["grand_total"]
     db.commit()
+
+
+def _estimate_totals_payload(result: dict) -> dict:
+    return {
+        "equipment_base": result.get("equipment_base", 0),
+        "equipment_total": result.get("equipment_total", 0),
+        "fixed_total": result.get("fixed_total", 0),
+        "discount_amount": result.get("discount_amount", 0),
+        "after_discount": result.get("after_discount", 0),
+        "tax_percentage": result.get("tax_percentage", 0),
+        "tax_amount": result.get("tax_amount", 0),
+        "grand_total": result.get("grand_total", 0),
+        "cost_total": result.get("cost_total", 0),
+        "margin": result.get("margin", 0),
+    }
 
 
 def _default_assignee_id(db: Session) -> Optional[int]:
@@ -1978,7 +2068,7 @@ def _user_assigned_to_deal(db: Session, user: User, deal: Deal) -> bool:
 
 
 def _build_technichka_context(deal: Deal, assignee_name: str = "") -> dict:
-    result = calculate_estimate(_deal_calc_items(deal), deal.discount_percentage or 0)
+    result = _calc_deal(deal)
     rent_period = ""
     if deal.setup_date or deal.event_date:
         rent_period = f"{deal.setup_date or '—'} — {deal.event_date or '—'}"
@@ -2210,6 +2300,7 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = De
         event_date=deal.event_date,
         event_address=deal.event_address,
         discount_percentage=deal.discount_percentage,
+        tax_percentage=deal.tax_percentage or 0.0,
         stage=stage_id,
         source=deal.source or "manual",
         is_qualified=bool(deal.is_qualified),
@@ -2309,16 +2400,23 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
     items = []
     for i in d.items:
         price = 0 if hide else _item_price(i)
+        eq = i.equipment
         items.append({
             "id": i.id,
             "equipment_id": i.equipment_id,
             "quantity": i.quantity,
             "days": i.days,
-            "name": i.equipment.name if i.equipment else "Unknown",
+            "name": eq.name if eq else "Unknown",
             "price": price,
-            "stock_price": 0 if hide else (i.equipment.price if i.equipment else 0),
-            "category_type": "fixed" if i.equipment and i.equipment.category in FIXED_CATEGORIES else "equipment"
+            "stock_price": 0 if hide else (eq.price if eq else 0),
+            "category_type": "fixed" if eq and _is_fixed_category(eq.category) else "equipment",
+            "warehouse_type": (getattr(eq, "warehouse_type", None) or "own") if eq else "own",
+            "cost_price": 0 if hide else float(getattr(eq, "cost_price", 0) or 0) if eq else 0,
+            "supplier": getattr(eq, "supplier", None) if eq else None,
+            "category": eq.category if eq else "",
         })
+
+    totals = None if hide else _estimate_totals_payload(_calc_deal(d))
 
     history = [{"action_text": h.action_text, "created_at": h.created_at.strftime("%Y-%m-%d %H:%M:%S"), "kind": "history"} for h in sorted(d.history, key=lambda x: x.created_at, reverse=True)]
     custom_values = {cv.field_id: cv.value for cv in d.custom_values}
@@ -2383,7 +2481,9 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "event_date": d.event_date,
         "event_address": d.event_address,
         "discount_percentage": 0 if hide else d.discount_percentage,
+        "tax_percentage": 0 if hide else _deal_tax(d),
         "final_sum": 0 if hide else d.final_sum,
+        "totals": totals,
         "hide_prices": hide,
         "comment": d.comment,
         "created_at": d.created_at.strftime("%d.%m.%Y") if d.created_at else "",
@@ -2425,6 +2525,7 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
 
 class DealItemsUpdate(BaseModel):
     discount_percentage: float
+    tax_percentage: Optional[float] = None
     items: List[dict] # {equipment_id, quantity, days}
 
 @app.put("/api/deals/{deal_id}/items")
@@ -2448,11 +2549,17 @@ def update_deal_items(deal_id: int, update: DealItemsUpdate, db: Session = Depen
         db.add(di)
         
     d.discount_percentage = update.discount_percentage
+    if update.tax_percentage is not None:
+        d.tax_percentage = update.tax_percentage
     db.commit()
     db.refresh(d)
     _recalc_deal_sum(db, d)
     
-    return {"status": "success", "final_sum": d.final_sum}
+    return {
+        "status": "success",
+        "final_sum": d.final_sum,
+        "totals": _estimate_totals_payload(_calc_deal(d)),
+    }
 
 class DealUpdate(BaseModel):
     title: Optional[str] = None
@@ -3561,7 +3668,8 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
     if not comp:
         return JSONResponse(status_code=400, content={"error": "No company linked"})
 
-    result = calculate_estimate(_deal_calc_items(d), d.discount_percentage)
+    # Договор — как клиентская смета: без субаренды
+    result = _calc_deal(d, exclude_subrental=True)
     
     context = {
         "contract_number": f"CRM-{d.id}",
@@ -3599,17 +3707,31 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
     )
 
 @app.get("/api/deals/{deal_id}/estimate")
-def download_deal_estimate(deal_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Скачивание сметы сделки в формате .docx."""
+def download_deal_estimate(
+    deal_id: int,
+    background_tasks: BackgroundTasks,
+    mode: str = "internal",
+    db: Session = Depends(get_db),
+):
+    """Скачивание сметы .docx: mode=internal|client (по умолчанию internal)."""
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
-    result = calculate_estimate(_deal_calc_items(d), d.discount_percentage or 0)
+    mode_norm = (mode or "internal").strip().lower()
+    if mode_norm not in ("internal", "client"):
+        mode_norm = "internal"
+
+    # Клиентская смета — без позиций субаренды; внутренние итоги считаем по полному составу
+    result = _calc_deal(d, exclude_subrental=(mode_norm == "client"))
 
     rent_period = ""
     if d.setup_date or d.event_date:
         rent_period = f"{d.setup_date or '—'} — {d.event_date or '—'}"
+
+    manager_name = ""
+    if d.assignee:
+        manager_name = d.assignee.full_name or d.assignee.username or ""
 
     context = {
         "number": f"CRM-{d.id}",
@@ -3618,17 +3740,25 @@ def download_deal_estimate(deal_id: int, background_tasks: BackgroundTasks, db: 
         "event_name": d.title or "",
         "event_address": d.event_address or "",
         "rent_period": rent_period,
+        "manager_name": manager_name,
         "items": result["items"],
+        "equipment_base": result.get("equipment_base", 0),
         "equipment_total": result["equipment_total"],
         "fixed_total": result["fixed_total"],
+        "discount_amount": result.get("discount_amount", 0),
+        "after_discount": result.get("after_discount", result["grand_total"]),
+        "tax_percentage": result.get("tax_percentage", _deal_tax(d)),
+        "tax_amount": result.get("tax_amount", 0),
         "grand_total": result["grand_total"],
+        "cost_total": result.get("cost_total", 0),
+        "margin": result.get("margin", 0),
         "discount_percentage": d.discount_percentage or 0,
     }
 
     from document_generator import generate_estimate_docx
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
-    generate_estimate_docx(context, temp_path)
+    generate_estimate_docx(context, temp_path, mode=mode_norm)
 
     def cleanup_file(path: str):
         try:
@@ -3637,10 +3767,15 @@ def download_deal_estimate(deal_id: int, background_tasks: BackgroundTasks, db: 
             pass
 
     background_tasks.add_task(cleanup_file, temp_path)
+    fname = (
+        f"Smeta_client_CRM-{d.id}.docx"
+        if mode_norm == "client"
+        else f"Smeta_vnutr_CRM-{d.id}.docx"
+    )
     return FileResponse(
         temp_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=f"Smeta_CRM-{d.id}.docx",
+        filename=fname,
     )
 
 
@@ -3654,7 +3789,7 @@ async def get_deal_contract_preview(deal_id: int, db: Session = Depends(get_db))
     if not comp:
         raise HTTPException(status_code=400, detail="Deal has no associated company")
         
-    result = calculate_estimate(_deal_calc_items(d), d.discount_percentage)
+    result = _calc_deal(d, exclude_subrental=True)
     
     # Check equipment photos
     for item in result["items"]:
@@ -3700,7 +3835,8 @@ async def api_calculate(request: Request):
     data = await request.json()
     items = data.get("items", [])
     discount = float(data.get("discount", 0.0))
-    result = calculate_estimate(items, discount)
+    tax = float(data.get("tax", data.get("tax_percentage", 0.0)) or 0.0)
+    result = calculate_estimate(items, discount, tax)
     return JSONResponse(content=result)
 
 @app.post("/api/preview-contract")

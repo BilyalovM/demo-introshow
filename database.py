@@ -147,6 +147,7 @@ class Deal(Base):
     event_date = Column(String) # Дата мероприятия
     event_address = Column(String) # Адрес площадки
     discount_percentage = Column(Float, default=0.0)
+    tax_percentage = Column(Float, default=0.0)
     final_sum = Column(Float, default=0.0)
     comment = Column(String)
     contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)

@@ -4,7 +4,7 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from num2words import num2words
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 
 def resolve_photo_path(photo_url: str) -> str:
@@ -73,6 +73,73 @@ def _fmt_money(v: float) -> str:
     return f"{v:,.0f}".replace(",", " ") + " ₸"
 
 
+def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = False) -> None:
+    meta_lines = []
+    if context.get("company_name"):
+        meta_lines.append(f"Заказчик: {context['company_name']}")
+    if context.get("event_name"):
+        meta_lines.append(f"Мероприятие: {context['event_name']}")
+    if context.get("event_address"):
+        meta_lines.append(f"Адрес: {context['event_address']}")
+    if context.get("rent_period"):
+        meta_lines.append(f"Период аренды: {context['rent_period']}")
+    if with_assignee and context.get("assignee_name"):
+        meta_lines.append(f"Ответственный на объекте: {context['assignee_name']}")
+    if context.get("manager_name"):
+        meta_lines.append(f"Менеджер: {context['manager_name']}")
+    for line in meta_lines:
+        doc.add_paragraph(line)
+
+
+def _add_items_table(
+    doc: Document,
+    items: List[Dict[str, Any]],
+    with_prices: bool = True,
+    name_suffix_fn=None,
+) -> None:
+    cols = 6 if with_prices else 4
+    table = doc.add_table(rows=1, cols=cols)
+    table.style = "Table Grid"
+    headers = (
+        ["№", "Наименование", "Цена", "Кол-во", "Дней", "Сумма"]
+        if with_prices
+        else ["№", "Наименование", "Кол-во", "Дней / смен"]
+    )
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = h
+        for p in cell.paragraphs:
+            for r in p.runs:
+                r.bold = True
+
+    for idx, item in enumerate(items, 1):
+        row = table.add_row().cells
+        name = str(item.get("name", ""))
+        if name_suffix_fn:
+            extra = name_suffix_fn(item)
+            if extra:
+                name = f"{name}{extra}"
+        row[0].text = str(idx)
+        row[1].text = name
+        if with_prices:
+            row[2].text = _fmt_money(item.get("price", 0))
+            row[3].text = str(item.get("quantity", 1))
+            row[4].text = str(item.get("days", 1))
+            row[5].text = _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0)))
+        else:
+            row[2].text = str(item.get("quantity", 1))
+            row[3].text = str(item.get("days", 1))
+
+
+def _add_right_line(doc: Document, label: str, value: Optional[float] = None, bold: bool = False, size: int = 11) -> None:
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    text = label if value is None else f"{label}: {_fmt_money(value)}"
+    run = p.add_run(text)
+    run.bold = bold
+    run.font.size = Pt(size)
+
+
 def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
     """Техничка для склада/персонала: позиции и количества без цен."""
     doc = Document()
@@ -83,37 +150,10 @@ def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
     run.bold = True
     run.font.size = Pt(16)
 
-    meta_lines = []
-    if context.get("company_name"):
-        meta_lines.append(f"Заказчик: {context['company_name']}")
-    if context.get("event_name"):
-        meta_lines.append(f"Мероприятие: {context['event_name']}")
-    if context.get("event_address"):
-        meta_lines.append(f"Адрес: {context['event_address']}")
-    if context.get("rent_period"):
-        meta_lines.append(f"Период: {context['rent_period']}")
-    if context.get("assignee_name"):
-        meta_lines.append(f"Ответственный на объекте: {context['assignee_name']}")
-    for line in meta_lines:
-        doc.add_paragraph(line)
+    _add_meta(doc, context, with_assignee=True)
 
     items = context.get("items", [])
-    table = doc.add_table(rows=1, cols=4)
-    table.style = "Table Grid"
-    headers = ["№", "Наименование", "Кол-во", "Дней / смен"]
-    for i, h in enumerate(headers):
-        cell = table.rows[0].cells[i]
-        cell.text = h
-        for p in cell.paragraphs:
-            for r in p.runs:
-                r.bold = True
-
-    for idx, item in enumerate(items, 1):
-        row = table.add_row().cells
-        row[0].text = str(idx)
-        row[1].text = str(item.get("name", ""))
-        row[2].text = str(item.get("quantity", 1))
-        row[3].text = str(item.get("days", 1))
+    _add_items_table(doc, items, with_prices=False)
 
     note = doc.add_paragraph()
     note.add_run("Цены скрыты. Документ для склада и выездного персонала.").italic = True
@@ -122,68 +162,130 @@ def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
     return output_path
 
 
-def generate_estimate_docx(context: Dict[str, Any], output_path: str) -> str:
-    """Генерирует смету (.docx) с таблицей позиций и итогами."""
+def generate_estimate_docx(
+    context: Dict[str, Any],
+    output_path: str,
+    mode: str = "internal",
+) -> str:
+    """Генерирует смету (.docx).
+
+    mode:
+      - internal («Для нас»): все позиции, блок субаренды, себестоимость и маржа
+      - client («Клиентская»): без строк субаренды, без себестоимости/маржи
+    """
+    mode = (mode or "internal").strip().lower()
+    if mode not in ("internal", "client"):
+        mode = "internal"
+
     doc = Document()
+
+    if mode == "client":
+        title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
+    else:
+        title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run(f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}")
+    run = title.add_run(title_text)
     run.bold = True
     run.font.size = Pt(16)
 
-    meta_lines = []
-    if context.get("company_name"):
-        meta_lines.append(f"Заказчик: {context['company_name']}")
-    if context.get("event_name"):
-        meta_lines.append(f"Мероприятие: {context['event_name']}")
-    if context.get("event_address"):
-        meta_lines.append(f"Адрес: {context['event_address']}")
-    if context.get("rent_period"):
-        meta_lines.append(f"Период аренды: {context['rent_period']}")
-    for line in meta_lines:
-        doc.add_paragraph(line)
+    _add_meta(doc, context)
 
-    items = context.get("items", [])
-    table = doc.add_table(rows=1, cols=6)
-    table.style = "Table Grid"
-    headers = ["№", "Наименование", "Цена", "Кол-во", "Дней", "Сумма"]
-    for i, h in enumerate(headers):
-        cell = table.rows[0].cells[i]
-        cell.text = h
-        for p in cell.paragraphs:
-            for r in p.runs:
-                r.bold = True
+    all_items = list(context.get("items", []) or [])
+    if mode == "client":
+        main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
+        sub_items = []
+    else:
+        main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
+        sub_items = [i for i in all_items if (i.get("warehouse_type") or "own") == "subrental"]
+        # Если в контексте уже отфильтровали — fallback: все как основные
+        if not main_items and not sub_items and all_items:
+            main_items = all_items
 
-    for idx, item in enumerate(items, 1):
-        row = table.add_row().cells
-        row[0].text = str(idx)
-        row[1].text = str(item.get("name", ""))
-        row[2].text = _fmt_money(item.get("price", 0))
-        row[3].text = str(item.get("quantity", 1))
-        row[4].text = str(item.get("days", 1))
-        row[5].text = _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0)))
+    if main_items:
+        if mode == "internal" and sub_items:
+            h = doc.add_paragraph()
+            h.add_run("Оборудование и услуги").bold = True
+        _add_items_table(
+            doc,
+            main_items,
+            with_prices=True,
+            name_suffix_fn=None,
+        )
+    elif mode == "client":
+        doc.add_paragraph("Нет позиций для клиентской сметы.")
+
+    if mode == "internal" and sub_items:
+        doc.add_paragraph("")
+        h = doc.add_paragraph()
+        run = h.add_run("Субаренда (только для нас)")
+        run.bold = True
+        note = doc.add_paragraph()
+        note.add_run("Раздел не попадает в клиентскую смету.").italic = True
+
+        table = doc.add_table(rows=1, cols=7)
+        table.style = "Table Grid"
+        headers = ["№", "Наименование", "Поставщик", "Цена клиенту", "Себест.", "Кол-во × дней", "Сумма"]
+        for i, htxt in enumerate(headers):
+            cell = table.rows[0].cells[i]
+            cell.text = htxt
+            for p in cell.paragraphs:
+                for r in p.runs:
+                    r.bold = True
+        for idx, item in enumerate(sub_items, 1):
+            row = table.add_row().cells
+            qty = item.get("quantity", 1)
+            days = item.get("days", 1)
+            row[0].text = str(idx)
+            row[1].text = str(item.get("name", ""))
+            row[2].text = str(item.get("supplier") or "—")
+            row[3].text = _fmt_money(item.get("price", 0))
+            row[4].text = _fmt_money(item.get("cost_price", 0))
+            row[5].text = f"{qty} × {days}"
+            row[6].text = _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0)))
 
     doc.add_paragraph("")
-    totals = [
-        ("Оборудование (со скидкой)", context.get("equipment_total", 0)),
-        ("Логистика и персонал", context.get("fixed_total", 0)),
-    ]
-    if context.get("discount_percentage"):
-        totals.insert(0, (f"Скидка на оборудование: {context['discount_percentage']:.0f}%", None))
-    for label, value in totals:
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        p.add_run(label + (f": {_fmt_money(value)}" if value is not None else ""))
 
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    run = p.add_run(f"ИТОГО: {_fmt_money(context.get('grand_total', 0))}")
-    run.bold = True
-    run.font.size = Pt(14)
+    disc_pct = float(context.get("discount_percentage") or 0)
+    tax_pct = float(context.get("tax_percentage") or 0)
+    eq_base = context.get("equipment_base")
+    if eq_base is None:
+        eq_base = context.get("equipment_total", 0)
+    eq_total = context.get("equipment_total", 0)
+    fixed_total = context.get("fixed_total", 0)
+    discount_amount = context.get("discount_amount")
+    if discount_amount is None and disc_pct:
+        discount_amount = float(eq_base) - float(eq_total)
+    after_discount = context.get("after_discount")
+    if after_discount is None:
+        after_discount = float(eq_total) + float(fixed_total)
+    tax_amount = context.get("tax_amount") or 0
+    grand = context.get("grand_total", 0)
 
-    p = doc.add_paragraph(get_rubles_text(context.get("grand_total", 0)))
+    _add_right_line(doc, "Оборудование (до скидки)", float(eq_base))
+    if disc_pct:
+        _add_right_line(doc, f"Скидка на оборудование {disc_pct:.0f}%", -float(discount_amount or 0))
+    _add_right_line(doc, "Оборудование (со скидкой)", float(eq_total))
+    _add_right_line(doc, "Логистика и персонал", float(fixed_total))
+    _add_right_line(doc, "После скидки", float(after_discount))
+    if tax_pct or tax_amount:
+        _add_right_line(doc, f"Налог {tax_pct:.0f}%", float(tax_amount))
+    _add_right_line(doc, "ИТОГО", float(grand), bold=True, size=14)
+
+    p = doc.add_paragraph(get_rubles_text(float(grand or 0)))
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    if mode == "internal":
+        cost_total = float(context.get("cost_total") or 0)
+        margin = context.get("margin")
+        if margin is None:
+            margin = float(grand or 0) - cost_total
+        doc.add_paragraph("")
+        h = doc.add_paragraph()
+        h.add_run("Маржа (внутренний блок)").bold = True
+        _add_right_line(doc, "Себестоимость субаренды", cost_total)
+        _add_right_line(doc, "Маржа", float(margin), bold=True)
 
     doc.save(output_path)
     return output_path

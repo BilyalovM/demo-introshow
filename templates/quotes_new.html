@@ -38,7 +38,7 @@
         </div>
         <div class="card">
             <h3 style="margin-top:0">Позиции сметы</h3>
-            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену можно менять прямо здесь — она сохранится в этой смете.</p>
+            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену можно менять прямо здесь — она сохранится в этой смете. Позиции с меткой «субаренда» не попадают в клиентскую смету.</p>
             <p class="muted" id="cartEmpty">Пока пусто — добавьте позиции из каталога выше.</p>
             <div id="cartContainer"></div>
         </div>
@@ -78,10 +78,12 @@
             <h3 style="margin-top:0">Документы</h3>
             <div class="grid" style="gap:8px">
                 <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить</button>
-                <button class="btn btn-primary" onclick="downloadDoc('estimate')">Смета → Word</button>
+                <button class="btn btn-primary" onclick="downloadDoc('internal')">Для нас → Word</button>
+                <button class="btn" onclick="downloadDoc('technichka')">Техничка → Word</button>
+                <button class="btn btn-primary" onclick="downloadDoc('client')">Клиентская → Word</button>
                 <button class="btn btn-primary" onclick="downloadDoc('contract')">Договор → Word</button>
             </div>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">Для договора нужен выбранный клиент. Документ формируется в формате .docx (Word).</p>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">«Для нас» — полная смета с субарендой и маржой. «Клиентская» — без субаренды. Для договора нужен выбранный клиент.</p>
         </div>
     </div>
 </div>
@@ -326,6 +328,7 @@ async function loadQuote() {
     document.getElementById('rentStart').value = deal.setup_date || '';
     document.getElementById('rentEnd').value = deal.event_date || '';
     document.getElementById('discountInput').value = deal.discount_percentage || 0;
+    document.getElementById('taxInput').value = deal.tax_percentage || 0;
     document.getElementById('companySelect').value = deal.company_id || '';
     (deal.items || []).forEach(it => {
         const eq = equipment.find(e => e.id === it.equipment_id);
@@ -674,6 +677,7 @@ async function saveQuote(silent) {
     const title = document.getElementById('qTitle').value || ('Смета от ' + new Date().toLocaleDateString('ru-RU'));
     const companyId = parseInt(document.getElementById('companySelect').value) || null;
     const discount = parseFloat(document.getElementById('discountInput').value) || 0;
+    const tax = parseFloat(document.getElementById('taxInput').value) || 0;
     const address = document.getElementById('qAddress').value || '';
 
     try {
@@ -689,6 +693,7 @@ async function saveQuote(silent) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     discount_percentage: discount,
+                    tax_percentage: tax,
                     items: cart.map(c => ({ equipment_id: c.id, quantity: c.qty, days: c.days, price: c.price }))
                 })
             });
@@ -704,6 +709,7 @@ async function saveQuote(silent) {
                     event_date: end,
                     event_address: address,
                     discount_percentage: discount,
+                    tax_percentage: tax,
                     items_json: JSON.stringify(cart.map(c => ({ id: c.id, qty: c.qty, days: c.days, price: c.price })))
                 })
             });
@@ -729,7 +735,12 @@ async function downloadDoc(kind) {
         alert('Для договора выберите клиента (арендатора)');
         return;
     }
-    window.location.href = `/api/deals/${id}/${kind === 'contract' ? 'contract' : 'estimate'}`;
+    let url = `/api/deals/${id}/estimate?mode=internal`;
+    if (kind === 'contract') url = `/api/deals/${id}/contract`;
+    else if (kind === 'technichka') url = `/api/deals/${id}/technichka`;
+    else if (kind === 'client') url = `/api/deals/${id}/estimate?mode=client`;
+    else if (kind === 'internal') url = `/api/deals/${id}/estimate?mode=internal`;
+    window.location.href = url;
 }
 
 document.getElementById('qDate').value = new Date().toISOString().slice(0, 10);
