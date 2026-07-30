@@ -40,3 +40,5 @@ database.db
 scrape_ainex.js
 .vercel
 .env*
+tmp_meeting/
+*.db-journal
