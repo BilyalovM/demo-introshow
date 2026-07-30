@@ -711,6 +711,11 @@
                                 <span>Адрес площадки</span>
                                 <input type="text" id="edit-deal-address">
                             </label>
+
+                            <div class="field">
+                                <span>Отгрузка / исполнение</span>
+                                <div id="deal-ops-pipeline" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;"></div>
+                            </div>
                             
                             <label class="field">
                                 <span>Примечания к заказу</span>
@@ -751,16 +756,18 @@
                 </form>
             </div>
 
-            <!-- Tab Content: Products -->
+            <!-- Tab Content: Products (v2: preview only — edit on /quotes/) -->
             <div id="tab-content-products" class="tab-pane">
-                <div style="background: var(--bg-2); padding: 12px; border-radius: var(--r-sm); margin-bottom: 16px;">
-                    <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">Добавить оборудование со склада:</div>
-                    <div style="display: flex; gap: 8px;">
-                        <select id="add-prod-select" style="flex-grow: 1; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text);"></select>
-                        <button class="btn btn-green btn-sm" onclick="addProductRow()">+ Добавить</button>
+                <div style="background: var(--bg-2); padding: 14px; border-radius: var(--r-sm); margin-bottom: 14px;">
+                    <div style="font-weight: 700; font-size: 14px; margin-bottom: 6px;">Смета проекта</div>
+                    <p class="muted" style="font-size:12.5px;margin:0 0 12px;">Просмотр итогов. Полное редактирование — только в конструкторе сметы.</p>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                        <a class="btn btn-primary" id="crm-open-full-quote" href="/quotes/new" style="width:100%; text-align:center; display:inline-flex; align-items:center; justify-content:center;">Открыть смету</a>
+                        <button type="button" class="btn btn-green" style="width:100%" onclick="sendClientPack()">Отправить клиенту</button>
                     </div>
+                    <select id="add-prod-select" style="display:none;"></select>
                 </div>
-                
+
                 <table class="prod-table">
                     <thead>
                         <tr>
@@ -769,12 +776,9 @@
                             <th>Кол-во</th>
                             <th>Дней</th>
                             <th>Итого</th>
-                            <th></th>
                         </tr>
                     </thead>
-                    <tbody id="deal-products-list">
-                        <!-- Loaded by JS -->
-                    </tbody>
+                    <tbody id="deal-products-list"></tbody>
                 </table>
                 <div style="display: flex; justify-content: flex-end; margin-top: 16px; gap: 16px; font-weight: 700; font-size: 14px; flex-wrap: wrap;">
                     <div>Скидка: <span id="modal-discount-label">0%</span></div>
@@ -791,10 +795,6 @@
                         <span>Маржа: <strong id="modal-margin-total" style="color:var(--primary)">0</strong></span>
                     </div>
                 </div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px;">
-                    <button class="btn btn-primary" style="width:100%" onclick="saveDealProducts()">Сохранить смету</button>
-                    <a class="btn" id="crm-open-full-quote" href="/quotes/new" style="width:100%; text-align:center; display:inline-flex; align-items:center; justify-content:center;">Полная смета →</a>
-                </div>
                 <div style="margin-top:10px; position:relative;" id="crmDocsDd">
                     <button type="button" class="btn btn-sm" style="width:100%" onclick="toggleCrmDocsMenu(event)">Документы ▾</button>
                     <div id="crmDocsMenu" hidden style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;display:flex;flex-direction:column;gap:2px;">
@@ -805,7 +805,7 @@
                         <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract')">Договор → Word</button>
                         <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract_pdf')">Договор → PDF</button>
                     </div>
-                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Техничка — во вкладке «Команда», не в документах сметы.</p>
+                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Техничка — во вкладке «Команда». Редактирование позиций — в «Открыть смету».</p>
                 </div>
             </div>
 
@@ -833,6 +833,7 @@
 
             <!-- Tab Content: Advances + project expenses -->
             <div id="tab-content-money" class="tab-pane">
+                <div id="deal-money-picture" style="margin-bottom:16px;"></div>
                 <div id="deal-money-totals" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;"></div>
 
                 <div class="slider-info-card" style="margin-bottom:14px;">
@@ -904,6 +905,9 @@
         </div>
         
         <div class="slider-right">
+            <!-- v2 Deal hub: quick blocks -->
+            <div id="deal-hub-blocks" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;"></div>
+
             <!-- Activity Tabs (Bitrix24 style) -->
             <div class="activity-tabs">
                 <button id="act-tab-delo" class="activity-tab-btn" onclick="switchActivityTab('delo')">Дело</button>
@@ -1064,9 +1068,19 @@
     let activeDealPayroll = [];
     let activeDealPayrollSummary = null;
     let activeDealStaff = [];
+    let activeDealTasks = [];
+    let activeDealMoneyPicture = null;
+    let activeDealOpsStatus = 'none';
     let dealHidePrices = false;
     const EXPENSE_LABELS = { taxi: 'Такси', purchase: 'Закупка', delivery: 'Довоз / логистика', other: 'Прочее' };
     const ATTENDANCE_LABELS = { pending: 'Ожидает', present: 'Был', absent: 'Не был', fine: 'Штраф' };
+    const OPS_STEPS = [
+        { id: 'packed', label: 'Собрали' },
+        { id: 'departed', label: 'Уехали' },
+        { id: 'on_site', label: 'На площадке' },
+        { id: 'returned', label: 'Вернули' },
+        { id: 'closed', label: 'Закрыли' },
+    ];
 
     async function initCrm() {
         try {
@@ -1100,6 +1114,8 @@
             fillSelectors();
             await loadDeals();
             renderCrm();
+            const dealParam = parseInt(new URLSearchParams(location.search).get('deal') || '') || 0;
+            if (dealParam) openDealSlider(dealParam);
         } catch (e) {
             console.error('CRM Init failed:', e);
         }
@@ -1549,6 +1565,9 @@
             activeDealPayroll = data.payroll_lines || [];
             activeDealPayrollSummary = data.payroll_summary || null;
             activeDealStaff = data.staff || [];
+            activeDealTasks = data.tasks || [];
+            activeDealMoneyPicture = data.money_picture || null;
+            activeDealOpsStatus = data.ops_status || 'none';
             dealHidePrices = !!data.hide_prices;
             const moneyBtn = document.getElementById('tab-btn-money');
             const invBtn = document.getElementById('tab-btn-invoices');
@@ -1627,6 +1646,9 @@
 
             // Draw products & timeline (history + activities)
             drawProductRows();
+            renderDealOpsPipeline();
+            renderDealMoneyPicture();
+            renderDealHub(data);
             drawTimeline(data.history || [], data.activities || []);
 
             // Set Info tab active by default (or keep money after edits)
@@ -1734,6 +1756,7 @@
         const advBox = document.getElementById('deal-advances-list');
         const expBox = document.getElementById('deal-expenses-list');
         if (!totals || !advBox || !expBox) return;
+        renderDealMoneyPicture();
 
         const advSum = (activeDealAdvances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
         const expSum = (activeDealExpenses || []).reduce((s, e) => s + (Number(e.amount) || 0), 0);
@@ -2367,17 +2390,17 @@
         } catch (e) { console.error(e); }
     }
 
-    // Draw Products in Edit Table
+    // v2: products tab = read-only preview (edit only on /quotes/)
     function drawProductRows() {
         const tbody = document.getElementById('deal-products-list');
         tbody.innerHTML = '';
 
         if(currentDealProducts.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:12px;" class="muted">В смете пока нет оборудования.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:12px;" class="muted">В смете пока нет оборудования. Нажмите «Открыть смету».</td></tr>`;
             return;
         }
 
-        currentDealProducts.forEach((prod, index) => {
+        currentDealProducts.forEach((prod) => {
             const price = prod.price || 0;
             const qty = prod.quantity || 1;
             const days = prod.days || 1;
@@ -2389,14 +2412,144 @@
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td style="font-weight:600;">${escapeHtml(prod.name || '')}${subBadge}</td>
-                <td><input type="number" min="0" value="${price}" style="width:90px;" onchange="updateProductPrice(${index}, this.value)"> ₸</td>
-                <td><input type="number" min="1" value="${qty}" onchange="updateProductField(${index}, 'quantity', this.value)"></td>
-                <td><input type="number" min="1" value="${days}" onchange="updateProductField(${index}, 'days', this.value)"></td>
-                <td style="font-weight:700;">${total.toLocaleString()} ₸</td>
-                <td><button class="icon-btn" onclick="removeProductRow(${index})" style="color:var(--danger)">✕</button></td>
+                <td>${dealHidePrices ? '—' : price.toLocaleString() + ' ₸'}</td>
+                <td>${qty}</td>
+                <td>${days}</td>
+                <td style="font-weight:700;">${dealHidePrices ? '—' : total.toLocaleString() + ' ₸'}</td>
             `;
             tbody.appendChild(tr);
         });
+    }
+
+    function renderDealOpsPipeline() {
+        const box = document.getElementById('deal-ops-pipeline');
+        if (!box) return;
+        const cur = activeDealOpsStatus || 'none';
+        box.innerHTML = OPS_STEPS.map(s => {
+            const on = cur === s.id;
+            return `<button type="button" class="btn btn-sm" style="${on ? 'background:var(--primary);color:#fff;border-color:var(--primary);' : ''}"
+                onclick="setDealOpsStatus('${s.id}')">${escapeHtml(s.label)}</button>`;
+        }).join('') +
+        `<button type="button" class="btn btn-sm" style="${cur === 'none' ? 'opacity:1;' : 'opacity:0.7;'}" onclick="setDealOpsStatus('none')">Сбросить</button>`;
+    }
+
+    async function setDealOpsStatus(status) {
+        if (!activeDealId) return;
+        const res = await fetch(`/api/deals/${activeDealId}/ops-status`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ops_status: status })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось обновить статус'); return; }
+        activeDealOpsStatus = data.ops_status || status;
+        renderDealOpsPipeline();
+        renderDealHub();
+    }
+
+    function moneyFmt(n) {
+        return (Number(n) || 0).toLocaleString('ru-RU') + ' ₸';
+    }
+
+    function renderDealMoneyPicture() {
+        const box = document.getElementById('deal-money-picture');
+        if (!box) return;
+        if (dealHidePrices || !activeDealMoneyPicture) {
+            box.innerHTML = '';
+            return;
+        }
+        const m = activeDealMoneyPicture;
+        const rows = [
+            ['Выручка (смета)', m.revenue, ''],
+            ['− Себест. субаренды', m.subrental_cost, 'muted'],
+            ['− ФОТ (начислено)', m.payroll, 'muted'],
+            ['− Расходы проекта', m.expenses, 'muted'],
+            ['Авансы (уже в ФОТ к выплате)', m.advances, 'muted'],
+            ['= Маржа проекта', m.margin, 'primary'],
+        ];
+        box.innerHTML = `
+            <div class="slider-info-card" style="margin:0;">
+                <div class="slider-info-card-header"><span>Денежная картина</span></div>
+                <div class="slider-info-card-body" style="padding-top:8px;">
+                    ${rows.map(([label, val, tone]) => `
+                        <div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
+                            <span class="${tone === 'muted' ? 'muted' : ''}" style="${tone === 'primary' ? 'font-weight:700;' : ''}">${label}</span>
+                            <strong style="${tone === 'primary' ? 'color:var(--primary);font-size:1.05rem;' : ''}">${moneyFmt(val)}</strong>
+                        </div>`).join('')}
+                </div>
+            </div>`;
+    }
+
+    function renderDealHub(data) {
+        const box = document.getElementById('deal-hub-blocks');
+        if (!box) return;
+        const totals = (data && data.totals) || null;
+        const sum = dealHidePrices ? '—' : moneyFmt((data && data.final_sum) != null ? data.final_sum : (totals && totals.grand_total) || 0);
+        const staff = activeDealStaff || [];
+        const tasks = activeDealTasks || [];
+        const money = activeDealMoneyPicture;
+        const opsLabel = (OPS_STEPS.find(s => s.id === activeDealOpsStatus) || {}).label || 'не начата';
+        const openTasks = tasks.filter(t => t.status !== 'done').length;
+        box.innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                    <div class="muted" style="font-size:11px;">Смета</div>
+                    <div style="font-weight:800;margin-top:2px;">${sum}</div>
+                    <a href="/quotes/${activeDealId}" style="font-size:12px;color:var(--primary);">Открыть смету →</a>
+                </div>
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                    <div class="muted" style="font-size:11px;">Маржа</div>
+                    <div style="font-weight:800;margin-top:2px;color:var(--primary);">${dealHidePrices || !money ? '—' : moneyFmt(money.margin)}</div>
+                    <button type="button" class="btn btn-sm" style="margin-top:4px;padding:2px 8px;font-size:11px;" onclick="switchSliderTab('money')">Деньги</button>
+                </div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+                    <div>
+                        <div class="muted" style="font-size:11px;">Команда</div>
+                        <div style="font-weight:700;font-size:13px;margin-top:2px;">${staff.length ? staff.slice(0,3).map(s => escapeHtml(s.user_name)).join(', ') + (staff.length > 3 ? '…' : '') : 'Никого'}</div>
+                    </div>
+                    <button type="button" class="btn btn-sm" onclick="switchSliderTab('team')">Команда</button>
+                </div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+                    <div>
+                        <div class="muted" style="font-size:11px;">Задачи по сделке</div>
+                        <div style="font-weight:700;font-size:13px;margin-top:2px;">${openTasks} открытых · ${tasks.length} всего</div>
+                    </div>
+                    <a class="btn btn-sm" href="/tasks">Задачи</a>
+                </div>
+                ${tasks.slice(0,3).map(t => `<div style="font-size:12px;margin-top:4px;padding-top:4px;border-top:1px solid var(--border);">${escapeHtml(t.title)} <span class="muted">· ${escapeHtml(t.status)}</span></div>`).join('')}
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+                <div>
+                    <div class="muted" style="font-size:11px;">Отгрузка</div>
+                    <div style="font-weight:700;font-size:13px;margin-top:2px;">${escapeHtml(opsLabel)}</div>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <a class="btn btn-sm" href="/chats?deal=${activeDealId}">Чат сделки</a>
+                    <button type="button" class="btn btn-sm btn-green" onclick="sendClientPack()">Клиенту</button>
+                </div>
+            </div>`;
+    }
+
+    async function sendClientPack() {
+        if (!activeDealId) return;
+        const res = await fetch(`/api/deals/${activeDealId}/client-pack`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось собрать пакет'); return; }
+        const msg = data.message || '';
+        try { await navigator.clipboard.writeText(msg); } catch (e) {}
+        const go = confirm(
+            'Клиентский пакет готов.\n\n' +
+            '• Смета PDF и договор PDF — откроются во вкладках\n' +
+            '• Текст сообщения скопирован в буфер\n\n' +
+            'Открыть PDF сейчас?'
+        );
+        if (go) {
+            window.open(data.estimate_pdf, '_blank');
+            window.open(data.contract_pdf, '_blank');
+        }
     }
 
     // Local changes in products tab

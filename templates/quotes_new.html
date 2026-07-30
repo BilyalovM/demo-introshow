@@ -39,10 +39,16 @@
         </div>
         <div class="card">
             <h3 style="margin-top:0">Каталог — добавить позиции</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
                 <button type="button" class="btn btn-sm cat-wh active" data-wh="all" onclick="setCatWarehouse('all')">Все</button>
                 <button type="button" class="btn btn-sm cat-wh" data-wh="own" onclick="setCatWarehouse('own')">Свой склад</button>
                 <button type="button" class="btn btn-sm cat-wh" data-wh="subrental" onclick="setCatWarehouse('subrental')">Субаренда</button>
+                <span class="muted" style="font-size:12px;margin-left:4px;">|</span>
+                <select id="estimateTemplateSelect" style="min-width:180px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                    <option value="">Шаблон сметы…</option>
+                </select>
+                <button type="button" class="btn btn-sm" onclick="applyEstimateTemplate()">Применить</button>
+                <button type="button" class="btn btn-sm" onclick="saveEstimateTemplate()">Сохранить как шаблон</button>
             </div>
             <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:10px" oninput="renderCatalog()"/>
             <div id="catalogContainer"></div>
@@ -462,10 +468,81 @@ async function loadAll() {
         fillManagerSelect(null);
 
         renderCatalog();
+        await loadEstimateTemplates();
         if (QUOTE_ID) await loadQuote();
     } catch (e) {
         console.error('Ошибка загрузки данных:', e);
     }
+}
+
+async function loadEstimateTemplates() {
+    const sel = document.getElementById('estimateTemplateSelect');
+    if (!sel) return;
+    try {
+        const res = await fetch('/api/estimate-templates');
+        if (!res.ok) return;
+        const rows = await res.json();
+        sel.innerHTML = '<option value="">Шаблон сметы…</option>' +
+            rows.map(t => `<option value="${t.id}">${(t.name || '').replace(/</g,'&lt;')} (${(t.items||[]).length})</option>`).join('');
+    } catch (e) {}
+}
+
+async function saveEstimateTemplate() {
+    if (!cart.length) { alert('Сначала добавьте позиции в смету'); return; }
+    const name = prompt('Название шаблона сметы:');
+    if (!name || !name.trim()) return;
+    const items = cart.map(p => ({
+        equipment_id: p.id,
+        quantity: p.qty || 1,
+        days: p.days || 1,
+        price: p.price,
+    }));
+    const res = await fetch('/api/estimate-templates', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: name.trim(), items })
+    });
+    if (!res.ok) { alert('Не удалось сохранить шаблон'); return; }
+    await loadEstimateTemplates();
+    alert('Шаблон сохранён');
+}
+
+async function applyEstimateTemplate() {
+    const sel = document.getElementById('estimateTemplateSelect');
+    const tid = parseInt(sel && sel.value) || 0;
+    if (!tid) { alert('Выберите шаблон'); return; }
+    if (QUOTE_ID) {
+        const res = await fetch(`/api/estimate-templates/${tid}/apply/${QUOTE_ID}`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось применить'); return; }
+        await loadQuote();
+        alert('Добавлено позиций: ' + (data.added || 0));
+        return;
+    }
+    // Новая смета: подтянуть items из списка шаблонов
+    try {
+        const res = await fetch('/api/estimate-templates');
+        const rows = await res.json();
+        const t = rows.find(x => x.id === tid);
+        if (!t) return;
+        (t.items || []).forEach(it => {
+            const eq = equipment.find(e => e.id === it.equipment_id);
+            if (!eq) return;
+            const existing = cart.find(c => c.id === eq.id);
+            if (existing) {
+                existing.qty = (existing.qty || 0) + (it.quantity || 1);
+            } else {
+                cart.push({
+                    id: eq.id, name: eq.name, category: eq.category,
+                    price: it.price != null ? it.price : eq.price,
+                    stock_price: eq.price, qty: it.quantity || 1, days: it.days || 1,
+                    warehouse_type: eq.warehouse_type || 'own',
+                    cost_price: eq.cost_price || 0, supplier: eq.supplier || '',
+                });
+            }
+        });
+        renderCart();
+        recalc();
+    } catch (e) { console.error(e); }
 }
 
 async function loadQuote() {

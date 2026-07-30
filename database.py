@@ -36,7 +36,19 @@ def get_database_url() -> str:
 DATABASE_URL = get_database_url()
 
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+def _make_engine(url: str):
+    """SQLite needs check_same_thread; Postgres/other drivers use pool defaults."""
+    if url.startswith("sqlite"):
+        return create_engine(url, connect_args={"check_same_thread": False})
+    # postgres:// → postgresql:// for SQLAlchemy; prefer +psycopg2 if bare
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return create_engine(url, pool_pre_ping=True)
+
+
+engine = _make_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
@@ -171,6 +183,8 @@ class Deal(Base):
     loss_reason = Column(String, nullable=True)
     is_qualified = Column(Boolean, default=False)
     is_archived = Column(Boolean, default=False)
+    # Операционный пайплайн после успеха: none / packed / departed / on_site / returned / closed
+    ops_status = Column(String, default="none")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     company = relationship("Company", back_populates="deals")
@@ -527,6 +541,46 @@ class InternalMessage(Base):
     chat = relationship("InternalChat", back_populates="messages")
     sender = relationship("User", foreign_keys=[sender_id])
     task = relationship("Task", foreign_keys=[task_id])
+
+
+class AppNotification(Base):
+    """In-app уведомления (колокольчик): @mention, назначение на проект, задача."""
+    __tablename__ = "app_notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String, default="info")  # mention / staff_assign / task_assign / info
+    title = Column(String)
+    body = Column(String, nullable=True)
+    link = Column(String, nullable=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class EstimateTemplate(Base):
+    """Шаблон сметы: набор позиций каталога для быстрого старта."""
+    __tablename__ = "estimate_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    description = Column(String, nullable=True)
+    # [{equipment_id, quantity, days}]
+    items_json = Column(JSON, default=list)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ChecklistTemplate(Base):
+    """Шаблон чек-листа для задач."""
+    __tablename__ = "checklist_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    # ["пункт 1", "пункт 2"]
+    items_json = Column(JSON, default=list)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 def init_db():

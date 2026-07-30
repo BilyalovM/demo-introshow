@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Сегодня — Intro Show CRM{% endblock %}
+{% block content %}
+<div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
+    <div>
+        <h1 style="margin:0;font-size:1.45rem;">Сегодня</h1>
+        <p class="muted" style="margin:6px 0 0;font-size:13.5px;">Назначения, техничка, задачи и непрочитанные чаты команды</p>
+    </div>
+    <div id="today-date-label" class="muted" style="font-size:13px;"></div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px;" id="today-stats">
+    <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface);">
+        <div class="muted" style="font-size:12px;">Назначения</div>
+        <div id="stat-assignments" style="font-weight:800;font-size:1.4rem;margin-top:4px;">—</div>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface);">
+        <div class="muted" style="font-size:12px;">Мои задачи</div>
+        <div id="stat-tasks" style="font-weight:800;font-size:1.4rem;margin-top:4px;">—</div>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface);">
+        <div class="muted" style="font-size:12px;">Непрочитанные чаты</div>
+        <div id="stat-chats" style="font-weight:800;font-size:1.4rem;margin-top:4px;">—</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1.2fr 1fr;gap:16px;align-items:start;">
+    <section>
+        <h2 style="font-size:1.05rem;margin:0 0 10px;">Выезды и техничка</h2>
+        <div id="today-assignments" style="display:flex;flex-direction:column;gap:10px;"></div>
+        <h2 style="font-size:1.05rem;margin:22px 0 10px;">Мои задачи</h2>
+        <div id="today-tasks" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </section>
+    <section>
+        <h2 style="font-size:1.05rem;margin:0 0 10px;">Внутренние чаты</h2>
+        <div id="today-chats" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </section>
+</div>
+
+<style>
+@media (max-width: 900px) {
+    #today-stats, .page-head + div + div { grid-template-columns: 1fr !important; }
+}
+</style>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    const DAY_LABEL = { today: 'Сегодня', tomorrow: 'Завтра', soon: 'Скоро', overdue: 'Просрочено', later: 'Позже' };
+
+    function esc(s) {
+        return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function loadToday() {
+        const res = await fetch('/api/today');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('today-date-label').textContent =
+            data.today + ' · завтра ' + data.tomorrow;
+        document.getElementById('stat-assignments').textContent = data.counts.assignments;
+        document.getElementById('stat-tasks').textContent = data.counts.tasks;
+        document.getElementById('stat-chats').textContent = data.counts.unread_chats;
+
+        const aBox = document.getElementById('today-assignments');
+        if (!(data.assignments || []).length) {
+            aBox.innerHTML = '<div class="muted" style="padding:12px;border:1px dashed var(--border);border-radius:10px;">Нет назначений на ближайшие дни.</div>';
+        } else {
+            aBox.innerHTML = data.assignments.map(a => `
+                <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface);">
+                    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                        <div>
+                            <div style="font-weight:800;">${esc(a.deal_title)}</div>
+                            <div class="muted" style="font-size:12.5px;margin-top:3px;">
+                                ${DAY_LABEL[a.day] || a.day}
+                                ${a.setup_date ? ' · монтаж ' + esc(a.setup_date) : ''}
+                                ${a.event_date ? ' · ивент ' + esc(a.event_date) : ''}
+                                ${a.role_name ? ' · ' + esc(a.role_name) : ''}
+                            </div>
+                            ${a.address ? `<div class="muted" style="font-size:12px;margin-top:2px;">${esc(a.address)}</div>` : ''}
+                            <div style="font-size:12px;margin-top:4px;">Отгрузка: <strong>${esc(a.ops_status_label)}</strong></div>
+                        </div>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;">
+                            <a class="btn btn-sm" href="/crm?deal=${a.deal_id}">Сделка</a>
+                            <a class="btn btn-sm btn-primary" href="${a.technichka_url}" target="_blank">Техничка</a>
+                            ${a.task_id ? `<a class="btn btn-sm" href="/tasks?open=${a.task_id}">Задача</a>` : ''}
+                        </div>
+                    </div>
+                </div>`).join('');
+        }
+
+        const tBox = document.getElementById('today-tasks');
+        if (!(data.tasks || []).length) {
+            tBox.innerHTML = '<div class="muted" style="padding:12px;border:1px dashed var(--border);border-radius:10px;">Открытых задач нет.</div>';
+        } else {
+            tBox.innerHTML = data.tasks.map(t => `
+                <a href="/tasks?open=${t.id}" style="display:block;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface);text-decoration:none;color:inherit;">
+                    <div style="font-weight:700;">${esc(t.title)}</div>
+                    <div class="muted" style="font-size:12px;margin-top:2px;">
+                        ${DAY_LABEL[t.due_bucket] || ''} ${t.due_date ? '· ' + esc(t.due_date) : ''} · ${esc(t.status)} · ${esc(t.priority)}
+                    </div>
+                </a>`).join('');
+        }
+
+        const cBox = document.getElementById('today-chats');
+        if (!(data.unread_chats || []).length) {
+            cBox.innerHTML = '<div class="muted" style="padding:12px;border:1px dashed var(--border);border-radius:10px;">Нет непрочитанных.</div>';
+        } else {
+            cBox.innerHTML = data.unread_chats.map(c => `
+                <a href="/chats?open=${c.chat_id}" style="display:block;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface);text-decoration:none;color:inherit;">
+                    <div style="display:flex;justify-content:space-between;gap:8px;">
+                        <strong>${esc(c.title)}</strong>
+                        <span style="background:var(--primary);color:#fff;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:700;">${c.unread}</span>
+                    </div>
+                    <div class="muted" style="font-size:12.5px;margin-top:4px;">${esc(c.last_text)}</div>
+                </a>`).join('');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadToday);
+    setInterval(loadToday, 60000);
+})();
+</script>
+{% endblock %}

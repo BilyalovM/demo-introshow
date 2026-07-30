@@ -118,6 +118,13 @@
                         <strong>Чек-лист</strong>
                         <span class="muted" style="font-size:12px" id="tk_checklist_progress"></span>
                     </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;">
+                        <select id="tk_checklist_template" style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
+                            <option value="">Шаблон чек-листа…</option>
+                        </select>
+                        <button type="button" class="btn btn-sm" onclick="applyChecklistTemplate()">Применить</button>
+                        <button type="button" class="btn btn-sm" onclick="saveChecklistTemplate()">Сохранить шаблон</button>
+                    </div>
                     <div id="tk_checklist" class="task-checklist-list"></div>
                     <div class="task-checklist-add">
                         <input id="tk_checklist_input" type="text" placeholder="Новый пункт…">
@@ -508,6 +515,55 @@ function removeChecklistLine(i) {
     renderChecklistEditor();
 }
 
+async function loadChecklistTemplates() {
+    const sel = document.getElementById('tk_checklist_template');
+    if (!sel) return;
+    try {
+        const res = await fetch('/api/checklist-templates');
+        if (!res.ok) return;
+        const rows = await res.json();
+        sel.innerHTML = '<option value="">Шаблон чек-листа…</option>' +
+            rows.map(t => `<option value="${t.id}">${esc(t.name)} (${(t.items||[]).length})</option>`).join('');
+    } catch (e) {}
+}
+
+async function saveChecklistTemplate() {
+    if (!formChecklist.length) { alert('Сначала добавьте пункты чек-листа'); return; }
+    const name = prompt('Название шаблона чек-листа:');
+    if (!name || !name.trim()) return;
+    const res = await fetch('/api/checklist-templates', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: name.trim(), items: formChecklist.map(c => c.text) })
+    });
+    if (!res.ok) { alert('Не удалось сохранить'); return; }
+    await loadChecklistTemplates();
+    alert('Шаблон сохранён');
+}
+
+async function applyChecklistTemplate() {
+    const sel = document.getElementById('tk_checklist_template');
+    const tid = parseInt(sel && sel.value) || 0;
+    if (!tid) { alert('Выберите шаблон'); return; }
+    const taskId = parseInt(document.getElementById('tk_id').value) || 0;
+    if (taskId) {
+        const res = await fetch(`/api/checklist-templates/${tid}/apply/${taskId}`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Ошибка'); return; }
+        openTaskForm(taskId);
+        return;
+    }
+    try {
+        const res = await fetch('/api/checklist-templates');
+        const rows = await res.json();
+        const t = rows.find(x => x.id === tid);
+        if (!t) return;
+        (t.items || []).forEach(text => {
+            formChecklist.push({ text, is_done: false, sort_order: formChecklist.length });
+        });
+        renderChecklistEditor();
+    } catch (e) {}
+}
+
 async function loadRefs() {
     try {
         const [uRes, dRes] = await Promise.all([fetch('/api/users/names'), fetch('/api/deals')]);
@@ -516,6 +572,7 @@ async function loadRefs() {
         fillPeopleSelects();
         document.getElementById('tk_deal').innerHTML = '<option value="">— без сделки —</option>' +
             dealsList.map(d => `<option value="${d.id}">№${d.id} — ${esc(d.title)}</option>`).join('');
+        await loadChecklistTemplates();
     } catch (e) { console.error(e); }
 }
 

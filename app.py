@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -137,6 +137,8 @@ with Session(engine) as session:
         # Шапка сметы (как в Excel)
         "ALTER TABLE deals ADD COLUMN city VARCHAR",
         "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
+        # v2: операционный пайплайн отгрузки
+        "ALTER TABLE deals ADD COLUMN ops_status VARCHAR DEFAULT 'none'",
     ]:
         try:
             session.execute(text(ddl))
@@ -653,6 +655,12 @@ def read_quotes(request: Request, db: Session = Depends(get_db), user: User = De
 @app.get("/calendar", response_class=HTMLResponse)
 def read_calendar(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("calendar.html", {"request": request, "active_page": "calendar"})
+
+
+@app.get("/today", response_class=HTMLResponse)
+def read_today(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("today.html", {"request": request, "active_page": "today"})
+
 
 @app.get("/api/calendar/events")
 def api_calendar_events(
@@ -1296,7 +1304,19 @@ def create_task(t: TaskCreate, db: Session = Depends(get_db), user: User = Depen
     db.refresh(task)
     if task.deal_id:
         db.add(DealHistory(deal_id=task.deal_id, action_text=f"Создана задача: {task.title}"))
-        db.commit()
+    for a in (task.assignees or []):
+        if a.user_id and a.user_id != user.id:
+            _notify_user(
+                db, a.user_id,
+                kind="task_assign",
+                title=f"Новая задача: {task.title}",
+                body=f"Постановщик: {user.full_name or user.username}",
+                link=f"/tasks?open={task.id}",
+                deal_id=task.deal_id,
+                task_id=task.id,
+                skip_user_id=user.id,
+            )
+    db.commit()
     return {"id": task.id, "status": "success"}
 
 @app.put("/api/tasks/{task_id}")
@@ -1365,6 +1385,20 @@ def create_task_comment(
     comment = TaskComment(task_id=task_id, user_id=user.id, text=text)
     db.add(comment)
     observers = _ensure_observers_from_mentions(db, task, text)
+    mentioned = _find_mentioned_users(db, text)
+    for u in mentioned:
+        if u.id == user.id:
+            continue
+        _notify_user(
+            db, u.id,
+            kind="mention",
+            title=f"Вас упомянули в задаче «{task.title}»",
+            body=text[:200],
+            link=f"/tasks?open={task.id}",
+            deal_id=task.deal_id,
+            task_id=task.id,
+            skip_user_id=user.id,
+        )
     db.commit()
     db.refresh(comment)
     result = _task_comment_to_dict(comment)
@@ -2603,6 +2637,68 @@ def _estimate_totals_payload(result: dict) -> dict:
     }
 
 
+OPS_STATUSES = [
+    ("none", "—"),
+    ("packed", "Собрали"),
+    ("departed", "Уехали"),
+    ("on_site", "На площадке"),
+    ("returned", "Вернули"),
+    ("closed", "Закрыли"),
+]
+OPS_STATUS_LABELS = {k: v for k, v in OPS_STATUSES}
+
+
+def _money_picture(deal: Deal, totals: Optional[dict] = None) -> dict:
+    """Единая денежная картина сделки: выручка → затраты → маржа."""
+    if totals is None:
+        totals = _estimate_totals_payload(_calc_deal(deal))
+    payroll = _payroll_summary(deal)
+    revenue = float(totals.get("grand_total") or 0)
+    cost_sub = float(totals.get("cost_total") or 0)
+    payroll_gross = float(payroll.get("total_gross") or 0)
+    expenses = sum(float(e.amount or 0) for e in (deal.expenses or []))
+    advances = sum(float(a.amount or 0) for a in (deal.advances or []))
+    # Маржа проекта: выручка − себест. субаренды − ФОТ − расходы (авансы уже в ФОТ к выплате)
+    margin = revenue - cost_sub - payroll_gross - expenses
+    return {
+        "revenue": revenue,
+        "subrental_cost": cost_sub,
+        "subrental_client": float(totals.get("subrental_total") or 0),
+        "payroll": payroll_gross,
+        "payroll_net": float(payroll.get("total_net") or 0),
+        "expenses": expenses,
+        "advances": advances,
+        "margin": margin,
+        "estimate_margin": float(totals.get("margin") or 0),
+    }
+
+
+def _notify_user(
+    db: Session,
+    user_id: Optional[int],
+    *,
+    kind: str,
+    title: str,
+    body: str = "",
+    link: str = None,
+    deal_id: int = None,
+    task_id: int = None,
+    skip_user_id: int = None,
+):
+    if not user_id or user_id == skip_user_id:
+        return
+    db.add(AppNotification(
+        user_id=user_id,
+        kind=kind,
+        title=title,
+        body=body or None,
+        link=link,
+        deal_id=deal_id,
+        task_id=task_id,
+        is_read=False,
+    ))
+
+
 def _default_assignee_id(db: Session) -> Optional[int]:
     u = db.query(User).filter(User.role.in_(["admin", "manager"])).order_by(User.id).first()
     return u.id if u else None
@@ -3123,6 +3219,8 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "loss_reason": d.loss_reason,
         "is_qualified": bool(d.is_qualified),
         "is_archived": bool(d.is_archived),
+        "ops_status": getattr(d, "ops_status", None) or "none",
+        "ops_status_label": OPS_STATUS_LABELS.get(getattr(d, "ops_status", None) or "none", "—"),
         "prev_deal": prev_deal,
         "items": items,
         "history": history,
@@ -3134,6 +3232,12 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "expenses_total": 0 if hide else sum(e["amount"] for e in expenses),
         "payroll_lines": [] if hide else [_serialize_payroll_line(p) for p in sorted(d.payroll_lines, key=lambda x: x.id)],
         "payroll_summary": None if hide else _payroll_summary(d),
+        "money_picture": None if hide else _money_picture(d, totals),
+        "tasks": [{
+            "id": t.id, "title": t.title, "status": t.status,
+            "due_date": t.due_date or "", "priority": t.priority or "normal",
+            "assignee": t.assignee or "",
+        } for t in sorted(d.tasks or [], key=lambda x: x.id, reverse=True)[:20]],
         "staff": [{
             "id": s.id,
             "user_id": s.user_id,
@@ -3630,6 +3734,16 @@ def api_assign_staff(deal_id: int, body: StaffAssignIn, db: Session = Depends(ge
         created_by=user.full_name or user.username,
         role_name=body.role_name,
         note=body.note,
+    )
+    _notify_user(
+        db, emp.id,
+        kind="staff_assign",
+        title=f"Вас назначили на проект «{deal.title}»",
+        body=(body.role_name or "Участник команды") + (f" — {body.note}" if body.note else ""),
+        link=f"/crm?deal={deal.id}",
+        deal_id=deal.id,
+        task_id=row.task_id,
+        skip_user_id=user.id,
     )
     db.commit()
     db.refresh(row)
@@ -5143,3 +5257,371 @@ async def analyze_3d_scene(
     }
     
     return JSONResponse(content=mock_response)
+
+
+# -----------------
+# v2: Today / Notifications / Ops / Templates / Client pack
+# -----------------
+
+class OpsStatusUpdate(BaseModel):
+    ops_status: str
+
+
+@app.put("/api/deals/{deal_id}/ops-status")
+def update_deal_ops_status(
+    deal_id: int, body: OpsStatusUpdate,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    status = (body.ops_status or "none").strip()
+    if status not in OPS_STATUS_LABELS:
+        return JSONResponse(status_code=400, content={"error": "Неизвестный статус отгрузки"})
+    old = getattr(d, "ops_status", None) or "none"
+    d.ops_status = status
+    if old != status:
+        db.add(DealHistory(
+            deal_id=deal_id,
+            action_text=f"Отгрузка: {OPS_STATUS_LABELS.get(old, old)} → {OPS_STATUS_LABELS[status]}",
+        ))
+    db.commit()
+    return {"status": "success", "ops_status": status, "ops_status_label": OPS_STATUS_LABELS[status]}
+
+
+@app.get("/api/deals/{deal_id}/client-pack")
+def deal_client_pack(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Ссылки клиентского пакета: смета + договор (PDF). Без ЭЦП."""
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    if _user_hide_prices(user):
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к суммам"})
+    base = f"/api/deals/{deal_id}"
+    estimate_pdf = f"{base}/estimate.pdf?mode=client"
+    contract_pdf = f"{base}/contract.pdf"
+    return {
+        "deal_id": deal_id,
+        "title": d.title,
+        "company_name": d.company.name if d.company else "",
+        "estimate_pdf": estimate_pdf,
+        "estimate_docx": f"{base}/estimate?mode=client",
+        "contract_pdf": contract_pdf,
+        "contract_docx": f"{base}/contract",
+        "message": (
+            f"Добрый день! По проекту «{d.title}» направляем смету и договор.\n"
+            f"Смета (PDF): {estimate_pdf}\n"
+            f"Договор (PDF): {contract_pdf}"
+        ),
+    }
+
+
+@app.get("/api/today")
+def api_today(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Сводка «Сегодня»: назначения/техничка, задачи, непрочитанные чаты."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
+    uname = user.full_name or user.username
+
+    staff_rows = (
+        db.query(DealStaffAssignment)
+        .filter(DealStaffAssignment.user_id == user.id)
+        .order_by(DealStaffAssignment.id.desc())
+        .limit(80)
+        .all()
+    )
+    assignments = []
+    for s in staff_rows:
+        deal = s.deal
+        if not deal or deal.is_archived:
+            continue
+        date_key = deal.setup_date or deal.event_date or ""
+        day = "today" if date_key == today else ("tomorrow" if date_key == tomorrow else None)
+        if day is None and date_key not in (today, tomorrow):
+            # всё равно покажем ближайшие 7 дней и без даты (свежие назначения)
+            if date_key:
+                try:
+                    dd = datetime.strptime(date_key[:10], "%Y-%m-%d")
+                    if dd.date() < datetime.utcnow().date() or dd.date() > (datetime.utcnow() + timedelta(days=7)).date():
+                        continue
+                except ValueError:
+                    pass
+            elif s.created_at and (datetime.utcnow() - s.created_at).days > 14:
+                continue
+            day = "soon"
+        assignments.append({
+            "assignment_id": s.id,
+            "deal_id": deal.id,
+            "deal_title": deal.title,
+            "role_name": s.role_name or "",
+            "setup_date": deal.setup_date or "",
+            "event_date": deal.event_date or "",
+            "address": deal.event_address or "",
+            "ops_status": getattr(deal, "ops_status", None) or "none",
+            "ops_status_label": OPS_STATUS_LABELS.get(getattr(deal, "ops_status", None) or "none", "—"),
+            "technichka_url": f"/api/deals/{deal.id}/technichka",
+            "task_id": s.task_id,
+            "day": day or "soon",
+        })
+
+    my_tasks = []
+    for t in db.query(Task).filter(Task.status.in_(["open", "in_progress"])).order_by(Task.id.desc()).limit(120).all():
+        is_mine = False
+        if t.assignee and uname and t.assignee == uname:
+            is_mine = True
+        for a in (t.assignees or []):
+            if a.user_id == user.id or (a.name and a.name == uname):
+                is_mine = True
+                break
+        if not is_mine:
+            continue
+        due = (t.due_date or "")[:10]
+        my_tasks.append({
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "due_date": t.due_date or "",
+            "priority": t.priority or "normal",
+            "deal_id": t.deal_id,
+            "due_bucket": "today" if due == today else ("tomorrow" if due == tomorrow else ("overdue" if due and due < today else "later")),
+        })
+        if len(my_tasks) >= 40:
+            break
+
+    unread_chats = []
+    memberships = db.query(InternalChatMember).filter(InternalChatMember.user_id == user.id).all()
+    for m in memberships:
+        chat = m.chat
+        if not chat:
+            continue
+        last = (
+            db.query(InternalMessage)
+            .filter(InternalMessage.chat_id == chat.id)
+            .order_by(InternalMessage.id.desc())
+            .first()
+        )
+        if not last:
+            continue
+        unread = max(0, (last.id or 0) - (m.last_read_message_id or 0))
+        if unread <= 0:
+            continue
+        unread_chats.append({
+            "chat_id": chat.id,
+            "title": chat.title or ("Сделка #" + str(chat.deal_id) if chat.deal_id else "Чат"),
+            "chat_type": chat.chat_type,
+            "deal_id": chat.deal_id,
+            "unread": unread,
+            "last_text": (last.text or "")[:120],
+        })
+    unread_chats.sort(key=lambda x: -x["unread"])
+
+    return {
+        "today": today,
+        "tomorrow": tomorrow,
+        "assignments": assignments,
+        "tasks": my_tasks,
+        "unread_chats": unread_chats[:30],
+        "counts": {
+            "assignments": len(assignments),
+            "tasks": len(my_tasks),
+            "unread_chats": len(unread_chats),
+        },
+    }
+
+
+@app.get("/api/notifications")
+def list_notifications(
+    unread_only: bool = False,
+    limit: int = 40,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    q = db.query(AppNotification).filter(AppNotification.user_id == user.id)
+    if unread_only:
+        q = q.filter(AppNotification.is_read == False)  # noqa: E712
+    rows = q.order_by(AppNotification.id.desc()).limit(max(1, min(limit, 100))).all()
+    unread_count = (
+        db.query(AppNotification)
+        .filter(AppNotification.user_id == user.id, AppNotification.is_read == False)  # noqa: E712
+        .count()
+    )
+    return {
+        "unread_count": unread_count,
+        "items": [{
+            "id": n.id,
+            "kind": n.kind,
+            "title": n.title,
+            "body": n.body or "",
+            "link": n.link or "",
+            "deal_id": n.deal_id,
+            "task_id": n.task_id,
+            "is_read": bool(n.is_read),
+            "created_at": n.created_at.strftime("%Y-%m-%d %H:%M") if n.created_at else "",
+        } for n in rows],
+    }
+
+
+@app.post("/api/notifications/read")
+def mark_notifications_read(
+    body: dict = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    body = body or {}
+    ids = body.get("ids")
+    q = db.query(AppNotification).filter(
+        AppNotification.user_id == user.id,
+        AppNotification.is_read == False,  # noqa: E712
+    )
+    if ids:
+        q = q.filter(AppNotification.id.in_(list(ids)))
+    updated = 0
+    for n in q.all():
+        n.is_read = True
+        updated += 1
+    db.commit()
+    return {"status": "success", "updated": updated}
+
+
+@app.get("/api/estimate-templates")
+def list_estimate_templates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = db.query(EstimateTemplate).order_by(EstimateTemplate.id.desc()).all()
+    return [{
+        "id": t.id, "name": t.name, "description": t.description or "",
+        "items": t.items_json or [], "created_by": t.created_by or "",
+        "created_at": t.created_at.strftime("%Y-%m-%d") if t.created_at else "",
+    } for t in rows]
+
+
+class EstimateTemplateIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    items: List[dict] = []
+
+
+@app.post("/api/estimate-templates")
+def create_estimate_template(
+    body: EstimateTemplateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    name = (body.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Укажите название"})
+    t = EstimateTemplate(
+        name=name,
+        description=(body.description or "").strip() or None,
+        items_json=body.items or [],
+        created_by=user.full_name or user.username,
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return {"id": t.id, "status": "success"}
+
+
+@app.post("/api/estimate-templates/{template_id}/apply/{deal_id}")
+def apply_estimate_template(
+    template_id: int, deal_id: int,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    t = db.query(EstimateTemplate).filter(EstimateTemplate.id == template_id).first()
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not t or not d:
+        return JSONResponse(status_code=404, content={"error": "Не найдено"})
+    added = 0
+    for it in (t.items_json or []):
+        eq_id = it.get("equipment_id")
+        if not eq_id:
+            continue
+        eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
+        if not eq:
+            continue
+        db.add(DealItem(
+            deal_id=d.id,
+            equipment_id=eq.id,
+            quantity=int(it.get("quantity") or 1),
+            days=int(it.get("days") or 1),
+            price=it.get("price"),
+        ))
+        added += 1
+    db.add(DealHistory(deal_id=d.id, action_text=f"Применён шаблон сметы «{t.name}» (+{added})"))
+    db.commit()
+    db.refresh(d)
+    _recalc_deal_sum(db, d)
+    return {"status": "success", "added": added, "final_sum": d.final_sum}
+
+
+@app.get("/api/checklist-templates")
+def list_checklist_templates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = db.query(ChecklistTemplate).order_by(ChecklistTemplate.id.desc()).all()
+    return [{
+        "id": t.id, "name": t.name, "items": t.items_json or [],
+        "created_by": t.created_by or "",
+    } for t in rows]
+
+
+class ChecklistTemplateIn(BaseModel):
+    name: str
+    items: List[str] = []
+
+
+@app.post("/api/checklist-templates")
+def create_checklist_template(
+    body: ChecklistTemplateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    name = (body.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Укажите название"})
+    items = [x.strip() for x in (body.items or []) if (x or "").strip()]
+    t = ChecklistTemplate(
+        name=name,
+        items_json=items,
+        created_by=user.full_name or user.username,
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return {"id": t.id, "status": "success"}
+
+
+@app.post("/api/checklist-templates/{template_id}/apply/{task_id}")
+def apply_checklist_template(
+    template_id: int, task_id: int,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    t = db.query(ChecklistTemplate).filter(ChecklistTemplate.id == template_id).first()
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not t or not task:
+        return JSONResponse(status_code=404, content={"error": "Не найдено"})
+    base = db.query(TaskChecklistItem).filter(TaskChecklistItem.task_id == task_id).count()
+    added = 0
+    for i, text_item in enumerate(t.items_json or []):
+        text_item = (text_item or "").strip()
+        if not text_item:
+            continue
+        db.add(TaskChecklistItem(
+            task_id=task_id, text=text_item, is_done=False, sort_order=base + i,
+        ))
+        added += 1
+    db.commit()
+    return {"status": "success", "added": added}
+
+
+@app.get("/api/search")
+def api_search(q: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Лёгкий глобальный поиск: сделки, компании, задачи."""
+    query = (q or "").strip()
+    if len(query) < 2:
+        return {"deals": [], "companies": [], "tasks": []}
+    like = f"%{query}%"
+    deals = db.query(Deal).filter(Deal.title.ilike(like), Deal.is_archived == False).limit(10).all()  # noqa: E712
+    companies = db.query(Company).filter(Company.name.ilike(like)).limit(10).all()
+    tasks = db.query(Task).filter(Task.title.ilike(like)).limit(10).all()
+    return {
+        "deals": [{"id": d.id, "title": d.title, "url": f"/crm?deal={d.id}"} for d in deals],
+        "companies": [{"id": c.id, "title": c.name, "url": f"/companies?id={c.id}"} for c in companies],
+        "tasks": [{"id": t.id, "title": t.title, "url": f"/tasks?open={t.id}"} for t in tasks],
+    }

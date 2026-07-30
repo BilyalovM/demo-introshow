@@ -55,6 +55,19 @@
   </span>
  </a>
  {% endif %}
+ {% if 'today' in sections %}
+ <a href="/today" class="nav-link {% if request.url.path.startswith('/today') %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <circle cx="12" cy="12" r="9"></circle>
+    <path d="M12 7v5l3 2"></path>
+   </svg>
+  </span>
+  <span>
+   Сегодня
+  </span>
+ </a>
+ {% endif %}
  {% if 'inbox' in sections %}
  <a href="/inbox" class="nav-link {% if request.url.path == '/inbox' %}active{% endif %}">
   <span class="nav-ico">
@@ -252,14 +265,15 @@
    Intro Show
   </span>
  </a>
- <div class="search">
+ <div class="search" style="position:relative;">
   <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="18">
    <circle cx="11" cy="11" r="7">
    </circle>
    <path d="m21 21-4.3-4.3">
    </path>
   </svg>
-  <input placeholder="Поиск клиентов, смет, сообщений…"/>
+  <input id="global-search-input" placeholder="Поиск сделок, клиентов, задач…" autocomplete="off"/>
+  <div id="global-search-results" hidden style="position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);max-height:320px;overflow:auto;"></div>
  </div>
  <div class="topbar-spacer">
  </div>
@@ -288,16 +302,23 @@
    </svg>
   </button>
   <div style="position:relative">
-   <button aria-label="Уведомления" class="icon-btn">
+   <button aria-label="Уведомления" class="icon-btn" id="notif-bell-btn" onclick="toggleNotifPanel(event)">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
     <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9">
     </path>
     <path d="M13.7 21a2 2 0 0 1-3.4 0">
     </path>
    </svg>
-   <span class="dot">
+   <span class="dot" id="notif-dot" style="display:none;">
    </span>
   </button>
+  <div id="notif-panel" hidden style="position:absolute;right:0;top:calc(100% + 8px);width:340px;max-width:92vw;z-index:60;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);overflow:hidden;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);">
+      <strong style="font-size:13.5px;">Уведомления</strong>
+      <button type="button" class="btn btn-sm" onclick="markAllNotificationsRead()">Прочитать все</button>
+    </div>
+    <div id="notif-list" style="max-height:360px;overflow:auto;"></div>
+  </div>
  </div>
  {% set cu = request.state.user %}
  {% set cu_name = (cu.full_name or cu.username) if cu else 'Гость' %}
@@ -328,7 +349,17 @@
 
     {% set cur_path = request.url.path %}
     <nav class="bottom-nav">
- {% if 'dashboard' in sections %}
+ {% if 'today' in sections %}
+ <a class="bn-item {% if cur_path.startswith('/today') %}active{% endif %}" href="/today">
+  <span class="bn-icon">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <circle cx="12" cy="12" r="9"></circle>
+    <path d="M12 7v5l3 2"></path>
+   </svg>
+  </span>
+  <span>Сегодня</span>
+ </a>
+ {% elif 'dashboard' in sections %}
  <a class="bn-item {% if cur_path == '/' %}active{% endif %}" href="{{ url_for('read_dashboard') }}">
   <span class="bn-icon">
    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
@@ -402,6 +433,7 @@
 <div id="more-sheet" class="sheet" style="display:none">
     <div class="sheet-grip"></div>
     <div class="more-grid">
+        {% if 'today' in sections %}<a class="more-item {% if cur_path.startswith('/today') %}active{% endif %}" href="/today">🕐<span>Сегодня</span></a>{% endif %}
         {% if 'chats' in sections %}<a class="more-item {% if cur_path.startswith('/chats') %}active{% endif %}" href="/chats">💬<span>Внутренние</span></a>{% endif %}
         {% if 'tasks' in sections %}<a class="more-item {% if cur_path.startswith('/tasks') %}active{% endif %}" href="/tasks">✅<span>Задачи</span></a>{% endif %}
         {% if 'companies' in sections %}<a class="more-item {% if cur_path.startswith('/companies') %}active{% endif %}" href="/companies">🏢<span>Клиенты</span></a>{% endif %}
@@ -431,6 +463,62 @@
     function toggleMoreSheet(show) {
         document.getElementById('more-sheet-backdrop').style.display = show ? 'block' : 'none';
         document.getElementById('more-sheet').style.display = show ? 'block' : 'none';
+    }
+
+    function _escHtml(s) {
+        return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    let _notifOpen = false;
+    async function refreshNotifications() {
+        try {
+            const res = await fetch('/api/notifications?limit=30');
+            if (!res.ok) return;
+            const data = await res.json();
+            const dot = document.getElementById('notif-dot');
+            if (dot) dot.style.display = (data.unread_count > 0) ? 'block' : 'none';
+            const list = document.getElementById('notif-list');
+            if (!list) return;
+            if (!(data.items || []).length) {
+                list.innerHTML = '<div class="muted" style="padding:16px;font-size:13px;">Пока нет уведомлений</div>';
+                return;
+            }
+            list.innerHTML = data.items.map(n => `
+                <a href="${_escHtml(n.link || '#')}" onclick="markNotificationRead(${n.id})"
+                   style="display:block;padding:10px 12px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit;${n.is_read ? 'opacity:0.65;' : 'background:var(--bg-2);'}">
+                    <div style="font-weight:700;font-size:13px;">${_escHtml(n.title)}</div>
+                    ${n.body ? `<div class="muted" style="font-size:12px;margin-top:2px;">${_escHtml(n.body)}</div>` : ''}
+                    <div class="muted" style="font-size:11px;margin-top:4px;">${_escHtml(n.created_at)}</div>
+                </a>`).join('');
+        } catch (e) {}
+    }
+
+    function toggleNotifPanel(e) {
+        if (e) e.stopPropagation();
+        const panel = document.getElementById('notif-panel');
+        if (!panel) return;
+        _notifOpen = !_notifOpen;
+        panel.hidden = !_notifOpen;
+        if (_notifOpen) refreshNotifications();
+    }
+
+    async function markNotificationRead(id) {
+        try {
+            await fetch('/api/notifications/read', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ids: [id] })
+            });
+        } catch (e) {}
+    }
+
+    async function markAllNotificationsRead() {
+        try {
+            await fetch('/api/notifications/read', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            });
+            refreshNotifications();
+        } catch (e) {}
     }
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -476,6 +564,44 @@
             const newTheme = activeTheme === 'dark' ? 'light' : 'dark';
             setTheme(newTheme);
         });
+
+        refreshNotifications();
+        setInterval(refreshNotifications, 25000);
+        document.addEventListener('click', (ev) => {
+            const panel = document.getElementById('notif-panel');
+            const btn = document.getElementById('notif-bell-btn');
+            if (!_notifOpen || !panel) return;
+            if (panel.contains(ev.target) || (btn && btn.contains(ev.target))) return;
+            _notifOpen = false;
+            panel.hidden = true;
+        });
+
+        // Global search
+        const searchInput = document.getElementById('global-search-input');
+        const searchBox = document.getElementById('global-search-results');
+        let searchTimer = null;
+        if (searchInput && searchBox) {
+            searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                const q = searchInput.value.trim();
+                if (q.length < 2) { searchBox.hidden = true; searchBox.innerHTML = ''; return; }
+                searchTimer = setTimeout(async () => {
+                    try {
+                        const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+                        const data = await res.json();
+                        const blocks = [];
+                        (data.deals || []).forEach(d => blocks.push(`<a href="${_escHtml(d.url)}" style="display:block;padding:8px 12px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border);"><span class="muted" style="font-size:11px;">Сделка</span><div style="font-weight:600;font-size:13px;">${_escHtml(d.title)}</div></a>`));
+                        (data.companies || []).forEach(d => blocks.push(`<a href="${_escHtml(d.url)}" style="display:block;padding:8px 12px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border);"><span class="muted" style="font-size:11px;">Клиент</span><div style="font-weight:600;font-size:13px;">${_escHtml(d.title)}</div></a>`));
+                        (data.tasks || []).forEach(d => blocks.push(`<a href="${_escHtml(d.url)}" style="display:block;padding:8px 12px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border);"><span class="muted" style="font-size:11px;">Задача</span><div style="font-weight:600;font-size:13px;">${_escHtml(d.title)}</div></a>`));
+                        searchBox.innerHTML = blocks.length ? blocks.join('') : '<div class="muted" style="padding:12px;font-size:13px;">Ничего не найдено</div>';
+                        searchBox.hidden = false;
+                    } catch (e) {}
+                }, 220);
+            });
+            document.addEventListener('click', (ev) => {
+                if (!searchBox.contains(ev.target) && ev.target !== searchInput) searchBox.hidden = true;
+            });
+        }
     });
 </script>
 </body>

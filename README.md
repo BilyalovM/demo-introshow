@@ -39,9 +39,15 @@ uvicorn app:app --reload --port 8000
 | `IG_PAGE_TOKEN`, `IG_VERIFY_TOKEN` | Instagram Direct (Meta Graph API) |
 | `ONEC_API_KEY` | Ключ API для обмена с 1С |
 
+## Версии
+
+См. [VERSIONS.md](VERSIONS.md): **v1.0.0 / `v1-stable`** — текущий прод-снимок; **ветка `v2`** — UX-оверхол. Откат: `git checkout v1.0.0`.
+
 ## Деплой на Vercel
 
 Проект готов к деплою: `vercel.json` направляет все запросы в `app.py`,
 база данных копируется в `/tmp` (данные demo-режима сбрасываются при
 перезапуске serverless-функции). Задайте `SESSION_SECRET` в настройках
-проекта Vercel.
+проекта Vercel. Production держите на `main`/`v1-stable`; preview — ветка `v2`.
+
+Для Postgres на VPS задайте `DATABASE_URL` (см. VERSIONS.md); без неё работает SQLite.

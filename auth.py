@@ -15,6 +15,7 @@ SECRET_FILE = os.path.join(BASE_DIR, ".session_secret")
 # Разделы системы для настройки прав доступа сотрудников
 SECTIONS = {
     "dashboard": "Дашборд",
+    "today": "Сегодня",
     "inbox": "Чаты (Inbox)",
     "chats": "Внутренние чаты",
     "crm": "CRM",
@@ -36,6 +37,7 @@ PERMISSION_FLAGS = {
 
 # Соответствие URL-префиксов разделам (для проверки доступа)
 PATH_SECTIONS = {
+    "/today": "today",
     "/inbox": "inbox",
     "/chats": "chats",
     "/crm": "crm",
@@ -132,6 +134,9 @@ def user_can_access(user, section: str) -> bool:
         return True
     # Календарь доступен всем, у кого есть CRM или сметы (даже без отдельной галочки)
     if section == "calendar" and ("crm" in section_perms or "quotes" in section_perms):
+        return True
+    # «Сегодня» — операционный экран для CRM / задач / дашборда
+    if section == "today" and any(s in section_perms for s in ("dashboard", "crm", "tasks", "calendar")):
         return True
     return False
 
