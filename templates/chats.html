@@ -155,27 +155,41 @@
         display: flex;
         width: 100%;
         max-width: 100%;
+        flex: 0 0 auto;
     }
     .imessage-row.sent { justify-content: flex-end; }
     .imessage-row.received { justify-content: flex-start; }
     .imessage-wrap {
-        display: flex;
+        display: inline-flex;
         align-items: flex-start;
         gap: 4px;
-        max-width: 72%;
+        width: fit-content;
+        max-width: 70%;
         position: relative;
+        flex: 0 1 auto;
     }
-    .imessage-row.sent .imessage-wrap { flex-direction: row-reverse; }
+    .imessage-row.sent .imessage-wrap {
+        flex-direction: row-reverse;
+        align-self: flex-end;
+    }
+    .imessage-row.received .imessage-wrap {
+        align-self: flex-start;
+    }
     .imessage {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        width: fit-content;
         max-width: 100%;
-        padding: 10px 14px;
+        box-sizing: border-box;
+        padding: 8px 12px;
         border-radius: 12px;
         font-size: 14px;
         line-height: 1.4;
         white-space: pre-wrap;
         word-break: break-word;
         position: relative;
-        min-width: 0;
+        flex: 0 1 auto;
     }
     .imessage.received {
         background-color: var(--surface);
@@ -187,9 +201,12 @@
     }
     .imessage .msg-meta {
         display: block;
+        align-self: flex-end;
         font-size: 10.5px;
+        line-height: 1.2;
         opacity: 0.7;
-        margin-top: 4px;
+        margin-top: 2px;
+        white-space: nowrap;
     }
     .msg-task-link {
         display: inline-block;
@@ -331,7 +348,7 @@
         }
         .ichat-container.chat-open .ichat-sidebar { display: none; }
         .ichat-main { width: 100%; }
-        .imessage-wrap { max-width: 90%; }
+        .imessage-wrap { max-width: 85%; }
         .ichat-back-btn { display: inline-flex !important; }
         .msg-menu-btn {
             opacity: 0.55;
