@@ -35,7 +35,7 @@
                     <select id="contactSelect"><option value="">— выберите компанию —</option></select>
                 </label>
             </div>
-            <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Выезд и возврат используются для проверки занятости склада. Смены попадают в шапку Word.</p>
+            <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Смены считаются автоматически по датам (разница календарных дней, минимум 1). Выезд/возврат также проверяют занятость склада.</p>
         </div>
         <div class="card">
             <h3 style="margin-top:0">Каталог — добавить позиции</h3>
@@ -178,12 +178,6 @@
 .cat-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .badge-sub { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 6px; border-radius:999px; background:#fff7ed; color:#c2410c; }
 .cat-wh.active { background: var(--primary); color:#fff; border-color: var(--primary); }
-.btn-sub-dup {
-    font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px;
-    border: 1px solid #fdba74; background: #fff7ed; color: #c2410c; cursor: pointer;
-    white-space: nowrap;
-}
-.btn-sub-dup:hover { background: #ffedd5; }
 .docs-registry-overlay {
     position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,0.45);
     display: flex; align-items: center; justify-content: center; padding: 16px;
@@ -437,12 +431,36 @@ async function onCompanyChange() {
     if (primary) document.getElementById('contactSelect').value = String(primary.id);
 }
 
+/** Календарная разница дней: max(1, end − start). Одинаковые даты → 1. */
+function calcShiftsFromDates(startStr, endStr) {
+    if (!startStr || !endStr) return null;
+    const start = new Date(startStr + 'T00:00:00');
+    const end = new Date(endStr + 'T00:00:00');
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return null;
+    const diff = Math.round((end - start) / 86400000);
+    return Math.max(1, diff);
+}
+
+function applyShiftsToCart(shifts, { silent } = { silent: true }) {
+    const n = parseFloat(shifts) || 1;
+    document.getElementById('qShifts').value = n;
+    if (!cart.length) return;
+    if (!silent && !confirm('Обновить «дней» у всех позиций сметы на ' + n + '?')) return;
+    cart.forEach(c => { c.days = n; });
+    renderCart();
+}
+
+function onRentDatesChange() {
+    const start = document.getElementById('rentStart').value;
+    const end = document.getElementById('rentEnd').value;
+    const days = calcShiftsFromDates(start, end);
+    if (days != null) applyShiftsToCart(days, { silent: true });
+    checkAvailability();
+}
+
 function onShiftsChange() {
     const shifts = parseFloat(document.getElementById('qShifts').value) || 1;
-    if (cart.length && confirm('Обновить «дней» у всех позиций сметы на ' + shifts + '?')) {
-        cart.forEach(c => { c.days = shifts; });
-        renderCart();
-    }
+    applyShiftsToCart(shifts, { silent: true });
 }
 
 async function loadAll() {
@@ -555,7 +573,10 @@ async function loadQuote() {
     document.getElementById('qAddress').value = deal.event_address || '';
     document.getElementById('rentStart').value = deal.setup_date || '';
     document.getElementById('rentEnd').value = deal.event_date || '';
-    document.getElementById('qShifts').value = deal.shifts != null ? deal.shifts : 1;
+    const derivedShifts = calcShiftsFromDates(deal.setup_date, deal.event_date);
+    document.getElementById('qShifts').value = derivedShifts != null
+        ? derivedShifts
+        : (deal.shifts != null ? deal.shifts : 1);
     document.getElementById('discountInput').value = deal.discount_percentage || 0;
     document.getElementById('taxInput').value = 16;
     document.getElementById('companySelect').value = deal.company_id || '';
@@ -662,18 +683,9 @@ function renderCatalog() {
                    </div>`
                 : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+</button>`;
             const isSub = (item.warehouse_type || 'own') === 'subrental';
-            const hasSubTwin = !isSub && equipment.some(e =>
-                (e.warehouse_type || 'own') === 'subrental' &&
-                (e.name || '').trim().toLowerCase() === (item.name || '').trim().toLowerCase()
-            );
-            const subTag = isSub ? `<span class="badge-sub" title="${esc(item.supplier || 'субаренда')}">субаренда</span>` : '';
-            const dupBtn = !isSub
-                ? `<button type="button" class="btn-sub-dup" title="${hasSubTwin ? 'Уже есть в субаренде — открыть вкладку' : 'Продублировать товар в субаренду'}"
-                        onclick="duplicateToSubrental(${item.id})">${hasSubTwin ? 'субаренда ✓' : 'в субаренду'}</button>`
-                : '';
             const costHint = isSub && item.cost_price ? `<div class="muted" style="font-size:11px">себест. ${fmt(item.cost_price)} ₸</div>` : '';
             tr.innerHTML = `
-                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${subTag} ${dupBtn} ${conflictHtml}</span>${costHint}</td>
+                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${conflictHtml}</span>${costHint}</td>
                 <td class="cat-qty-cell">${badgeHtml}</td>
                 <td class="num muted cat-price">${fmt(item.price)} ₸</td>
                 <td class="num cat-actions">${actionsHtml}</td>`;
@@ -706,8 +718,8 @@ async function checkAvailability() {
     hint.style.color = nConflicts ? 'var(--danger)' : 'var(--success)';
 }
 
-document.getElementById('rentStart').addEventListener('change', checkAvailability);
-document.getElementById('rentEnd').addEventListener('change', checkAvailability);
+document.getElementById('rentStart').addEventListener('change', onRentDatesChange);
+document.getElementById('rentEnd').addEventListener('change', onRentDatesChange);
 
 // ---------- Корзина ----------
 
