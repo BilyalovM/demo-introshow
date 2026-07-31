@@ -4505,6 +4505,29 @@ def create_task_from_internal_message(
     return {"id": task.id, "status": "success", "deal_id": task.deal_id}
 
 
+@app.delete("/api/internal-chats/messages/{message_id}")
+def delete_internal_message(
+    message_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    msg = db.query(InternalMessage).filter(InternalMessage.id == message_id).first()
+    if not msg:
+        return JSONResponse(status_code=404, content={"error": "Сообщение не найдено"})
+    member = (
+        db.query(InternalChatMember)
+        .filter(InternalChatMember.chat_id == msg.chat_id, InternalChatMember.user_id == user.id)
+        .first()
+    )
+    if not member:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к чату"})
+    if msg.sender_id != user.id and user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Удалить может автор или администратор"})
+    db.delete(msg)
+    db.commit()
+    return {"status": "ok", "id": message_id}
+
+
 # -----------------
 # INBOX (единая лента чатов)
 # -----------------

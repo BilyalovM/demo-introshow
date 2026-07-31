@@ -4,13 +4,39 @@
 
 {% block extra_head %}
 <style>
+    body:has(.ichat-container) {
+        overflow: hidden;
+    }
+    body:has(.ichat-container) .app {
+        height: 100dvh;
+        max-height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+    }
+    body:has(.ichat-container) .content {
+        height: 100%;
+        max-height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+    }
+    body:has(.ichat-container) .topbar {
+        flex-shrink: 0;
+    }
     .main {
         padding: 0 !important;
         max-width: none !important;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
     }
     .ichat-container {
         display: flex;
-        height: calc(100dvh - 69px);
+        flex: 1;
+        min-height: 0;
+        height: 100%;
+        overflow: hidden;
         background-color: var(--background);
         color: var(--text);
     }
@@ -21,6 +47,9 @@
         display: flex;
         flex-direction: column;
         min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        flex-shrink: 0;
     }
     .ichat-header {
         padding: 14px 15px 10px;
@@ -31,6 +60,7 @@
         align-items: center;
         justify-content: space-between;
         gap: 8px;
+        flex-shrink: 0;
     }
     .ichat-actions {
         display: flex;
@@ -38,10 +68,13 @@
         padding: 10px 12px;
         border-bottom: 1px solid var(--border);
         flex-wrap: wrap;
+        flex-shrink: 0;
     }
     .ichat-list {
         overflow-y: auto;
+        overflow-x: hidden;
         flex: 1;
+        min-height: 0;
     }
     .ichat-item {
         padding: 12px 15px;
@@ -94,6 +127,8 @@
         flex-direction: column;
         background-color: var(--background);
         min-width: 0;
+        min-height: 0;
+        overflow: hidden;
     }
     .ichat-main-header {
         padding: 14px 15px;
@@ -104,17 +139,35 @@
         display: flex;
         align-items: center;
         gap: 10px;
+        flex-shrink: 0;
     }
     .ichat-messages {
         flex: 1;
+        min-height: 0;
         padding: 20px;
         overflow-y: auto;
+        overflow-x: hidden;
         display: flex;
         flex-direction: column;
         gap: 10px;
     }
+    .imessage-row {
+        display: flex;
+        width: 100%;
+        max-width: 100%;
+    }
+    .imessage-row.sent { justify-content: flex-end; }
+    .imessage-row.received { justify-content: flex-start; }
+    .imessage-wrap {
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        max-width: 72%;
+        position: relative;
+    }
+    .imessage-row.sent .imessage-wrap { flex-direction: row-reverse; }
     .imessage {
-        max-width: 68%;
+        max-width: 100%;
         padding: 10px 14px;
         border-radius: 12px;
         font-size: 14px;
@@ -122,14 +175,13 @@
         white-space: pre-wrap;
         word-break: break-word;
         position: relative;
+        min-width: 0;
     }
     .imessage.received {
-        align-self: flex-start;
         background-color: var(--surface);
         border: 1px solid var(--border);
     }
     .imessage.sent {
-        align-self: flex-end;
         background-color: var(--primary);
         color: white;
     }
@@ -139,43 +191,91 @@
         opacity: 0.7;
         margin-top: 4px;
     }
-    .imessage .msg-actions {
-        margin-top: 6px;
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-    }
-    .imessage.sent .msg-task-btn {
-        background: rgba(255,255,255,0.18);
-        color: #fff;
-        border-color: rgba(255,255,255,0.35);
-    }
-    .msg-task-btn {
-        font-size: 11px;
-        padding: 3px 8px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: var(--background);
-        color: var(--text);
-        cursor: pointer;
-        font-weight: 600;
-    }
-    .msg-task-btn:hover { opacity: 0.9; }
     .msg-task-link {
+        display: inline-block;
+        margin-top: 4px;
         font-size: 11px;
         font-weight: 600;
         opacity: 0.9;
         text-decoration: underline;
     }
+    .imessage.sent .msg-task-link { color: #fff; }
+    .msg-menu-btn {
+        flex-shrink: 0;
+        width: 26px;
+        height: 26px;
+        margin-top: 4px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-muted, #888);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s, background 0.12s;
+        padding: 0;
+    }
+    .msg-menu-btn svg {
+        width: 16px;
+        height: 16px;
+    }
+    .imessage-wrap:hover .msg-menu-btn,
+    .imessage-wrap:focus-within .msg-menu-btn,
+    .imessage-wrap.menu-open .msg-menu-btn {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    .msg-menu-btn:hover,
+    .imessage-wrap.menu-open .msg-menu-btn {
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+    }
+    .msg-menu {
+        display: none;
+        position: absolute;
+        top: 28px;
+        z-index: 20;
+        min-width: 180px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: var(--shadow-md, 0 8px 24px rgba(0,0,0,0.12));
+        padding: 4px;
+        overflow: hidden;
+    }
+    .imessage-row.sent .msg-menu { right: 0; }
+    .imessage-row.received .msg-menu { left: 0; }
+    .imessage-wrap.menu-open .msg-menu { display: block; }
+    .msg-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        cursor: pointer;
+        border-radius: 8px;
+    }
+    .msg-menu button:hover { background: var(--background); }
+    .msg-menu button.danger { color: var(--danger, #dc2626); }
     .ichat-input-area {
         padding: 15px;
         background-color: var(--surface);
         border-top: 1px solid var(--border);
         display: flex;
         gap: 10px;
+        flex-shrink: 0;
     }
     .ichat-input {
         flex: 1;
+        min-width: 0;
         padding: 10px 15px;
         border-radius: 20px;
         border: 1px solid var(--border);
@@ -191,6 +291,7 @@
         border-radius: 20px;
         cursor: pointer;
         font-weight: bold;
+        flex-shrink: 0;
     }
     .ichat-empty {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -209,20 +310,33 @@
     .ichat-back-btn { display: none; }
 
     @media (max-width: 768px) {
+        body:has(.ichat-container) .app,
+        body:has(.ichat-container) .content {
+            height: 100dvh;
+            max-height: 100dvh;
+        }
+        body:has(.ichat-container) .main {
+            padding-bottom: 0 !important;
+        }
         .ichat-container {
-            height: calc(100dvh - 58px - var(--bottom-nav-h, 64px) - env(safe-area-inset-bottom) - env(safe-area-inset-top));
             position: relative;
+            padding-bottom: calc(var(--bottom-nav-h, 64px) + env(safe-area-inset-bottom));
         }
         .ichat-sidebar {
             width: 100%;
             position: absolute;
             inset: 0;
+            bottom: calc(var(--bottom-nav-h, 64px) + env(safe-area-inset-bottom));
             z-index: 2;
         }
         .ichat-container.chat-open .ichat-sidebar { display: none; }
         .ichat-main { width: 100%; }
-        .imessage { max-width: 88%; }
+        .imessage-wrap { max-width: 90%; }
         .ichat-back-btn { display: inline-flex !important; }
+        .msg-menu-btn {
+            opacity: 0.55;
+            pointer-events: auto;
+        }
     }
 </style>
 {% endblock %}
@@ -314,12 +428,15 @@
 {% block extra_scripts %}
 <script>
 const CURRENT_USER_ID = {{ request.state.user.id if request.state.user else 0 }};
+const IS_ADMIN = {{ 'true' if request.state.user and request.state.user.role == 'admin' else 'false' }};
 let chats = [];
 let usersList = [];
 let dealsList = [];
 let activeChat = null;
 let pollTimer = null;
 const messageTexts = {};
+
+const MENU_CHEVRON = `<svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
 
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -334,6 +451,10 @@ function initials(name) {
 
 function closeModals() {
     document.querySelectorAll('.ichat-modal-overlay').forEach(el => el.classList.remove('active'));
+}
+
+function closeAllMsgMenus() {
+    document.querySelectorAll('.imessage-wrap.menu-open').forEach(el => el.classList.remove('menu-open'));
 }
 
 function backToList() {
@@ -424,6 +545,7 @@ async function openCompanyChat() {
 
 async function selectChat(chat) {
     activeChat = chat;
+    closeAllMsgMenus();
     renderSidebar();
     document.getElementById('ichat-root').classList.add('chat-open');
     document.getElementById('ichat-title').textContent = chat.title || 'Чат';
@@ -437,45 +559,109 @@ async function selectChat(chat) {
     } else {
         dealLink.style.display = 'none';
     }
-    await loadMessages();
+    await loadMessages(true);
 }
 
-async function loadMessages() {
+function renderMessage(msg) {
+    messageTexts[msg.id] = msg.text || '';
+    const row = document.createElement('div');
+    row.className = `imessage-row ${msg.mine ? 'sent' : 'received'}`;
+    row.dataset.msgId = String(msg.id);
+
+    const time = (msg.created_at || '').slice(11, 16);
+    const who = msg.mine ? '' : (esc(msg.sender_name) + ' · ');
+    const taskLink = msg.task_id
+        ? `<a class="msg-task-link" href="/tasks">Задача #${msg.task_id}</a>`
+        : '';
+    const canDelete = msg.mine || IS_ADMIN;
+    const createItem = msg.task_id
+        ? ''
+        : `<button type="button" data-action="create-task">Создать задачу</button>`;
+    const deleteItem = canDelete
+        ? `<button type="button" class="danger" data-action="delete">Удалить сообщение</button>`
+        : '';
+
+    row.innerHTML = `
+        <div class="imessage-wrap">
+            <button type="button" class="msg-menu-btn" aria-label="Действия с сообщением" title="Действия">${MENU_CHEVRON}</button>
+            <div class="msg-menu" role="menu">
+                ${createItem}
+                ${deleteItem}
+            </div>
+            <div class="imessage ${msg.mine ? 'sent' : 'received'}">
+                ${esc(msg.text)}
+                <span class="msg-meta">${who}${time}</span>
+                ${taskLink}
+            </div>
+        </div>
+    `;
+
+    const wrap = row.querySelector('.imessage-wrap');
+    const menuBtn = row.querySelector('.msg-menu-btn');
+    const menu = row.querySelector('.msg-menu');
+
+    if (!createItem && !deleteItem) {
+        menuBtn.style.display = 'none';
+    }
+
+    menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = wrap.classList.contains('menu-open');
+        closeAllMsgMenus();
+        if (!open) wrap.classList.add('menu-open');
+    });
+
+    menu.querySelectorAll('button[data-action]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const action = btn.dataset.action;
+            closeAllMsgMenus();
+            if (action === 'create-task') openTaskFromMessage(msg.id);
+            if (action === 'delete') deleteMessage(msg.id);
+        });
+    });
+
+    return row;
+}
+
+async function loadMessages(forceScroll = false) {
     if (!activeChat) return;
     try {
         const res = await fetch(`/api/internal-chats/${activeChat.id}/messages`);
         if (!res.ok) return;
         const messages = await res.json();
         const container = document.getElementById('ichat-messages');
+        const nearBottom = forceScroll || (container.scrollHeight - container.scrollTop - container.clientHeight < 80);
         container.innerHTML = '';
         if (!messages.length) {
             container.innerHTML = '<div class="ichat-empty"><strong>Начните переписку</strong><span>Напишите первое сообщение коллегам.</span></div>';
             return;
         }
-        messages.forEach(msg => {
-            messageTexts[msg.id] = msg.text || '';
-            const div = document.createElement('div');
-            div.className = `imessage ${msg.mine ? 'sent' : 'received'}`;
-            const time = (msg.created_at || '').slice(11, 16);
-            const who = msg.mine ? '' : (esc(msg.sender_name) + ' · ');
-            let actions = '';
-            if (msg.task_id) {
-                actions = `<div class="msg-actions"><a class="msg-task-link" href="/tasks">Задача #${msg.task_id}</a></div>`;
-            } else {
-                actions = `<div class="msg-actions"><button type="button" class="msg-task-btn" data-msg-id="${msg.id}">Создать задачу</button></div>`;
-            }
-            div.innerHTML = `${esc(msg.text)}<span class="msg-meta">${who}${time}</span>${actions}`;
-            const btn = div.querySelector('.msg-task-btn');
-            if (btn) btn.addEventListener('click', () => openTaskFromMessage(msg.id));
-            container.appendChild(div);
-        });
-        container.scrollTop = container.scrollHeight;
-        // после прочтения сбросим unread в локальном списке
+        messages.forEach(msg => container.appendChild(renderMessage(msg)));
+        if (nearBottom) container.scrollTop = container.scrollHeight;
         const c = chats.find(x => x.id === activeChat.id);
         if (c) c.unread = 0;
         renderSidebar();
         updateTotalUnread();
     } catch (e) { console.error(e); }
+}
+
+async function deleteMessage(messageId) {
+    if (!confirm('Удалить это сообщение?')) return;
+    try {
+        const res = await fetch(`/api/internal-chats/messages/${messageId}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            alert(data.error || 'Не удалось удалить сообщение');
+            return;
+        }
+        delete messageTexts[messageId];
+        await loadMessages();
+        await loadChats();
+    } catch (e) {
+        console.error(e);
+        alert('Ошибка удаления сообщения');
+    }
 }
 
 async function sendMessage() {
@@ -501,6 +687,8 @@ async function sendMessage() {
             const refreshed = chats.find(c => c.id === activeChat.id);
             if (refreshed) activeChat = refreshed;
         }
+        const container = document.getElementById('ichat-messages');
+        container.scrollTop = container.scrollHeight;
     } catch (e) { console.error(e); }
 }
 
@@ -624,6 +812,11 @@ async function submitTaskFromMessage() {
         }
     } catch (e) { console.error(e); }
 }
+
+document.addEventListener('click', () => closeAllMsgMenus());
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllMsgMenus();
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadUsersAndDeals();
