@@ -139,6 +139,13 @@ with Session(engine) as session:
         "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
         # v2: операционный пайплайн отгрузки
         "ALTER TABLE deals ADD COLUMN ops_status VARCHAR DEFAULT 'none'",
+        # Сотрудник на проекте ↔ задача «Выезд»
+        "ALTER TABLE deal_staff_assignments ADD COLUMN task_id INTEGER",
+        "ALTER TABLE deal_staff_assignments ADD COLUMN attachment_id INTEGER",
+        "ALTER TABLE deal_staff_assignments ADD COLUMN notified_at DATETIME",
+        "ALTER TABLE deal_staff_assignments ADD COLUMN role_name VARCHAR",
+        "ALTER TABLE deal_staff_assignments ADD COLUMN note VARCHAR",
+        "ALTER TABLE deal_staff_assignments ADD COLUMN created_by VARCHAR",
     ]:
         try:
             session.execute(text(ddl))
@@ -1344,15 +1351,34 @@ def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
+def _purge_task(db: Session, task_id: Optional[int]) -> bool:
+    """Удалить задачу и связанные строки (комменты, исполнители, наблюдатели, чек-лист)."""
+    if not task_id:
+        return False
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return False
+    # Снять FK-ссылки, чтобы не мешали удалению
+    db.query(AppNotification).filter(AppNotification.task_id == task_id).update(
+        {AppNotification.task_id: None}, synchronize_session=False
+    )
+    db.query(InternalMessage).filter(InternalMessage.task_id == task_id).update(
+        {InternalMessage.task_id: None}, synchronize_session=False
+    )
+    db.query(DealStaffAssignment).filter(DealStaffAssignment.task_id == task_id).update(
+        {DealStaffAssignment.task_id: None}, synchronize_session=False
+    )
+    db.query(TaskComment).filter(TaskComment.task_id == task_id).delete(synchronize_session=False)
+    db.query(TaskAssignee).filter(TaskAssignee.task_id == task_id).delete(synchronize_session=False)
+    db.query(TaskObserver).filter(TaskObserver.task_id == task_id).delete(synchronize_session=False)
+    db.query(TaskChecklistItem).filter(TaskChecklistItem.task_id == task_id).delete(synchronize_session=False)
+    db.delete(task)
+    return True
+
+
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if task:
-        db.query(TaskComment).filter(TaskComment.task_id == task_id).delete()
-        db.query(TaskAssignee).filter(TaskAssignee.task_id == task_id).delete()
-        db.query(TaskObserver).filter(TaskObserver.task_id == task_id).delete()
-        db.query(TaskChecklistItem).filter(TaskChecklistItem.task_id == task_id).delete()
-        db.delete(task)
+    if _purge_task(db, task_id):
         db.commit()
     return {"status": "success"}
 
@@ -3761,6 +3787,22 @@ def api_assign_staff(deal_id: int, body: StaffAssignIn, db: Session = Depends(ge
     }
 
 
+def _find_departure_task_id(db: Session, deal_id: int, user_id: int) -> Optional[int]:
+    """Fallback: задача «Выезд» по сделке + исполнителю (если task_id на назначении пуст)."""
+    row = (
+        db.query(Task.id)
+        .join(TaskAssignee, TaskAssignee.task_id == Task.id)
+        .filter(
+            Task.deal_id == deal_id,
+            TaskAssignee.user_id == user_id,
+            Task.title.like("Выезд:%"),
+        )
+        .order_by(Task.id.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
 @app.delete("/api/deals/{deal_id}/staff/{assignment_id}")
 def api_unassign_staff(deal_id: int, assignment_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     row = db.query(DealStaffAssignment).filter(
@@ -3770,10 +3812,28 @@ def api_unassign_staff(deal_id: int, assignment_id: int, db: Session = Depends(g
     if not row:
         return JSONResponse(status_code=404, content={"error": "Назначение не найдено"})
     name = (row.user.full_name or row.user.username) if row.user else "—"
+    emp_id = row.user_id
+    task_id = row.task_id or _find_departure_task_id(db, deal_id, emp_id)
+
+    # Отменить авто-напоминание «завтра выезд» для этого сотрудника
+    if emp_id:
+        reminders = db.query(Activity).filter(
+            Activity.deal_id == deal_id,
+            Activity.type == "reminder",
+            Activity.assignee_id == emp_id,
+            Activity.status == "planned",
+        ).all()
+        for act in reminders:
+            title = act.title or ""
+            if "выезд" in title.lower() or (name != "—" and name in title):
+                db.delete(act)
+
+    row.task_id = None
     db.delete(row)
+    _purge_task(db, task_id)
     db.add(DealHistory(deal_id=deal_id, action_text=f"Снят с проекта: {name}"))
     db.commit()
-    return {"status": "success"}
+    return {"status": "success", "deleted_task_id": task_id}
 
 
 @app.get("/api/deals/{deal_id}/technichka")
