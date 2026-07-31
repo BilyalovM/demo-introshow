@@ -2791,13 +2791,13 @@ def _build_technichka_context(deal: Deal, assignee_name: str = "") -> dict:
 
 
 def _save_technichka_file(deal: Deal, assignee_name: str = "") -> tuple:
-    """Генерирует DOCX технички, сохраняет в uploads. Returns (url, filename, abs_path)."""
-    from document_generator import generate_technichka_docx
+    """Генерирует PDF технички, сохраняет в uploads. Returns (url, filename, abs_path)."""
+    from document_generator import generate_technichka_pdf
     import uuid
     os.makedirs(UPLOADS_DIR, exist_ok=True)
-    fname = f"technichka_deal{deal.id}_{uuid.uuid4().hex[:8]}.docx"
+    fname = f"technichka_deal{deal.id}_{uuid.uuid4().hex[:8]}.pdf"
     abs_path = os.path.join(UPLOADS_DIR, fname)
-    generate_technichka_docx(_build_technichka_context(deal, assignee_name), abs_path)
+    generate_technichka_pdf(_build_technichka_context(deal, assignee_name), abs_path)
     return f"/uploads/{fname}", fname, abs_path
 
 
@@ -2808,8 +2808,9 @@ def assign_staff_to_deal(
     created_by: str,
     role_name: Optional[str] = None,
     note: Optional[str] = None,
+    creator_user_id: Optional[int] = None,
 ) -> DealStaffAssignment:
-    """Назначить сотрудника: техничка → вложение → задача (высокий приоритет) → напоминание за 1 день."""
+    """Назначить сотрудника: техничка PDF → задача → комментарий в чате → напоминание за 1 день."""
     existing = db.query(DealStaffAssignment).filter(
         DealStaffAssignment.deal_id == deal.id,
         DealStaffAssignment.user_id == emp.id,
@@ -2840,8 +2841,7 @@ def assign_staff_to_deal(
         f"Адрес: {place}",
         dates_line,
         f"Роль: {role_name or '—'}",
-        f"Техничка (вложена к сделке): {url}",
-        "Скачивать техничку из сметы не нужно — файл уже прикреплён к задаче и сделке.",
+        "Техничка в чате задачи",
     ]
     if note:
         desc_parts.append(f"Комментарий: {note}")
@@ -2862,7 +2862,12 @@ def assign_staff_to_deal(
     db.add(TaskChecklistItem(task_id=task.id, text="Изучить техничку", is_done=False, sort_order=0))
     db.add(TaskChecklistItem(task_id=task.id, text="Подготовить оборудование к выезду", is_done=False, sort_order=1))
     db.add(TaskChecklistItem(task_id=task.id, text="Выезд / монтаж на площадке", is_done=False, sort_order=2))
-
+    # Готовый PDF — в чат задачи кликабельной ссылкой (не путь в описании)
+    db.add(TaskComment(
+        task_id=task.id,
+        user_id=creator_user_id,
+        text=f"📎 Техничка (PDF)\n{url}",
+    ))
     # Напоминание за 1 день до эвента/сборки
     remind_day = None
     base_day = event_day or setup_day
@@ -3734,6 +3739,7 @@ def api_assign_staff(deal_id: int, body: StaffAssignIn, db: Session = Depends(ge
         created_by=user.full_name or user.username,
         role_name=body.role_name,
         note=body.note,
+        creator_user_id=user.id,
     )
     _notify_user(
         db, emp.id,

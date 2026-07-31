@@ -10,10 +10,13 @@
 </div>
 <p class="page-sub">CRM-задачи: постановщик, ответственные, наблюдатели, чек-лист, срок, статус, сделка и чат.</p>
 
-<div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-    <button class="btn btn-sm task-filter active" data-filter="all" onclick="setFilter('all', this)">Все</button>
-    <button class="btn btn-sm task-filter" data-filter="mine" onclick="setFilter('mine', this)">Мои</button>
-    <button class="btn btn-sm task-filter" data-filter="overdue" onclick="setFilter('overdue', this)">Просроченные <span id="overdue-count" class="chip" style="margin-left:4px"></span></button>
+<div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+    <button class="btn btn-sm task-filter active" data-filter="all" onclick="setScopeFilter('all', this)">Все</button>
+    <button class="btn btn-sm task-filter" data-filter="mine" onclick="setScopeFilter('mine', this)">Мои</button>
+    <button class="btn btn-sm task-filter" data-filter="overdue" onclick="setScopeFilter('overdue', this)">Просроченные <span id="overdue-count" class="chip" style="margin-left:4px"></span></button>
+    <span class="task-filter-sep" aria-hidden="true"></span>
+    <button class="btn btn-sm task-filter-toggle" data-toggle="priority" onclick="toggleExtraFilter('priority', this)">Приоритет</button>
+    <button class="btn btn-sm task-filter-toggle" data-toggle="in_work" onclick="toggleExtraFilter('in_work', this)">В работе</button>
 </div>
 
 <div class="tasks-board">
@@ -138,6 +141,7 @@
 
                 <div class="task-detail-actions">
                     <button class="btn btn-primary" style="flex:1" onclick="saveTask()">Сохранить</button>
+                    <button class="btn task-complete-btn" id="tk_complete_btn" style="display:none" onclick="completeTask()">Завершить</button>
                     <button class="btn" id="tk_delete_btn" style="display:none" onclick="deleteTask()">Удалить</button>
                     <button class="btn" onclick="closeTaskForm()">Закрыть</button>
                 </div>
@@ -217,7 +221,20 @@
 .task-deal-chip:hover { text-decoration: underline; }
 .task-card-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; padding-top:7px; border-top:1px solid var(--border); }
 .task-comment-count { font-size: 11px; color: var(--muted); font-weight: 600; }
-.task-filter.active { background: var(--primary); color:#fff; border-color: var(--primary); }
+.task-filter.active, .task-filter-toggle.active { background: var(--primary); color:#fff; border-color: var(--primary); }
+.task-filter-sep { width:1px; height:22px; background: var(--border); margin:0 2px; }
+.task-complete-btn {
+    background: #059669 !important; color: #fff !important; border-color: #059669 !important;
+}
+.task-complete-btn:hover { background: #047857 !important; border-color: #047857 !important; }
+.task-file-link {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 6px;
+    padding: 8px 12px; background: var(--primary-soft, #eff6ff);
+    border: 1px solid var(--border); border-radius: 8px;
+    text-decoration: none; font-weight: 700; font-size: 12.5px;
+    color: var(--primary-600, var(--primary));
+}
+.task-file-link:hover { border-color: var(--primary); }
 .task-field-row-stack { align-items: flex-start !important; }
 .task-people-box { flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }
 .task-people-select { width:100%; }
@@ -375,7 +392,9 @@ const PRIORITY_LABELS = { low: 'Низкий', normal: 'Обычный', high: '
 let allTasks = [];
 let usersList = [];
 let dealsList = [];
-let currentFilter = 'all';
+let scopeFilter = 'all'; // all | mine | overdue
+let filterPriority = false;
+let filterInWork = false;
 let currentComments = [];
 let formAssignees = [];
 let formObservers = [];
@@ -410,6 +429,16 @@ function formatCommentText(text) {
         const re = new RegExp('(@' + escRe(key) + ')(?![\\wА-Яа-яЁё])', 'gi');
         html = html.replace(re, '<span class="task-mention">$1</span>');
     });
+    // Кликабельные файлы/ссылки (в т.ч. PDF технички из /uploads/…)
+    html = html.replace(
+        /(https?:\/\/[^\s<&]+|\/uploads\/[^\s<&]+)/g,
+        (url) => {
+            const label = decodeURIComponent((url.split('/').pop() || url));
+            const isFile = /\.(pdf|docx?|xlsx?|png|jpe?g|zip)$/i.test(label);
+            const title = isFile ? label : url;
+            return `<a class="task-file-link" href="${url}" target="_blank" rel="noopener">📄 ${title}</a>`;
+        }
+    );
     return html;
 }
 
@@ -611,8 +640,10 @@ function isMine(t) {
 }
 
 function passesFilter(t) {
-    if (currentFilter === 'mine') return isMine(t);
-    if (currentFilter === 'overdue') return t.overdue;
+    if (scopeFilter === 'mine' && !isMine(t)) return false;
+    if (scopeFilter === 'overdue' && !t.overdue) return false;
+    if (filterPriority && (t.priority || 'normal') !== 'high') return false;
+    if (filterInWork && t.status === 'done') return false;
     return true;
 }
 
@@ -714,10 +745,21 @@ document.querySelectorAll('.task-col').forEach(col => {
     });
 });
 
-function setFilter(f, btn) {
-    currentFilter = f;
+function setScopeFilter(f, btn) {
+    scopeFilter = f;
     document.querySelectorAll('.task-filter').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    render();
+}
+
+function toggleExtraFilter(name, btn) {
+    if (name === 'priority') {
+        filterPriority = !filterPriority;
+        btn.classList.toggle('active', filterPriority);
+    } else if (name === 'in_work') {
+        filterInWork = !filterInWork;
+        btn.classList.toggle('active', filterInWork);
+    }
     render();
 }
 
@@ -874,6 +916,8 @@ function openTaskForm(taskId) {
         createdRow.style.display = 'none';
     }
     document.getElementById('tk_delete_btn').style.display = t ? '' : 'none';
+    const completeBtn = document.getElementById('tk_complete_btn');
+    completeBtn.style.display = (t && t.status !== 'done') ? '' : 'none';
 
     if (t) {
         formAssignees = (t.assignees && t.assignees.length)
@@ -965,6 +1009,23 @@ async function deleteTask() {
     await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
     closeTaskForm();
     loadTasks();
+}
+
+async function completeTask() {
+    const id = document.getElementById('tk_id').value;
+    if (!id) return;
+    document.getElementById('tk_status').value = 'done';
+    const res = await fetch(`/api/tasks/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'done' })
+    });
+    if (!res.ok) {
+        alert('Не удалось завершить задачу');
+        return;
+    }
+    await loadTasks();
+    closeTaskForm();
 }
 
 function applyObserversFromComment(taskId, observers) {
