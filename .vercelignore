@@ -12,6 +12,12 @@ uvicorn.log
 .session_secret
 node_modules/
 .git/
+tmp_meeting/
+backups/
+*.db
+rental_app.db
+test_output*.docx
+test_table*.docx
 
 # Dev / scratch files
 test_*
