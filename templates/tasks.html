@@ -46,7 +46,12 @@
                 <div class="muted" style="font-size:12px" id="task-modal-subtitle">Новая задача</div>
                 <h3 style="margin:2px 0 0" id="task-modal-title">Новая задача</h3>
             </div>
-            <button type="button" class="task-close-btn" onclick="closeTaskForm()" aria-label="Закрыть">&times;</button>
+            <div class="task-detail-top-actions">
+                <button type="button" class="btn btn-sm task-chat-open-btn" id="tk_chat_open_btn" onclick="openTaskChat()" aria-controls="task-chat-pane">
+                    Чат <span class="task-chat-badge" id="tk_chat_badge" hidden>0</span>
+                </button>
+                <button type="button" class="task-close-btn" onclick="closeTaskForm()" aria-label="Закрыть">&times;</button>
+            </div>
         </div>
         <div class="task-detail-body">
             <div class="task-detail-left">
@@ -142,14 +147,20 @@
                 <div class="task-detail-actions">
                     <button class="btn btn-primary" style="flex:1" onclick="saveTask()">Сохранить</button>
                     <button class="btn task-complete-btn" id="tk_complete_btn" style="display:none" onclick="completeTask()">Завершить</button>
+                    <button type="button" class="btn task-chat-open-btn task-chat-open-btn-actions" id="tk_chat_open_btn_actions" onclick="openTaskChat()">
+                        Чат <span class="task-chat-badge" id="tk_chat_badge_actions" hidden>0</span>
+                    </button>
                     <button class="btn" id="tk_delete_btn" style="display:none" onclick="deleteTask()">Удалить</button>
                     <button class="btn" onclick="closeTaskForm()">Закрыть</button>
                 </div>
             </div>
 
-            <div class="task-detail-right" id="task-chat-pane">
+            <div class="task-detail-right" id="task-chat-pane" aria-label="Чат задачи">
                 <div class="task-chat-head">
-                    <strong>Чат задачи</strong>
+                    <div class="task-chat-head-main">
+                        <button type="button" class="btn btn-sm task-chat-back" onclick="closeTaskChat()" aria-label="Закрыть чат">← Назад</button>
+                        <strong>Чат задачи</strong>
+                    </div>
                     <span class="muted" style="font-size:12px" id="tk_chat_hint">Сохраните задачу, чтобы писать комментарии</span>
                 </div>
                 <div class="task-chat-thread" id="tk_comments"></div>
@@ -284,17 +295,36 @@
     box-shadow: var(--shadow-lg);
     border: 1px solid var(--border);
     overflow: hidden;
+    position: relative;
 }
 .task-detail-top {
     display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
     padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg-2);
 }
+.task-detail-top-actions {
+    display:flex; align-items:center; gap:8px; flex-shrink:0;
+}
 .task-close-btn {
     background:transparent; border:none; font-size:28px; line-height:1; cursor:pointer;
     color:var(--muted); padding:0 4px;
 }
+.task-chat-open-btn {
+    display:none;
+    align-items:center; gap:6px;
+}
+.task-chat-badge {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 5px;
+    border-radius:999px; font-size:11px; font-weight:800; line-height:1;
+    background: var(--primary); color: #fff;
+}
+.task-chat-badge[hidden] { display:none !important; }
+.task-chat-head-main { display:flex; align-items:center; gap:8px; min-width:0; }
+.task-chat-back { display:none; flex-shrink:0; }
+.task-chat-open-btn-actions { flex: 0 0 auto; }
 .task-detail-body {
     display:grid; grid-template-columns: 1.15fr 0.85fr; flex:1; min-height:0; overflow:hidden;
+    position: relative;
 }
 .task-detail-left {
     padding: 16px 20px 20px; overflow-y:auto; border-right: 1px solid var(--border);
@@ -319,8 +349,8 @@
 .task-detail-actions { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
 .task-chat-head {
     padding: 12px 16px; border-bottom: 1px solid var(--border);
-    display:flex; justify-content:space-between; align-items:baseline; gap:8px;
-    background: var(--surface);
+    display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;
+    background: var(--surface); flex-shrink:0;
 }
 .task-chat-thread {
     flex:1; overflow-y:auto; padding: 14px 16px; display:flex; flex-direction:column; gap:10px;
@@ -368,9 +398,43 @@
 
 @media (max-width: 1024px) {
     .tasks-board { grid-template-columns: repeat(2, 1fr); }
-    .task-detail-body { grid-template-columns: 1fr; overflow-y: auto; }
-    .task-detail-left { border-right: none; border-bottom: 1px solid var(--border); }
-    .task-detail-right { min-height: 320px; }
+}
+@media (max-width: 768px) {
+    .task-chat-open-btn { display: inline-flex; }
+    .task-chat-back { display: inline-flex; }
+    .task-detail-body {
+        grid-template-columns: 1fr;
+        overflow-y: auto;
+        position: static;
+    }
+    .task-detail-left {
+        border-right: none;
+        border-bottom: none;
+        min-height: 0;
+        width: 100%;
+    }
+    .task-detail-right {
+        position: absolute;
+        inset: 0;
+        z-index: 8;
+        min-height: 0;
+        height: 100%;
+        background: var(--surface);
+        transform: translateY(105%);
+        transition: transform 0.28s ease, visibility 0.28s;
+        visibility: hidden;
+        pointer-events: none;
+        box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.12);
+    }
+    .task-modal-overlay.task-chat-open .task-detail-right {
+        transform: translateY(0);
+        visibility: visible;
+        pointer-events: auto;
+    }
+    .task-modal-overlay.task-chat-open .task-detail-body {
+        overflow: hidden;
+    }
+    .task-chat-thread { min-height: 0; }
 }
 @media (max-width: 640px) {
     .tasks-board { grid-template-columns: 1fr; }
@@ -771,8 +835,40 @@ function setChatEnabled(enabled) {
         : 'Сохраните задачу, чтобы писать комментарии';
 }
 
+function updateChatBadge(count) {
+    const n = Math.max(0, parseInt(count, 10) || 0);
+    ['tk_chat_badge', 'tk_chat_badge_actions'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = String(n);
+        el.hidden = n <= 0;
+    });
+}
+
+function isMobileTaskLayout() {
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function openTaskChat() {
+    if (!isMobileTaskLayout()) return;
+    const modal = document.getElementById('task-modal');
+    modal.classList.add('task-chat-open');
+    const thread = document.getElementById('tk_comments');
+    if (thread) thread.scrollTop = thread.scrollHeight;
+    const ta = document.getElementById('tk_comment_text');
+    if (ta && !ta.disabled) {
+        setTimeout(() => ta.focus({ preventScroll: true }), 280);
+    }
+}
+
+function closeTaskChat() {
+    hideMentionDropdown();
+    document.getElementById('task-modal').classList.remove('task-chat-open');
+}
+
 function renderComments(comments) {
     currentComments = comments || [];
+    updateChatBadge(currentComments.length);
     const box = document.getElementById('tk_comments');
     if (!currentComments.length) {
         box.innerHTML = '<div class="task-chat-empty">Пока нет комментариев.<br>Напишите первый в чате задачи.</div>';
@@ -895,6 +991,7 @@ document.getElementById('tk_deal').addEventListener('change', updateDealLink);
 
 function openTaskForm(taskId) {
     const t = allTasks.find(x => x.id === taskId);
+    closeTaskChat();
     document.getElementById('task-modal-title').textContent = t ? t.title : 'Новая задача';
     document.getElementById('task-modal-subtitle').textContent = t ? `Задача №${t.id}` : 'Создание задачи';
     document.getElementById('tk_id').value = t ? t.id : '';
@@ -942,12 +1039,14 @@ function openTaskForm(taskId) {
     document.getElementById('tk_comment_text').value = '';
     hideMentionDropdown();
     updateDealLink();
+    updateChatBadge(t ? (t.comment_count || 0) : 0);
     document.getElementById('task-modal').classList.add('active');
     loadComments(t ? t.id : null);
 }
 
 function closeTaskForm() {
     hideMentionDropdown();
+    closeTaskChat();
     document.getElementById('task-modal').classList.remove('active');
 }
 
@@ -1062,12 +1161,28 @@ async function postComment() {
     const task = allTasks.find(t => t.id === taskId);
     if (task) {
         task.comment_count = (task.comment_count || 0) + 1;
+        updateChatBadge(task.comment_count);
         render();
     }
 }
 
 document.getElementById('task-modal').addEventListener('click', e => {
-    if (e.target === document.getElementById('task-modal')) closeTaskForm();
+    if (e.target !== document.getElementById('task-modal')) return;
+    const modal = document.getElementById('task-modal');
+    if (modal.classList.contains('task-chat-open')) closeTaskChat();
+    else closeTaskForm();
+});
+
+window.addEventListener('resize', () => {
+    if (!isMobileTaskLayout()) closeTaskChat();
+});
+
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || mentionState.active) return;
+    const modal = document.getElementById('task-modal');
+    if (!modal.classList.contains('active') || !modal.classList.contains('task-chat-open')) return;
+    e.preventDefault();
+    closeTaskChat();
 });
 
 const tkCommentText = document.getElementById('tk_comment_text');
