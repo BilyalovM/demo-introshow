@@ -177,6 +177,13 @@
 .cat-stepper .btn { min-width: 32px; }
 .cat-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .badge-sub { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 6px; border-radius:999px; background:#fff7ed; color:#c2410c; }
+.btn-sub-dup {
+    font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid #fdba74; background: #fff7ed; color: #c2410c; cursor: pointer;
+    white-space: nowrap;
+}
+.btn-sub-dup:hover { background: #ffedd5; }
+.btn-sub-dup:disabled { opacity: 0.6; cursor: wait; }
 .cat-wh.active { background: var(--primary); color:#fff; border-color: var(--primary); }
 .docs-registry-overlay {
     position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,0.45);
@@ -657,10 +664,13 @@ function renderCatalog() {
         items.forEach(item => {
             const tr = document.createElement('tr');
             const c = conflictsData[item.id];
+            const isSub = (item.warehouse_type || 'own') === 'subrental';
+            const hasConflict = !!(c && c.booked > 0);
             let conflictHtml = '';
-            if (c && c.booked > 0) {
+            let subFromConflictBtn = '';
+            if (hasConflict) {
                 tr.className = 'cat-row-conflict';
-                const lines = c.conflicts.map(x =>
+                const lines = (c.conflicts || []).map(x =>
                     `• Договор № ${x.contract_no}` +
                     (x.until ? ` до ${x.until}` : '') + ` — ${x.qty} шт.` +
                     (x.deal_title ? `\n  «${x.deal_title}»` : '')
@@ -671,6 +681,12 @@ function renderCatalog() {
                 conflictHtml = `<button type="button" class="conflict-icon" title="Подробности брони"
                         data-tip="${tipAttr}"
                         onclick="showConflictPopover(event, this)">!</button>`;
+                // Только свой склад + конфликт/нехватка: кнопка «Добавить из субаренды»
+                if (!isSub) {
+                    subFromConflictBtn = `<button type="button" class="btn-sub-dup"
+                        title="Найти или создать позицию в субаренде и добавить в смету"
+                        onclick="event.stopPropagation(); addFromSubrental(${item.id}, this)">Добавить из субаренды</button>`;
+                }
             }
             const inCart = cartQtyForName(item.name);
             const badgeHtml = inCart > 0
@@ -682,10 +698,9 @@ function renderCatalog() {
                         <button type="button" class="btn btn-sm btn-primary" title="Добавить ещё" onclick="addToCart(${item.id})">+</button>
                    </div>`
                 : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+</button>`;
-            const isSub = (item.warehouse_type || 'own') === 'subrental';
             const costHint = isSub && item.cost_price ? `<div class="muted" style="font-size:11px">себест. ${fmt(item.cost_price)} ₸</div>` : '';
             tr.innerHTML = `
-                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${conflictHtml}</span>${costHint}</td>
+                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${conflictHtml} ${subFromConflictBtn}</span>${costHint}</td>
                 <td class="cat-qty-cell">${badgeHtml}</td>
                 <td class="num muted cat-price">${fmt(item.price)} ₸</td>
                 <td class="num cat-actions">${actionsHtml}</td>`;
@@ -776,12 +791,50 @@ function addToCart(id) {
                 if (confirm(`На своём складе мало «${item.name}».\n\nЕсть в субаренде:\n${names}\n\nОткрыть вкладку «Субаренда»?`)) {
                     setCatWarehouse('subrental');
                 }
-            } else if (confirm(`На своём складе мало «${item.name}».\n\nПродублировать товар в субаренду и добавить в смету?`)) {
-                duplicateToSubrental(item.id, true);
+            } else if (confirm(`На своём складе мало «${item.name}».\n\nДобавить из субаренды (создать копию при необходимости)?`)) {
+                addFromSubrental(item.id);
                 return;
             }
         }
     }
+    renderCart();
+}
+
+/** Добавить позицию из субаренды (по конфликту своего склада): найти/создать twin → в корзину → вкладка Субаренда. */
+async function addFromSubrental(equipId, btn) {
+    if (btn) btn.disabled = true;
+    try {
+        await duplicateToSubrental(equipId, true);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function addSubrentalTwinToCart(twinId) {
+    const item = equipment.find(e => e.id === twinId);
+    if (!item) return;
+    const defaultDays = parseFloat(document.getElementById('qShifts').value) || 1;
+    const wh = 'subrental';
+    const nameKey = (item.name || '').trim().toLowerCase();
+    const existing = cart.find(c =>
+        (c.name || '').trim().toLowerCase() === nameKey &&
+        Number(c.price) === Number(item.price) &&
+        (parseFloat(c.days) || 1) === defaultDays &&
+        (c.warehouse_type || 'own') === wh
+    );
+    if (existing) existing.qty += 1;
+    else cart.push({
+        id: item.id,
+        name: item.name,
+        category: item.category,
+        price: item.price,
+        stock_price: item.price,
+        qty: 1,
+        days: defaultDays,
+        warehouse_type: wh,
+        cost_price: item.cost_price || 0,
+        supplier: item.supplier || null,
+    });
     renderCart();
 }
 
@@ -794,8 +847,10 @@ async function duplicateToSubrental(equipId, addToCartAfter) {
         (e.name || '').trim().toLowerCase() === nameKey
     );
     if (existingTwin) {
-        if (addToCartAfter) addToCart(existingTwin.id);
-        else {
+        if (addToCartAfter) {
+            addSubrentalTwinToCart(existingTwin.id);
+            setCatWarehouse('subrental');
+        } else {
             setCatWarehouse('subrental');
             alert(`«${src.name}» уже есть во вкладке «Субаренда».`);
         }
@@ -819,7 +874,8 @@ async function duplicateToSubrental(equipId, addToCartAfter) {
             if (idx >= 0) equipment[idx] = { ...equipment[idx], ...eq };
         }
         if (addToCartAfter && eq) {
-            addToCart(eq.id);
+            addSubrentalTwinToCart(eq.id);
+            setCatWarehouse('subrental');
         } else {
             setCatWarehouse('subrental');
             renderCatalog();
