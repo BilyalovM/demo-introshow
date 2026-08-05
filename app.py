@@ -4944,7 +4944,7 @@ def download_deal_estimate(
     if mode_norm not in ("internal", "client"):
         mode_norm = "internal"
 
-    # Клиентская смета — без позиций субаренды; внутренние итоги считаем по полному составу
+    # Клиентская: субаренда как обычные позиции (без отдельного блока); internal — полный вид
     context = _build_estimate_context(d, mode_norm)
 
     from document_generator import generate_estimate_docx
@@ -4972,7 +4972,9 @@ def download_deal_estimate(
 
 
 def _build_estimate_context(d: Deal, mode_norm: str) -> dict:
-    result = _calc_deal(d, exclude_subrental=(mode_norm == "client"))
+    # Не исключаем субаренду: в client document_generator кладёт её в основную таблицу
+    # (без блока «Субаренда» / себестоимости). hide_subrental_section управляет только вёрсткой.
+    result = _calc_deal(d, exclude_subrental=False)
     header = _estimate_header_fields(d)
     return {
         "number": f"CRM-{d.id}",
@@ -4990,6 +4992,7 @@ def _build_estimate_context(d: Deal, mode_norm: str) -> dict:
         "cost_total": result.get("cost_total", 0),
         "margin": result.get("margin", 0),
         "discount_percentage": d.discount_percentage or 0,
+        "hide_subrental_section": mode_norm == "client",
     }
 
 

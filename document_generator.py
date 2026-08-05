@@ -379,12 +379,13 @@ def generate_estimate_docx(
     """Генерирует смету (.docx).
 
     mode:
-      - internal («Для нас»): все позиции, блок субаренды, себестоимость и маржа
-      - client («Клиентская»): без строк субаренды, без себестоимости/маржи
+      - internal («Для нас»): свой склад в основной таблице, блок субаренды, себестоимость и маржа
+      - client («Клиентская»): все позиции (в т.ч. субаренда) как обычные строки; без блока субаренды / маржи
     """
     mode = (mode or "internal").strip().lower()
     if mode not in ("internal", "client"):
         mode = "internal"
+    hide_sub = mode == "client" or bool(context.get("hide_subrental_section"))
 
     doc = Document()
 
@@ -401,8 +402,9 @@ def generate_estimate_docx(
     _add_meta(doc, context)
 
     all_items = list(context.get("items", []) or [])
-    if mode == "client":
-        main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
+    if hide_sub:
+        # Клиенту: субаренда в основной таблице как обычные товары (без метки склада)
+        main_items = [{**i, "warehouse_type": "own"} for i in all_items]
         sub_items = []
     else:
         main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
@@ -421,7 +423,7 @@ def generate_estimate_docx(
         run = h.add_run("Субаренда (только для нас)")
         _set_run_font(run, bold=True, size=12)
         note = doc.add_paragraph()
-        nr = note.add_run("Раздел не попадает в клиентскую смету.")
+        nr = note.add_run("В клиентской смете эти позиции идут как обычные, без себестоимости.")
         nr.italic = True
         _add_subrental_table(doc, sub_items)
 
@@ -721,8 +723,9 @@ def generate_estimate_pdf(
     pdf.pdf.ln(2)
 
     all_items = list(context.get("items", []) or [])
-    if mode == "client":
-        main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
+    hide_sub = mode == "client" or bool(context.get("hide_subrental_section"))
+    if hide_sub:
+        main_items = [{**i, "warehouse_type": "own"} for i in all_items]
         sub_items = []
     else:
         main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
@@ -738,7 +741,7 @@ def generate_estimate_pdf(
     if mode == "internal" and sub_items:
         pdf.pdf.ln(3)
         pdf.line("Субаренда (только для нас)", bold=True)
-        pdf.line("Раздел не попадает в клиентскую смету.")
+        pdf.line("В клиентской смете эти позиции идут как обычные, без себестоимости.")
         rows = []
         for idx, item in enumerate(sub_items, 1):
             qty = item.get("quantity", 1)
