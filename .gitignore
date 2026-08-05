@@ -42,3 +42,4 @@ scrape_ainex.js
 .env*
 tmp_meeting/
 *.db-journal
+backups/

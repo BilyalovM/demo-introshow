@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Git `main` / `v2` | **v2** @ `50a6fb1` (A4 estimate fix + UX overhaul) |
+| Git `main` / `v2` | **v2** — security P0 (audit, sessions, rate limit) + Аренда/Продажа |
 | Production URL | https://demo-introshow.vercel.app |
-| Vercel live | Redeploy `main` after `vercel login` if site still serves v1 roadmap (`updated_at` 2026-07-29) |
+| Sessions | Cookie HttpOnly + SameSite=Lax + Secure(HTTPS); TTL 7d (`SESSION_MAX_AGE_HOURS`); logout-all via `User.session_version` |
 | Rollback | Promote / redeploy `v1-stable` или tag `v1.0.0` (не удалять) |
 
 ---

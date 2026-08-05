@@ -1,16 +1,24 @@
 """
 Авторизация: хэширование паролей (PBKDF2 + соль) и подписанные сессионные токены.
 
-Токен: "<username>:<hmac_sha256(secret, username)>". Токен действителен, пока
-пользователь существует в БД, поэтому удаление сотрудника сразу отзывает доступ.
+Сессии (v2 security):
+- Токен: "<username>:<session_version>:<exp_unix>:<hmac>"
+- HMAC считается по "username:session_version:exp" с SESSION_SECRET.
+- Cookie: HttpOnly, SameSite=Lax, Secure на HTTPS; max_age = SESSION_MAX_AGE (7 суток).
+- Logout-all: инкремент User.session_version инвалидирует все выданные токены пользователя.
+- Legacy-токены "username:sig" больше не принимаются (после деплоя нужна повторная авторизация).
 """
 import hashlib
 import hmac
 import os
 import secrets
+import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SECRET_FILE = os.path.join(BASE_DIR, ".session_secret")
+
+# Сессия: 7 суток (было 30). При необходимости сократите через SESSION_MAX_AGE_HOURS.
+SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE_HOURS", "168")) * 3600  # default 7d
 
 # Разделы системы для настройки прав доступа сотрудников
 SECTIONS = {
@@ -33,6 +41,11 @@ SECTIONS = {
 PERMISSION_FLAGS = {
     "crm_own_only": "CRM: видеть только свои сделки",
     "hide_prices": "Скрывать суммы и цены (техник / склад)",
+    "hide_margin": "Скрывать маржу проекта",
+    "hide_payroll": "Скрывать зарплатную ведомость",
+    "hide_subrental_cost": "Скрывать себестоимость субаренды",
+    "role_sales": "Роль: менеджер продаж",
+    "role_project": "Роль: менеджер проекта",
 }
 
 # Соответствие URL-префиксов разделам (для проверки доступа)
@@ -102,19 +115,80 @@ def is_legacy_hash(hashed_password: str) -> bool:
     return bool(hashed_password) and not hashed_password.startswith("pbkdf2$")
 
 
-def create_session_token(username: str) -> str:
-    sig = hmac.new(_SECRET, username.encode(), hashlib.sha256).hexdigest()
-    return f"{username}:{sig}"
+def create_session_token(username: str, session_version: int = 0, max_age: int = None) -> str:
+    """Подписанный токен с TTL и версией сессии (для logout-all)."""
+    ttl = SESSION_MAX_AGE if max_age is None else int(max_age)
+    exp = int(time.time()) + max(60, ttl)
+    ver = int(session_version or 0)
+    payload = f"{username}:{ver}:{exp}"
+    sig = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+
+def parse_session_token(token: str):
+    """
+    Вернуть (username, session_version) или None.
+    Проверяет подпись и срок действия.
+    """
+    if not token or ":" not in token:
+        return None
+    parts = token.split(":")
+    # Новый формат: user:ver:exp:sig
+    if len(parts) >= 4:
+        username = parts[0]
+        try:
+            ver = int(parts[1])
+            exp = int(parts[2])
+        except ValueError:
+            return None
+        sig = parts[-1]
+        # username может содержать ":" — берём всё до ver:exp:sig
+        # При username без ":" parts = [user, ver, exp, sig]
+        if len(parts) > 4:
+            username = ":".join(parts[:-3])
+            try:
+                ver = int(parts[-3])
+                exp = int(parts[-2])
+            except ValueError:
+                return None
+            sig = parts[-1]
+        payload = f"{username}:{ver}:{exp}"
+        expected = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        if exp < int(time.time()):
+            return None
+        return username, ver
+    return None
 
 
 def get_username_from_token(token: str):
-    if not token or ":" not in token:
+    """Совместимость: только username или None."""
+    parsed = parse_session_token(token)
+    if not parsed:
         return None
-    username, sig = token.rsplit(":", 1)
-    expected = hmac.new(_SECRET, username.encode(), hashlib.sha256).hexdigest()
-    if hmac.compare_digest(sig, expected):
-        return username
-    return None
+    return parsed[0]
+
+
+def cookie_secure_flag(request=None) -> bool:
+    """Secure=True на HTTPS / Vercel / за reverse-proxy с X-Forwarded-Proto."""
+    if os.environ.get("VERCEL") or os.environ.get("FORCE_SECURE_COOKIE") == "1":
+        return True
+    if request is not None:
+        proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
+        if proto == "https":
+            return True
+    return False
+
+
+def session_cookie_kwargs(request=None, max_age: int = None) -> dict:
+    return {
+        "httponly": True,
+        "samesite": "lax",
+        "secure": cookie_secure_flag(request),
+        "max_age": SESSION_MAX_AGE if max_age is None else int(max_age),
+        "path": "/",
+    }
 
 
 def user_can_access(user, section: str) -> bool:
@@ -148,3 +222,9 @@ def section_for_path(path: str):
     if path == "/":
         return "dashboard"
     return None
+
+
+def user_has_flag(user, flag: str) -> bool:
+    if not user or user.role == "admin":
+        return False
+    return flag in (user.permissions or [])

@@ -43,6 +43,32 @@
     <div class="container">
         <h2>Настройки системы</h2>
 
+        {% if request.state.user and request.state.user.role in ('admin', 'manager') %}
+        <div class="card" id="audit-log-card">
+            <h3 style="margin-top:0;">Журнал аудита</h3>
+            <p style="margin-bottom:12px;font-size:14px;">Кто менял сделки, сметы, права, ведомость и маршрутизацию. Только для администратора и менеджера.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+                <select id="audit-entity-filter" style="padding:0.55rem 0.75rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                    <option value="">Все сущности</option>
+                    <option value="deal">Сделки / сметы</option>
+                    <option value="user">Пользователи / права</option>
+                    <option value="payroll">Ведомость</option>
+                    <option value="pipeline_routing">Маршрутизация</option>
+                    <option value="session">Сессии</option>
+                </select>
+                <button type="button" onclick="loadAuditLog()">Обновить</button>
+            </div>
+            <div id="audit-log-list" style="max-height:360px;overflow:auto;font-size:13px;border:1px solid var(--border);border-radius:8px;"></div>
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <h3 style="margin-top:0;">Безопасность сессии</h3>
+            <p style="font-size:14px;margin-bottom:10px;">Cookie: HttpOnly + SameSite=Lax; на HTTPS — Secure. Срок сессии — 7 дней. «Выйти везде» завершает все устройства (инкремент версии сессии).</p>
+            <button type="button" onclick="logoutAllSessions()" style="background:#b91c1c;">Выйти со всех устройств</button>
+            <p id="logout-all-msg" style="display:none;margin-top:8px;font-size:13px;"></p>
+        </div>
+
         <div class="card">
             <h3 style="margin-top:0;">Информация о компании (Intro Show)</h3>
             <div style="margin-top: 1rem; line-height: 1.6; color: var(--text);">
@@ -177,6 +203,22 @@
         </div>
 
         <div class="card">
+            <h3 style="margin-top:0;">WhatsApp-бот — чек-лист теста</h3>
+            <p style="font-size:14px;margin-bottom:10px;">Подключайте бота сначала на <strong>тестовый номер</strong>, не на основной. Webhook по умолчанию: <code>/api/wa/webhook</code> (переопределяется через <code>WHATSAPP_HOOK_URL</code> в Docker).</p>
+            <ol style="font-size:13.5px;line-height:1.7;margin:0 0 12px 1.2rem;">
+                <li>Задать <code>GEMINI_API_KEY</code> (см. блок AI выше) и проверить раздел «AI Чат-бот».</li>
+                <li>Загрузить прайс / пакеты в базу знаний бота.</li>
+                <li>Запустить WAHA с webhook на публичный HTTPS URL CRM + <code>/api/wa/webhook</code>.</li>
+                <li>Отсканировать QR тестовым WhatsApp (ниже).</li>
+                <li>5–7 дней тест: квалификация аренда/продажа, черновые цены → потом основной номер.</li>
+            </ol>
+            <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;">Webhook URL (подсказка для Docker)</label>
+            <input type="text" id="wa_hook_hint" readonly
+                   value=""
+                   style="width:100%;box-sizing:border-box;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-2,#f1f5f9);color:var(--text);font-family:monospace;font-size:12.5px;">
+        </div>
+
+        <div class="card">
             <h3 style="margin-top:0;">Интеграция WhatsApp (WAHA)</h3>
             <p>Подключите рабочий WhatsApp для переписки с клиентами прямо из CRM.</p>
             
@@ -200,7 +242,7 @@
             <h3 style="margin-top:0;">Как запустить сервер WhatsApp?</h3>
             <p>Чтобы QR-код и интеграция работали, на этом компьютере/сервере должен быть установлен <strong>Docker</strong> и запущен контейнер WAHA.</p>
             <p>Выполните в терминале команду (только один раз). Параметр WHATSAPP_HOOK подключает входящие сообщения к CRM и AI чат-боту:</p>
-            <code style="display:block; background:#f1f5f9; padding:1rem; border-radius:4px; font-family:monospace; word-break:break-all;">
+            <code id="wa-docker-cmd" style="display:block; background:#f1f5f9; padding:1rem; border-radius:4px; font-family:monospace; word-break:break-all;">
                 docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=http://host.docker.internal:8000/api/wa/webhook -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha
             </code>
             <p style="font-size:0.9rem; margin-top:1rem; color:var(--text-light);">После успешного запуска WAHA на порту 3000 вы сможете отсканировать QR-код выше. Входящие сообщения появятся в разделе «Чаты», и на них ответит AI чат-бот.</p>
@@ -480,10 +522,78 @@
             }
         }
 
+        async function loadAuditLog() {
+            const box = document.getElementById('audit-log-list');
+            if (!box) return;
+            const ent = (document.getElementById('audit-entity-filter') || {}).value || '';
+            box.innerHTML = '<div style="padding:12px;color:var(--muted)">Загрузка…</div>';
+            try {
+                const url = '/api/audit-logs?limit=80' + (ent ? '&entity_type=' + encodeURIComponent(ent) : '');
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!res.ok) {
+                    box.innerHTML = `<div style="padding:12px;color:#dc2626">${escapeHtml(data.error || 'Нет доступа')}</div>`;
+                    return;
+                }
+                const items = data.items || [];
+                if (!items.length) {
+                    box.innerHTML = '<div style="padding:12px;color:var(--muted)">Пока нет записей</div>';
+                    return;
+                }
+                box.innerHTML = items.map(it => {
+                    let diffPreview = '';
+                    try {
+                        if (it.diff) diffPreview = JSON.stringify(it.diff).slice(0, 160);
+                    } catch (e) {}
+                    return `<div style="padding:10px 12px;border-bottom:1px solid var(--border);">
+                        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                            <strong>${escapeHtml(it.action_label || it.action)}</strong>
+                            <span class="muted" style="font-size:12px;">${escapeHtml(it.created_at)}</span>
+                        </div>
+                        <div style="margin-top:4px;">${escapeHtml(it.user_name)} · ${escapeHtml(it.entity_label || it.entity_type)}${it.entity_id != null ? ' #' + it.entity_id : ''}${it.ip ? ' · IP ' + escapeHtml(it.ip) : ''}</div>
+                        ${diffPreview ? `<div class="muted" style="margin-top:4px;font-family:monospace;font-size:11.5px;word-break:break-all;">${escapeHtml(diffPreview)}</div>` : ''}
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                box.innerHTML = '<div style="padding:12px;color:#dc2626">Ошибка загрузки журнала</div>';
+            }
+        }
+
+        async function logoutAllSessions() {
+            if (!confirm('Завершить все сессии на всех устройствах? Потребуется повторный вход.')) return;
+            const msg = document.getElementById('logout-all-msg');
+            msg.style.display = 'block';
+            try {
+                const res = await fetch('/api/logout-all', { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                msg.style.color = res.ok ? '#16a34a' : '#dc2626';
+                msg.textContent = data.message || data.error || (res.ok ? 'Готово' : 'Ошибка');
+                if (res.ok) setTimeout(() => { window.location.href = '/login'; }, 800);
+            } catch (e) {
+                msg.style.color = '#dc2626';
+                msg.textContent = 'Ошибка соединения';
+            }
+        }
+
+        function initWaHookHint() {
+            const origin = window.location.origin;
+            const hook = origin + '/api/wa/webhook';
+            const hint = document.getElementById('wa_hook_hint');
+            if (hint) hint.value = hook;
+            const cmd = document.getElementById('wa-docker-cmd');
+            if (cmd) {
+                cmd.textContent = `docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=${hook} -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha`;
+            }
+        }
+
         window.onload = () => {
             checkStatus();
             loadIntegrationStatus();
             loadSettingsRouting();
+            loadAuditLog();
+            initWaHookHint();
+            const filt = document.getElementById('audit-entity-filter');
+            if (filt) filt.addEventListener('change', loadAuditLog);
         };
     </script>
 {% endblock %}

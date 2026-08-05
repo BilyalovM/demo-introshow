@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -40,6 +40,8 @@ from document_generator import generate_contract, get_rubles_text
 import notifications
 import auth
 import chatbot
+import rate_limit
+import audit
 
 # Налог в сметах всегда 16% (UI + DB + PDF/DOCX)
 FIXED_TAX_PERCENTAGE = DEFAULT_TAX_PERCENTAGE
@@ -168,6 +170,68 @@ with Session(engine) as session:
             leads_pipeline.target_pipeline_id = deal_pipeline.id
             session.commit()
 
+        # Две deal-воронки: Аренда + Продажа (лид → выбор целевой при конвертации)
+        try:
+            deal_pipes = (
+                session.query(Pipeline)
+                .filter(Pipeline.kind == "deal")
+                .order_by(Pipeline.id)
+                .all()
+            )
+            rental = next((p for p in deal_pipes if (p.name or "").strip().lower() in ("аренда", "прокат")), None)
+            sales = next((p for p in deal_pipes if (p.name or "").strip().lower() in ("продажа", "продажи")), None)
+            if not rental and deal_pipes:
+                # Переименовать первую deal-воронку («Основная…») → Аренда
+                first = deal_pipes[0]
+                if (first.name or "").strip().lower() in ("основная воронка", "продажи", "основная"):
+                    first.name = "Аренда"
+                    rental = first
+                    session.commit()
+                else:
+                    rental = first
+            if not rental:
+                rental = Pipeline(name="Аренда", kind="deal")
+                session.add(rental)
+                session.commit()
+                session.refresh(rental)
+                for i, (nm, won, lost, rent) in enumerate([
+                    ("Первичный контакт", False, False, False),
+                    ("Согласование сметы", False, False, False),
+                    ("Договор и счет", False, False, False),
+                    ("Предоплата внесена", False, False, True),
+                    ("Монтаж / Мероприятие", False, False, True),
+                    ("Успешно реализовано", True, False, False),
+                    ("Сделка проиграна", False, True, False),
+                ]):
+                    session.add(Stage(
+                        pipeline_id=rental.id, name=nm, order_index=i + 1,
+                        is_won=won, is_lost=lost, is_active_rent=rent,
+                    ))
+                session.commit()
+            if not sales:
+                sales = Pipeline(name="Продажа", kind="deal")
+                session.add(sales)
+                session.commit()
+                session.refresh(sales)
+                for i, (nm, won, lost) in enumerate([
+                    ("Первичный контакт", False, False),
+                    ("КП / согласование", False, False),
+                    ("Договор и счет", False, False),
+                    ("Оплата", False, False),
+                    ("Отгружено / закрыто", True, False),
+                    ("Отказ", False, True),
+                ]):
+                    session.add(Stage(
+                        pipeline_id=sales.id, name=nm, order_index=i + 1,
+                        is_won=won, is_lost=lost, is_active_rent=False,
+                    ))
+                session.commit()
+            if leads_pipeline and rental and not leads_pipeline.target_pipeline_id:
+                leads_pipeline.target_pipeline_id = rental.id
+                session.commit()
+        except Exception:
+            session.rollback()
+
         # Дефолтные правила маршрутизации источников → Лиды
         if leads_pipeline:
             for src in ("whatsapp", "telegram", "instagram", "site", "maps", "onec", "manual", "referral", "other"):
@@ -250,6 +314,8 @@ with Session(engine) as session:
         "ALTER TABLE deal_staff_assignments ADD COLUMN role_name VARCHAR",
         "ALTER TABLE deal_staff_assignments ADD COLUMN note VARCHAR",
         "ALTER TABLE deal_staff_assignments ADD COLUMN created_by VARCHAR",
+        # v2 security: logout-all через инкремент версии сессии
+        "ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0",
     ]:
         try:
             session.execute(text(ddl))
@@ -411,6 +477,8 @@ class DealStageUpdate(BaseModel):
     stage: int
     pipeline_id: Optional[int] = None
     loss_reason: Optional[str] = None
+    # При конвертации лида: целевая deal-воронка (Аренда / Продажа)
+    convert_to_pipeline_id: Optional[int] = None
 
 class CompanyCreate(BaseModel):
     name: str
@@ -458,12 +526,19 @@ get_password_hash = auth.get_password_hash
 
 
 def get_user_from_request(request: Request, db: Session):
-    """Достаёт пользователя из подписанного cookie session_token."""
+    """Достаёт пользователя из подписанного cookie session_token (TTL + session_version)."""
     token = request.cookies.get("session_token")
-    username = auth.get_username_from_token(token)
-    if not username:
+    parsed = auth.parse_session_token(token)
+    if not parsed:
         return None
-    return db.query(User).filter(User.username == username).first()
+    username, token_ver = parsed
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        return None
+    current_ver = int(getattr(user, "session_version", 0) or 0)
+    if token_ver != current_ver:
+        return None
+    return user
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)):
@@ -648,6 +723,9 @@ def api_lead_sources():
 @app.post("/api/leads")
 def api_public_lead(payload: PublicLeadIn, request: Request, db: Session = Depends(get_db)):
     """Публичный захват лида (сайт / карты). Опционально LEAD_API_KEY в заголовке X-Lead-Key."""
+    limited = rate_limit.limit_public_leads(request)
+    if limited:
+        return limited
     expected = (os.getenv("LEAD_API_KEY") or "").strip()
     if expected:
         got = (request.headers.get("X-Lead-Key") or request.query_params.get("key") or "").strip()
@@ -655,7 +733,16 @@ def api_public_lead(payload: PublicLeadIn, request: Request, db: Session = Depen
             raise HTTPException(status_code=401, detail="Invalid lead API key")
     if not (payload.name or "").strip() and not (payload.phone or "").strip():
         raise HTTPException(status_code=400, detail="Укажите имя или телефон")
-    return _ingest_lead(db, payload)
+    result = _ingest_lead(db, payload)
+    try:
+        audit.write_audit(
+            db, user_id=None, entity_type="deal", entity_id=result.get("deal_id"),
+            action="create", diff={"source": "public_lead", **{k: result.get(k) for k in ("source", "title")}},
+            ip=audit.request_ip(request), commit=True,
+        )
+    except Exception:
+        pass
+    return result
 
 
 @app.post("/api/1c/leads")
@@ -669,7 +756,15 @@ def api_1c_leads(payload: PublicLeadIn, request: Request, db: Session = Depends(
     return _ingest_lead(db, payload, force_source="onec")
 
 @app.post("/api/login")
-async def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    limited = rate_limit.limit_login(request)
+    if limited:
+        return limited
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.hashed_password):
         return JSONResponse(status_code=400, content={"error": "Неверный логин или пароль"})
@@ -679,20 +774,49 @@ async def login(username: str = Form(...), password: str = Form(...), db: Sessio
         user.hashed_password = get_password_hash(password)
         db.commit()
 
-    response = JSONResponse(content={"status": "success"})
+    ver = int(getattr(user, "session_version", 0) or 0)
+    token = auth.create_session_token(user.username, session_version=ver)
+    response = JSONResponse(content={"status": "success", "session_days": round(auth.SESSION_MAX_AGE / 86400, 1)})
     response.set_cookie(
         key="session_token",
-        value=auth.create_session_token(user.username),
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
+        value=token,
+        **auth.session_cookie_kwargs(request),
     )
     return response
 
 @app.post("/api/logout")
-async def logout():
+async def logout(request: Request):
     response = JSONResponse(content={"status": "success"})
-    response.delete_cookie("session_token")
+    # delete_cookie должен совпадать по path/secure с set_cookie
+    response.delete_cookie(
+        "session_token",
+        path="/",
+        samesite="lax",
+        secure=auth.cookie_secure_flag(request),
+    )
+    return response
+
+
+@app.post("/api/logout-all")
+async def logout_all(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Инвалидировать все сессии пользователя (инкремент session_version). Текущий cookie тоже сбрасывается."""
+    user.session_version = int(getattr(user, "session_version", 0) or 0) + 1
+    audit.write_audit(
+        db, user_id=user.id, entity_type="session", entity_id=user.id,
+        action="logout_all", diff={"session_version": user.session_version},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    response = JSONResponse(content={
+        "status": "success",
+        "message": "Все сессии завершены. Войдите снова на этом устройстве.",
+    })
+    response.delete_cookie(
+        "session_token",
+        path="/",
+        samesite="lax",
+        secure=auth.cookie_secure_flag(request),
+    )
     return response
 
 
@@ -1670,7 +1794,12 @@ class UserUpdate(BaseModel):
     permissions: Optional[List[str]] = None
 
 @app.post("/api/users")
-def create_user(u: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_user(
+    u: UserCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     if db.query(User).count() >= 10:
@@ -1690,6 +1819,12 @@ def create_user(u: UserCreate, db: Session = Depends(get_db), current_user: User
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="user", entity_id=new_user.id,
+        action="user_create",
+        diff={"username": new_user.username, "role": new_user.role, "permissions": new_user.permissions},
+        ip=audit.request_ip(request), commit=True,
+    )
     # Новый сотрудник сразу попадает в «Чат компании»
     try:
         company_chat = (
@@ -1706,28 +1841,55 @@ def create_user(u: UserCreate, db: Session = Depends(get_db), current_user: User
     return {"status": "success"}
 
 @app.put("/api/users/{user_id}")
-def update_user(user_id: int, u: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_user(
+    user_id: int,
+    u: UserUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         return JSONResponse(status_code=404, content={"error": "Пользователь не найден"})
+    diff = {}
     if u.password:
         target.hashed_password = get_password_hash(u.password)
+        diff["password"] = "changed"
+        # Смена пароля — инвалидируем чужие сессии
+        target.session_version = int(getattr(target, "session_version", 0) or 0) + 1
     if u.role is not None:
         # Нельзя снять роль админа с самого себя (чтобы не потерять доступ)
         if target.id == current_user.id and u.role != "admin":
             return JSONResponse(status_code=400, content={"error": "Нельзя снять роль администратора с самого себя"})
+        if target.role != u.role:
+            diff["role"] = {"from": target.role, "to": u.role}
         target.role = u.role
     if u.full_name is not None:
+        if target.full_name != u.full_name:
+            diff["full_name"] = {"from": target.full_name, "to": u.full_name}
         target.full_name = u.full_name
     if u.permissions is not None:
+        if target.permissions != u.permissions:
+            diff["permissions"] = {"from": target.permissions, "to": u.permissions}
         target.permissions = u.permissions
+    if diff:
+        audit.write_audit(
+            db, user_id=current_user.id, entity_type="user", entity_id=target.id,
+            action="permissions" if "permissions" in diff else "user_update",
+            diff=diff, ip=audit.request_ip(request),
+        )
     db.commit()
     return {"status": "success"}
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     if current_user.id == user_id:
@@ -1735,6 +1897,11 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User 
         
     u = db.query(User).filter(User.id == user_id).first()
     if u:
+        audit.write_audit(
+            db, user_id=current_user.id, entity_type="user", entity_id=u.id,
+            action="user_delete", diff={"username": u.username},
+            ip=audit.request_ip(request),
+        )
         db.delete(u)
         db.commit()
     return {"status": "success"}
@@ -2645,10 +2812,16 @@ def get_pipeline_routing(db: Session = Depends(get_db), user: User = Depends(get
 
 
 @app.put("/api/pipeline-routing")
-def save_pipeline_routing(body: RoutingRulesBulk, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def save_pipeline_routing(
+    body: RoutingRulesBulk,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     denied = _require_pipeline_admin(user)
     if denied:
         return denied
+    snapshot = []
     for item in body.rules:
         src = (item.source or "").strip().lower()
         if src not in LEAD_SOURCES:
@@ -2663,6 +2836,17 @@ def save_pipeline_routing(body: RoutingRulesBulk, db: Session = Depends(get_db),
         rule.pipeline_id = item.pipeline_id
         rule.assignee_id = item.assignee_id
         rule.is_active = True if item.is_active is None else bool(item.is_active)
+        snapshot.append({
+            "source": src,
+            "pipeline_id": item.pipeline_id,
+            "assignee_id": item.assignee_id,
+            "is_active": rule.is_active,
+        })
+    audit.write_audit(
+        db, user_id=user.id, entity_type="pipeline_routing", entity_id=None,
+        action="routing_change", diff={"rules": snapshot},
+        ip=audit.request_ip(request),
+    )
     db.commit()
     return get_pipeline_routing(db, user)
 
@@ -3107,16 +3291,34 @@ def _first_stage(db: Session, pipeline_id: Optional[int]) -> Optional[Stage]:
     )
 
 
-def _convert_lead_to_deal(db: Session, lead: Deal, lead_pipeline: Pipeline) -> Optional[Deal]:
-    """Создаёт сделку в целевой deal-воронке из успешного лида. Идемпотентно."""
+def _convert_lead_to_deal(
+    db: Session,
+    lead: Deal,
+    lead_pipeline: Pipeline,
+    convert_to_pipeline_id: Optional[int] = None,
+) -> Optional[Deal]:
+    """Создаёт сделку в целевой deal-воронке (Аренда/Продажа) из успешного лида. Идемпотентно."""
     existing = db.query(Deal).filter(Deal.prev_deal_id == lead.id).first()
     if existing:
         return existing
 
-    target_id = getattr(lead_pipeline, "target_pipeline_id", None)
-    target = db.query(Pipeline).filter(Pipeline.id == target_id).first() if target_id else None
-    if not target:
+    target = None
+    if convert_to_pipeline_id:
         target = (
+            db.query(Pipeline)
+            .filter(Pipeline.id == convert_to_pipeline_id, Pipeline.kind == "deal")
+            .first()
+        )
+    if not target:
+        target_id = getattr(lead_pipeline, "target_pipeline_id", None)
+        target = db.query(Pipeline).filter(Pipeline.id == target_id).first() if target_id else None
+    if not target:
+        # Предпочитаем «Аренда», иначе первая deal-воронка
+        target = (
+            db.query(Pipeline)
+            .filter(Pipeline.kind == "deal", Pipeline.name == "Аренда")
+            .first()
+        ) or (
             db.query(Pipeline)
             .filter(Pipeline.kind == "deal")
             .order_by(Pipeline.id)
@@ -3195,6 +3397,40 @@ def _user_hide_prices(user: User) -> bool:
     if not user or user.role == "admin":
         return False
     return "hide_prices" in (user.permissions or [])
+
+
+def _user_hide_margin(user: User) -> bool:
+    if _user_hide_prices(user):
+        return True
+    return auth.user_has_flag(user, "hide_margin")
+
+
+def _user_hide_payroll(user: User) -> bool:
+    if _user_hide_prices(user):
+        return True
+    return auth.user_has_flag(user, "hide_payroll")
+
+
+def _user_hide_subrental_cost(user: User) -> bool:
+    if _user_hide_prices(user):
+        return True
+    return auth.user_has_flag(user, "hide_subrental_cost")
+
+
+def _user_is_sales(user: User) -> bool:
+    if not user:
+        return False
+    if user.role == "admin":
+        return True
+    return auth.user_has_flag(user, "role_sales") or not auth.user_has_flag(user, "role_project")
+
+
+def _user_is_project(user: User) -> bool:
+    if not user:
+        return False
+    if user.role == "admin":
+        return True
+    return auth.user_has_flag(user, "role_project") or not auth.user_has_flag(user, "role_sales")
 
 
 def _user_assigned_to_deal(db: Session, user: User, deal: Deal) -> bool:
@@ -3478,7 +3714,7 @@ def get_deals(
     return result
 
 @app.post("/api/deals")
-def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     # Find first stage for the pipeline
     first_stage = db.query(Stage).filter(Stage.pipeline_id == deal.pipeline_id).order_by(Stage.order_index).first()
     stage_id = first_stage.id if first_stage else 1
@@ -3516,6 +3752,11 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = De
     
     history_entry = DealHistory(deal_id=db_deal.id, action_text="Сделка создана")
     db.add(history_entry)
+    audit.write_audit(
+        db, user_id=user.id, entity_type="deal", entity_id=db_deal.id,
+        action="create", diff={"title": db_deal.title, "pipeline_id": db_deal.pipeline_id},
+        ip=audit.request_ip(request),
+    )
     db.commit()
 
     if deal.items_json:
@@ -3536,7 +3777,13 @@ def create_deal(deal: DealCreate, db: Session = Depends(get_db), user: User = De
     return {"id": db_deal.id}
 
 @app.put("/api/deals/{deal_id}/stage")
-def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session = Depends(get_db)):
+def update_deal_stage(
+    deal_id: int,
+    stage_update: DealStageUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     db_deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not db_deal:
         return JSONResponse(status_code=404, content={"error": "Not found"})
@@ -3562,13 +3809,31 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
     if db_deal.loss_reason and new_stage_obj and _stage_is_lost(new_stage_obj):
         hist += f" (причина: {db_deal.loss_reason})"
     db.add(DealHistory(deal_id=deal_id, action_text=hist))
+    audit.write_audit(
+        db, user_id=user.id if user else None, entity_type="deal", entity_id=deal_id,
+        action="stage_change",
+        diff={"from": old_name or old_stage, "to": new_name, "stage_id": stage_update.stage},
+        ip=audit.request_ip(request),
+    )
 
     converted_deal_id = None
+    converted_pipeline_name = None
     pipe = db.query(Pipeline).filter(Pipeline.id == db_deal.pipeline_id).first()
     if new_stage_obj and pipe and _pipeline_kind(pipe) == "lead" and _stage_creates_deal(new_stage_obj, pipe):
-        new_deal = _convert_lead_to_deal(db, db_deal, pipe)
+        new_deal = _convert_lead_to_deal(
+            db, db_deal, pipe,
+            convert_to_pipeline_id=stage_update.convert_to_pipeline_id,
+        )
         if new_deal:
             converted_deal_id = new_deal.id
+            tp = db.query(Pipeline).filter(Pipeline.id == new_deal.pipeline_id).first()
+            converted_pipeline_name = tp.name if tp else None
+            audit.write_audit(
+                db, user_id=user.id if user else None, entity_type="deal", entity_id=new_deal.id,
+                action="create",
+                diff={"from_lead": deal_id, "pipeline": converted_pipeline_name},
+                ip=audit.request_ip(request),
+            )
 
     # При «Успешно» в deal-воронке — зарплатная ведомость
     if new_stage_obj and _stage_is_won(new_stage_obj) and _pipeline_kind(pipe) == "deal":
@@ -3599,7 +3864,11 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
     resp = {"status": "success"}
     if converted_deal_id:
         resp["converted_deal_id"] = converted_deal_id
-        resp["message"] = f"Создана сделка №{converted_deal_id} в воронке продаж"
+        resp["converted_pipeline"] = converted_pipeline_name
+        resp["message"] = (
+            f"Создана сделка №{converted_deal_id}"
+            + (f" в воронке «{converted_pipeline_name}»" if converted_pipeline_name else "")
+        )
     return resp
 
 @app.get("/api/deals/{deal_id}")
@@ -3626,12 +3895,15 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
             "stock_price": 0 if hide else (eq.price if eq else 0),
             "category_type": "fixed" if eq and _is_fixed_category(eq.category) else "equipment",
             "warehouse_type": (getattr(eq, "warehouse_type", None) or "own") if eq else "own",
-            "cost_price": 0 if hide else float(getattr(eq, "cost_price", 0) or 0) if eq else 0,
+            "cost_price": 0 if (hide or _user_hide_subrental_cost(user)) else float(getattr(eq, "cost_price", 0) or 0) if eq else 0,
             "supplier": getattr(eq, "supplier", None) if eq else None,
             "category": eq.category if eq else "",
         })
 
     totals = None if hide else _estimate_totals_payload(_calc_deal(d))
+    hide_margin = _user_hide_margin(user)
+    hide_payroll = _user_hide_payroll(user)
+    hide_sub_cost = _user_hide_subrental_cost(user)
 
     history = [{"action_text": h.action_text, "created_at": h.created_at.strftime("%Y-%m-%d %H:%M:%S"), "kind": "history"} for h in sorted(d.history, key=lambda x: x.created_at, reverse=True)]
     custom_values = {cv.field_id: cv.value for cv in d.custom_values}
@@ -3702,6 +3974,11 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "final_sum": 0 if hide else d.final_sum,
         "totals": totals,
         "hide_prices": hide,
+        "hide_margin": hide_margin,
+        "hide_payroll": hide_payroll,
+        "hide_subrental_cost": hide_sub_cost,
+        "role_sales": _user_is_sales(user),
+        "role_project": _user_is_project(user),
         "comment": d.comment,
         "created_at": d.created_at.strftime("%d.%m.%Y") if d.created_at else "",
         "chat_channel": d.chat_channel,
@@ -3725,9 +4002,9 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "expenses": [] if hide else expenses,
         "advances_total": 0 if hide else sum(a["amount"] for a in advances),
         "expenses_total": 0 if hide else sum(e["amount"] for e in expenses),
-        "payroll_lines": [] if hide else [_serialize_payroll_line(p) for p in sorted(d.payroll_lines, key=lambda x: x.id)],
-        "payroll_summary": None if hide else _payroll_summary(d),
-        "money_picture": None if hide else _money_picture(d, totals),
+        "payroll_lines": [] if hide_payroll else [_serialize_payroll_line(p) for p in sorted(d.payroll_lines, key=lambda x: x.id)],
+        "payroll_summary": None if hide_payroll else _payroll_summary(d),
+        "money_picture": None if hide_margin else _money_picture(d, totals),
         "tasks": [{
             "id": t.id, "title": t.title, "status": t.status,
             "due_date": t.due_date or "", "priority": t.priority or "normal",
@@ -3754,11 +4031,20 @@ class DealItemsUpdate(BaseModel):
     items: List[dict] # {equipment_id, quantity, days}
 
 @app.put("/api/deals/{deal_id}/items")
-def update_deal_items(deal_id: int, update: DealItemsUpdate, db: Session = Depends(get_db)):
+def update_deal_items(
+    deal_id: int,
+    update: DealItemsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
-    
+    # Менеджер проекта без role_sales не меняет смету
+    if auth.user_has_flag(user, "role_project") and not auth.user_has_flag(user, "role_sales") and user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Смету меняет менеджер продаж"})
+
     # Remove old items
     db.query(DealItem).filter(DealItem.deal_id == deal_id).delete()
     
@@ -3775,6 +4061,12 @@ def update_deal_items(deal_id: int, update: DealItemsUpdate, db: Session = Depen
         
     d.discount_percentage = update.discount_percentage
     d.tax_percentage = FIXED_TAX_PERCENTAGE
+    audit.write_audit(
+        db, user_id=user.id, entity_type="deal", entity_id=deal_id,
+        action="items_save",
+        diff={"items_count": len(update.items or []), "discount": update.discount_percentage},
+        ip=audit.request_ip(request),
+    )
     db.commit()
     db.refresh(d)
     _recalc_deal_sum(db, d)
@@ -3803,7 +4095,13 @@ class DealUpdate(BaseModel):
     pipeline_id: Optional[int] = None
 
 @app.put("/api/deals/{deal_id}")
-def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def update_deal(
+    deal_id: int,
+    update: DealUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
@@ -3826,9 +4124,18 @@ def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db),
         if primary:
             data["contact_id"] = primary.id
 
+    changed = {}
     for field, value in data.items():
+        old = getattr(d, field, None)
+        if old != value:
+            changed[field] = {"from": old, "to": value}
         setattr(d, field, value)
 
+    if changed:
+        audit.write_audit(
+            db, user_id=user.id, entity_type="deal", entity_id=deal_id,
+            action="update", diff=changed, ip=audit.request_ip(request),
+        )
     db.commit()
     return {"status": "success"}
 
@@ -4333,7 +4640,15 @@ def download_technichka(deal_id: int, background_tasks: BackgroundTasks, db: Ses
 
 
 @app.put("/api/payroll-lines/{line_id}")
-def update_payroll_line(line_id: int, body: PayrollLineUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def update_payroll_line(
+    line_id: int,
+    body: PayrollLineUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if _user_hide_payroll(user):
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к ведомости"})
     line = db.query(DealPayrollLine).filter(DealPayrollLine.id == line_id).first()
     if not line:
         return JSONResponse(status_code=404, content={"error": "Строка не найдена"})
@@ -4365,6 +4680,12 @@ def update_payroll_line(line_id: int, body: PayrollLineUpdate, db: Session = Dep
     if "rate" in data and data["rate"] is not None:
         line.rate = float(data["rate"])
     line.gross = float(line.rate or 0) * int(line.quantity or 1) * int(line.days or 1)
+    audit.write_audit(
+        db, user_id=user.id, entity_type="payroll", entity_id=line.deal_id,
+        action="payroll_update",
+        diff={"line_id": line_id, "fields": list(data.keys()), "gross": line.gross},
+        ip=audit.request_ip(request),
+    )
     db.commit()
     db.refresh(line)
     deal = db.query(Deal).filter(Deal.id == line.deal_id).first()
@@ -5391,6 +5712,29 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
         filename=f"Contract_{d.id}_{comp.name}.docx"
     )
 
+def _normalize_estimate_mode(mode: str) -> str:
+    """
+    Режимы сметы для сотрудников:
+      - internal — внутренняя (субаренда отдельно, маржа)
+      - client — клиенту без цен за ед. (только суммы строк / итог)
+      - client_priced — клиенту с ценами за ед. (без маржи / себестоимости)
+    hide_prices у пользователя — флаг доступа в CRM, не путать с режимом документа.
+    """
+    mode_norm = (mode or "internal").strip().lower()
+    aliases = {
+        "client_no_prices": "client",
+        "client_without_prices": "client",
+        "без_цен": "client",
+        "client_with_prices": "client_priced",
+        "с_ценами": "client_priced",
+        "priced": "client_priced",
+    }
+    mode_norm = aliases.get(mode_norm, mode_norm)
+    if mode_norm not in ("internal", "client", "client_priced"):
+        mode_norm = "internal"
+    return mode_norm
+
+
 @app.get("/api/deals/{deal_id}/estimate")
 def download_deal_estimate(
     deal_id: int,
@@ -5398,14 +5742,12 @@ def download_deal_estimate(
     mode: str = "internal",
     db: Session = Depends(get_db),
 ):
-    """Скачивание сметы .docx: mode=internal|client (по умолчанию internal)."""
+    """Скачивание сметы .docx: mode=internal|client|client_priced."""
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
-    mode_norm = (mode or "internal").strip().lower()
-    if mode_norm not in ("internal", "client"):
-        mode_norm = "internal"
+    mode_norm = _normalize_estimate_mode(mode)
 
     # Клиентская: субаренда как обычные позиции (без отдельного блока); internal — полный вид
     context = _build_estimate_context(d, mode_norm)
@@ -5422,11 +5764,12 @@ def download_deal_estimate(
             pass
 
     background_tasks.add_task(cleanup_file, temp_path)
-    fname = (
-        f"Smeta_client_CRM-{d.id}.docx"
-        if mode_norm == "client"
-        else f"Smeta_vnutr_CRM-{d.id}.docx"
-    )
+    if mode_norm == "client":
+        fname = f"Smeta_client_bez_cen_CRM-{d.id}.docx"
+    elif mode_norm == "client_priced":
+        fname = f"Smeta_client_s_cenami_CRM-{d.id}.docx"
+    else:
+        fname = f"Smeta_vnutr_CRM-{d.id}.docx"
     return FileResponse(
         temp_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -5439,6 +5782,7 @@ def _build_estimate_context(d: Deal, mode_norm: str) -> dict:
     # (без блока «Субаренда» / себестоимости). hide_subrental_section управляет только вёрсткой.
     result = _calc_deal(d, exclude_subrental=False)
     header = _estimate_header_fields(d)
+    is_client = mode_norm in ("client", "client_priced")
     return {
         "number": f"CRM-{d.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
@@ -5455,7 +5799,7 @@ def _build_estimate_context(d: Deal, mode_norm: str) -> dict:
         "cost_total": result.get("cost_total", 0),
         "margin": result.get("margin", 0),
         "discount_percentage": d.discount_percentage or 0,
-        "hide_subrental_section": mode_norm == "client",
+        "hide_subrental_section": is_client,
     }
 
 
@@ -5466,14 +5810,12 @@ def download_deal_estimate_pdf(
     mode: str = "internal",
     db: Session = Depends(get_db),
 ):
-    """Скачивание сметы .pdf: mode=internal|client."""
+    """Скачивание сметы .pdf: mode=internal|client|client_priced."""
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
-    mode_norm = (mode or "internal").strip().lower()
-    if mode_norm not in ("internal", "client"):
-        mode_norm = "internal"
+    mode_norm = _normalize_estimate_mode(mode)
 
     from document_generator import generate_estimate_pdf
     context = _build_estimate_context(d, mode_norm)
@@ -5488,11 +5830,12 @@ def download_deal_estimate_pdf(
             pass
 
     background_tasks.add_task(cleanup_file, temp_path)
-    fname = (
-        f"Smeta_client_CRM-{d.id}.pdf"
-        if mode_norm == "client"
-        else f"Smeta_vnutr_CRM-{d.id}.pdf"
-    )
+    if mode_norm == "client":
+        fname = f"Smeta_client_bez_cen_CRM-{d.id}.pdf"
+    elif mode_norm == "client_priced":
+        fname = f"Smeta_client_s_cenami_CRM-{d.id}.pdf"
+    else:
+        fname = f"Smeta_vnutr_CRM-{d.id}.pdf"
     return FileResponse(temp_path, media_type="application/pdf", filename=fname)
 
 
@@ -5854,18 +6197,23 @@ def deal_client_pack(deal_id: int, db: Session = Depends(get_db), user: User = D
         return JSONResponse(status_code=403, content={"error": "Нет доступа к суммам"})
     base = f"/api/deals/{deal_id}"
     estimate_pdf = f"{base}/estimate.pdf?mode=client"
+    estimate_priced_pdf = f"{base}/estimate.pdf?mode=client_priced"
     contract_pdf = f"{base}/contract.pdf"
     return {
         "deal_id": deal_id,
         "title": d.title,
         "company_name": d.company.name if d.company else "",
         "estimate_pdf": estimate_pdf,
+        "estimate_pdf_priced": estimate_priced_pdf,
         "estimate_docx": f"{base}/estimate?mode=client",
+        "estimate_docx_priced": f"{base}/estimate?mode=client_priced",
         "contract_pdf": contract_pdf,
         "contract_docx": f"{base}/contract",
+        "modes_hint": "client = без цен за ед.; client_priced = с ценами (для сотрудников / клиента)",
         "message": (
             f"Добрый день! По проекту «{d.title}» направляем смету и договор.\n"
-            f"Смета (PDF): {estimate_pdf}\n"
+            f"Смета без цен (PDF): {estimate_pdf}\n"
+            f"Смета с ценами (PDF): {estimate_priced_pdf}\n"
             f"Договор (PDF): {contract_pdf}"
         ),
     }
@@ -5984,6 +6332,145 @@ def api_today(db: Session = Depends(get_db), user: User = Depends(get_current_us
     }
 
 
+# Роботы напоминаний: троттлинг между опросами колокольчика
+_ROBOTS_LAST_RUN = 0.0
+_ROBOTS_LOCK = __import__("threading").Lock()
+
+
+def _notify_once(
+    db: Session,
+    *,
+    user_id: int,
+    kind: str,
+    title: str,
+    body: str,
+    link: str = None,
+    deal_id: int = None,
+    task_id: int = None,
+    dedupe_hours: int = 20,
+) -> bool:
+    """Создать уведомление, если такого же kind+entity не было недавно."""
+    if not user_id:
+        return False
+    since = datetime.utcnow() - timedelta(hours=dedupe_hours)
+    q = db.query(AppNotification).filter(
+        AppNotification.user_id == user_id,
+        AppNotification.kind == kind,
+        AppNotification.created_at >= since,
+    )
+    if deal_id:
+        q = q.filter(AppNotification.deal_id == deal_id)
+    if task_id:
+        q = q.filter(AppNotification.task_id == task_id)
+    if q.first():
+        return False
+    db.add(AppNotification(
+        user_id=user_id,
+        kind=kind,
+        title=title,
+        body=body,
+        link=link,
+        deal_id=deal_id,
+        task_id=task_id,
+    ))
+    return True
+
+
+def _run_reminder_robots(db: Session) -> dict:
+    """
+    P1-роботы (без visual builder):
+      - сделка без движения >24ч → напоминание ответственному
+      - просроченные задачи → эскалация постановщику / исполнителю
+    Вызывается из /api/notifications с троттлингом ~5 мин.
+    """
+    global _ROBOTS_LAST_RUN
+    now_ts = datetime.utcnow().timestamp()
+    with _ROBOTS_LOCK:
+        if now_ts - _ROBOTS_LAST_RUN < 300:
+            return {"skipped": True}
+        _ROBOTS_LAST_RUN = now_ts
+
+    created = {"stale_deals": 0, "overdue_tasks": 0}
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    try:
+        active_deals = (
+            db.query(Deal)
+            .filter(Deal.is_archived == False)  # noqa: E712
+            .order_by(Deal.id.desc())
+            .limit(200)
+            .all()
+        )
+        for d in active_deals:
+            st = db.query(Stage).filter(Stage.id == d.stage).first()
+            if st and (_stage_is_won(st) or _stage_is_lost(st)):
+                continue
+            last = d.created_at or cutoff
+            hist = (
+                db.query(DealHistory)
+                .filter(DealHistory.deal_id == d.id)
+                .order_by(DealHistory.created_at.desc())
+                .first()
+            )
+            if hist and hist.created_at and hist.created_at > last:
+                last = hist.created_at
+            if last and last > cutoff:
+                continue
+            uid = d.assignee_id
+            if not uid:
+                continue
+            if _notify_once(
+                db,
+                user_id=uid,
+                kind="stale_deal",
+                title="Сделка без движения >24ч",
+                body=f"Не забудьте про сделку «{d.title}» — нет активности больше суток.",
+                link=f"/crm?deal={d.id}",
+                deal_id=d.id,
+            ):
+                created["stale_deals"] += 1
+
+        overdue_tasks = (
+            db.query(Task)
+            .filter(
+                Task.status.in_(["open", "in_progress"]),
+                Task.due_date.isnot(None),
+                Task.due_date < today_str,
+            )
+            .order_by(Task.id.desc())
+            .limit(80)
+            .all()
+        )
+        for t in overdue_tasks:
+            recipients = set()
+            if t.creator_id:
+                recipients.add(t.creator_id)
+            for a in (t.assignees or []):
+                if a.user_id:
+                    recipients.add(a.user_id)
+            for uid in recipients:
+                if _notify_once(
+                    db,
+                    user_id=uid,
+                    kind="overdue_task",
+                    title="Просроченная задача",
+                    body=f"«{t.title}» — срок {t.due_date}",
+                    link=f"/tasks?task={t.id}",
+                    task_id=t.id,
+                    deal_id=t.deal_id,
+                ):
+                    created["overdue_tasks"] += 1
+
+        if created["stale_deals"] or created["overdue_tasks"]:
+            db.commit()
+    except Exception:
+        db.rollback()
+        return {"error": "robots_failed"}
+
+    return created
+
+
 @app.get("/api/notifications")
 def list_notifications(
     unread_only: bool = False,
@@ -5991,6 +6478,12 @@ def list_notifications(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # Лёгкие роботы-напоминания на опросе колокольчика (троттлинг внутри)
+    try:
+        _run_reminder_robots(db)
+    except Exception:
+        pass
+
     q = db.query(AppNotification).filter(AppNotification.user_id == user.id)
     if unread_only:
         q = q.filter(AppNotification.is_read == False)  # noqa: E712
@@ -6179,4 +6672,45 @@ def api_search(q: str = "", db: Session = Depends(get_db), user: User = Depends(
         "deals": [{"id": d.id, "title": d.title, "url": f"/crm?deal={d.id}"} for d in deals],
         "companies": [{"id": c.id, "title": c.name, "url": f"/companies?id={c.id}"} for c in companies],
         "tasks": [{"id": t.id, "title": t.title, "url": f"/tasks?open={t.id}"} for t in tasks],
+    }
+
+
+@app.get("/api/audit-logs")
+def api_audit_logs(
+    entity_type: Optional[str] = None,
+    entity_id: Optional[int] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Журнал аудита (только admin / manager)."""
+    if not user or user.role not in ("admin", "manager"):
+        return JSONResponse(status_code=403, content={"error": "Доступ только для администратора или менеджера"})
+    q = db.query(AuditLog).order_by(AuditLog.id.desc())
+    if entity_type:
+        q = q.filter(AuditLog.entity_type == entity_type.strip().lower())
+    if entity_id is not None:
+        q = q.filter(AuditLog.entity_id == entity_id)
+    rows = q.limit(max(1, min(int(limit or 100), 500))).all()
+    user_ids = {r.user_id for r in rows if r.user_id}
+    names = {}
+    if user_ids:
+        for u in db.query(User).filter(User.id.in_(list(user_ids))).all():
+            names[u.id] = u.full_name or u.username
+    return {
+        "entity_labels": audit.ENTITY_LABELS,
+        "action_labels": audit.ACTION_LABELS,
+        "items": [{
+            "id": r.id,
+            "user_id": r.user_id,
+            "user_name": names.get(r.user_id) or ("система" if not r.user_id else f"#{r.user_id}"),
+            "entity_type": r.entity_type,
+            "entity_label": audit.ENTITY_LABELS.get(r.entity_type, r.entity_type),
+            "entity_id": r.entity_id,
+            "action": r.action,
+            "action_label": audit.ACTION_LABELS.get(r.action, r.action),
+            "diff": r.diff,
+            "ip": r.ip or "",
+            "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+        } for r in rows],
     }

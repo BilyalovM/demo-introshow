@@ -56,6 +56,8 @@ class User(Base):
     # Список разделов, доступных пользователю (JSON-массив ключей).
     # null или пустой список = доступ ко всем разделам (для admin всегда всё).
     permissions = Column(JSON, nullable=True)
+    # Инкремент инвалидирует все cookie-сессии (logout-all). См. auth.create_session_token.
+    session_version = Column(Integer, default=0)
 
 class Folder(Base):
     __tablename__ = "folders"
@@ -595,6 +597,21 @@ class ChecklistTemplate(Base):
     items_json = Column(JSON, default=list)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class AuditLog(Base):
+    """Журнал изменений: кто / что / когда (минимум для контроля смет / прав / ведомости)."""
+    __tablename__ = "audit_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    entity_type = Column(String, index=True)  # deal / user / payroll / pipeline_routing / …
+    entity_id = Column(Integer, nullable=True, index=True)
+    action = Column(String, index=True)  # create / update / stage_change / …
+    diff = Column(JSON, nullable=True)  # снимок или diff
+    ip = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    user = relationship("User", foreign_keys=[user_id])
 
 
 def init_db():

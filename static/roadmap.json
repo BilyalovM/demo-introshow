@@ -1,10 +1,10 @@
 {
-  "updated_at": "2026-07-30",
+  "updated_at": "2026-08-05",
   "title": "Intro Show CRM — статус и roadmap",
-  "summary": "v1.0.0 заморожена (тег + ветка v1-stable). Разработка UX-оверхола на ветке v2. Production остаётся на v1/main до cutover.",
+  "summary": "v2 в production. Добавлены audit log, ужесточение сессий, rate limit login/лидов, воронки Аренда/Продажа, режимы сметы с/без цен.",
   "stats": {
     "core_pct": 98,
-    "done": 35,
+    "done": 40,
     "partial": 2,
     "missing": 1
   },
@@ -22,6 +22,8 @@
     { "stage": "Клиентский пакет (смета+договор PDF)", "status": "done" },
     { "stage": "Люди → техничка / календарь / напоминания", "status": "done" },
     { "stage": "Авансы / расходы / зарплата", "status": "done" },
+    { "stage": "Audit / сессии / rate limit", "status": "done" },
+    { "stage": "Воронки Аренда + Продажа", "status": "done" },
     { "stage": "Договор / счёт / PDF", "status": "partial" },
     { "stage": "Бухгалтерия / 1С", "status": "partial" },
     { "stage": "Боевой VPS + Postgres", "status": "missing" }
@@ -34,10 +36,14 @@
     { "block": "Money picture", "detail": "Выручка → субаренда → ФОТ → расходы → авансы → маржа" },
     { "block": "Ops pipeline", "detail": "ops_status: собрали / уехали / на площадке / вернули / закрыли" },
     { "block": "Notifications", "detail": "Колокольчик: @mention, назначение на проект, новая задача; polling" },
-    { "block": "Templates", "detail": "Шаблоны сметы и чек-листа задач" },
+    { "block": "Templates", "detail": "Шаблоны сметы и чек-листа" },
     { "block": "Client pack", "detail": "Одно действие: ссылки клиентской сметы + договора PDF" },
     { "block": "Postgres readiness", "detail": "DATABASE_URL + psycopg2; SQLite для Vercel demo" },
-    { "block": "Search", "detail": "Глобальный поиск сделок / клиентов / задач в topbar" }
+    { "block": "Search", "detail": "Глобальный поиск сделок / клиентов / задач в topbar" },
+    { "block": "Audit log", "detail": "Журнал: сделки/сметы/права/ведомость/маршрутизация; UI в Настройки" },
+    { "block": "Sessions", "detail": "Secure cookie, TTL 7д, session_version + logout-all" },
+    { "block": "Rate limit", "detail": "POST login и /api/leads — sliding window, 429" },
+    { "block": "Аренда/Продажа", "detail": "Две deal-воронки; выбор при конвертации лида" }
   ],
   "partial": [
     { "topic": "Договор / счёт / 1С", "gap": "PDF есть; UI-синк 1С и ЭЦП — позже" },
@@ -59,8 +65,8 @@
     },
     {
       "id": "v2",
-      "name": "v2 — UX overhaul",
-      "duration": "ветка v2",
+      "name": "v2 — UX overhaul + security P0",
+      "duration": "ветка v2 = main",
       "tasks": [
         { "id": "v2-1", "content": "Deal hub в карточке сделки", "status": "done" },
         { "id": "v2-2", "content": "Единая смета (без дубль-редактирования в CRM)", "status": "done" },
@@ -72,7 +78,7 @@
         { "id": "v2-8", "content": "Клиентский пакет PDF", "status": "done" },
         { "id": "v2-9", "content": "DATABASE_URL / Postgres readiness", "status": "done" },
         { "id": "v2-10", "content": "Глобальный поиск", "status": "done" },
-        { "id": "v2-11", "content": "Мобильная полировка технички / cutover на prod", "status": "pending" }
+        { "id": "v2-11", "content": "Audit / сессии / rate limit / Аренда+Продажа", "status": "done" }
       ]
     },
     {

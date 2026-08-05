@@ -800,12 +800,14 @@
                     <div id="crmDocsMenu" hidden style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;display:flex;flex-direction:column;gap:2px;">
                         <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('internal')">Для нас → Word</button>
                         <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('internal_pdf')">Для нас → PDF</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client')">Клиентская → Word</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_pdf')">Клиентская → PDF</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_priced')">Клиенту с ценами → Word</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_priced_pdf')">Клиенту с ценами → PDF</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client')">Клиенту без цен → Word</button>
+                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_pdf')">Клиенту без цен → PDF</button>
                         <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract')">Договор → Word</button>
                         <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract_pdf')">Договор → PDF</button>
                     </div>
-                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Клиентская: субаренда как обычные позиции, без отдельного блока. Техничка — во вкладке «Команда». Редактирование — в «Открыть смету».</p>
+                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Два режима клиентской сметы: <strong>с ценами</strong> / <strong>без цен</strong> (только итог). Флаг сотрудника hide_prices скрывает суммы в CRM. Техничка — вкладка «Команда».</p>
                 </div>
             </div>
 
@@ -1032,7 +1034,7 @@
     <div class="card" style="width:760px; max-width:96%; padding:22px; position:relative; max-height:90vh; overflow:auto;" onclick="event.stopPropagation()">
         <button type="button" onclick="closePipelineAdmin()" style="position:absolute; top:10px; right:14px; border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--muted);">&times;</button>
         <h3 style="margin-top:0; margin-bottom:6px;">Воронки CRM</h3>
-        <p class="muted" style="font-size:13px; margin:0 0 14px;">Лиды → успешная стадия создаёт сделку в воронке продаж. Маршрутизация источников настраивается ниже.</p>
+        <p class="muted" style="font-size:13px; margin:0 0 14px;">Лиды → успешная стадия создаёт сделку в воронке <strong>Аренда</strong> или <strong>Продажа</strong> (выбор при конвертации). Маршрутизация источников — ниже.</p>
 
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:10px;">
             <button type="button" class="btn btn-sm pipe-admin-tab active" id="pipe-tab-list" onclick="switchPipeAdminTab('list')">Воронки и стадии</button>
@@ -1129,7 +1131,7 @@
             currentPipelineId = (preferred && preferred.id) || 1;
             const pipeSel = document.getElementById('crm-pipeline-select');
             pipeSel.innerHTML = crmPipelines.map(p => {
-                const kindLabel = p.kind === 'lead' ? 'Лиды' : 'Продажи';
+                const kindLabel = p.kind === 'lead' ? 'Лиды' : (p.name === 'Продажа' || p.name === 'Продажи' ? 'Продажа' : 'Сделки');
                 return `<option value="${p.id}">${escapeHtml(p.name)} (${kindLabel})</option>`;
             }).join('');
             pipeSel.value = currentPipelineId;
@@ -1421,6 +1423,23 @@
         setTimeout(() => input.focus(), 50);
     }
 
+    async function pickConvertPipelineId(stageObj) {
+        if (!(stageObj && (stageObj.creates_deal || isWonStage(stageObj)))) return null;
+        const pipeMeta = crmPipelines || [];
+        const current = pipeMeta.find(p => p.id === currentPipelineId);
+        if (!current || current.kind !== 'lead') return null;
+        const dealPipes = pipeMeta.filter(p => p.kind === 'deal');
+        if (dealPipes.length < 2) return dealPipes[0] ? dealPipes[0].id : null;
+        const labels = dealPipes.map((p, i) => `${i + 1}) ${p.name}`).join('\n');
+        const raw = prompt(
+            `Куда создать сделку?\n${labels}\n\nВведите номер (по умолчанию 1 — обычно «Аренда»):`,
+            '1'
+        );
+        if (raw === null) return null; // отмена
+        const idx = Math.max(0, (parseInt(raw, 10) || 1) - 1);
+        return dealPipes[Math.min(idx, dealPipes.length - 1)].id;
+    }
+
     async function moveDealToStage(dealId, newStageId, lossReason) {
         const deal = crmDeals.find(d => d.id === dealId);
         const stageObj = crmStages.find(s => s.id === newStageId);
@@ -1428,11 +1447,21 @@
             openLossReasonModal(dealId, newStageId);
             return false;
         }
+        let convertTo = null;
+        const pipeMeta = crmPipelines || [];
+        const current = pipeMeta.find(p => p.id === currentPipelineId);
+        if (current && current.kind === 'lead' && stageObj && (stageObj.creates_deal || isWonStage(stageObj))) {
+            convertTo = await pickConvertPipelineId(stageObj);
+            if (convertTo === null && pipeMeta.filter(p => p.kind === 'deal').length >= 2) {
+                return false; // пользователь отменил выбор
+            }
+        }
         const oldStageId = deal ? deal.stage : null;
         if (deal) { deal.stage = newStageId; renderCrm(); }
         try {
             const body = { stage: newStageId };
             if (lossReason) body.loss_reason = lossReason.trim();
+            if (convertTo) body.convert_to_pipeline_id = convertTo;
             const response = await fetch(`/api/deals/${dealId}/stage`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1444,7 +1473,8 @@
             }
             const result = await response.json().catch(() => ({}));
             if (result.converted_deal_id) {
-                alert(`Лид конвертирован в сделку №${result.converted_deal_id}. Откройте воронку «Продажи», чтобы продолжить работу.`);
+                const pipeName = result.converted_pipeline || 'сделок';
+                alert(`Лид конвертирован в сделку №${result.converted_deal_id} («${pipeName}»). Переключите воронку, чтобы продолжить.`);
             }
             await loadDeals();
             renderCrm();
@@ -3054,6 +3084,8 @@
         else if (kind === 'contract_pdf') url = `/api/deals/${activeDealId}/contract.pdf`;
         else if (kind === 'client') url = `/api/deals/${activeDealId}/estimate?mode=client`;
         else if (kind === 'client_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=client`;
+        else if (kind === 'client_priced') url = `/api/deals/${activeDealId}/estimate?mode=client_priced`;
+        else if (kind === 'client_priced_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=client_priced`;
         else if (kind === 'internal_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=internal`;
         window.open(url, '_blank');
     }

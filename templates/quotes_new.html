@@ -127,8 +127,18 @@
             </div>
             <div class="docs-registry-row">
                 <div>
-                    <strong>Клиентская</strong>
-                    <div class="muted" style="font-size:12px">Субаренда как обычные позиции, без внутренних сумм</div>
+                    <strong>Клиенту с ценами</strong>
+                    <div class="muted" style="font-size:12px">Цены за ед. видны; без маржи и себестоимости субаренды</div>
+                </div>
+                <div class="docs-registry-actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('client_priced')">Word</button>
+                    <button type="button" class="btn btn-sm" onclick="downloadDoc('client_priced_pdf')">PDF</button>
+                </div>
+            </div>
+            <div class="docs-registry-row">
+                <div>
+                    <strong>Клиенту без цен</strong>
+                    <div class="muted" style="font-size:12px">Без цены за ед., только суммы строк и итог</div>
                 </div>
                 <div class="docs-registry-actions">
                     <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('client')">Word</button>
@@ -1164,6 +1174,8 @@ async function downloadDoc(kind) {
     else if (kind === 'contract_pdf') url = `/api/deals/${id}/contract.pdf`;
     else if (kind === 'client') url = `/api/deals/${id}/estimate?mode=client`;
     else if (kind === 'client_pdf') url = `/api/deals/${id}/estimate.pdf?mode=client`;
+    else if (kind === 'client_priced') url = `/api/deals/${id}/estimate?mode=client_priced`;
+    else if (kind === 'client_priced_pdf') url = `/api/deals/${id}/estimate.pdf?mode=client_priced`;
     else if (kind === 'internal') url = `/api/deals/${id}/estimate?mode=internal`;
     else if (kind === 'internal_pdf') url = `/api/deals/${id}/estimate.pdf?mode=internal`;
     window.location.href = url;

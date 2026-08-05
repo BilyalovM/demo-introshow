@@ -569,19 +569,22 @@ def generate_estimate_docx(
 
     mode:
       - internal («Для нас»): свой склад в основной таблице, блок субаренды, себестоимость и маржа
-      - client («Клиентская»): все позиции (в т.ч. субаренда) как обычные строки;
-        без колонки цены за ед., без блока субаренды / маржи, без метки «(субаренда)» в названиях
+      - client («Клиентская без цен»): позиции без колонки цены за ед., итог есть
+      - client_priced («Клиентская с ценами»): цены за ед. видны, без маржи / себестоимости субаренды
     """
     mode = (mode or "internal").strip().lower()
-    if mode not in ("internal", "client"):
+    if mode not in ("internal", "client", "client_priced"):
         mode = "internal"
-    hide_sub = mode == "client" or bool(context.get("hide_subrental_section"))
-    show_unit_price = mode != "client"
+    is_client = mode in ("client", "client_priced")
+    hide_sub = is_client or bool(context.get("hide_subrental_section"))
+    show_unit_price = mode != "client"  # client_priced и internal — с ценами за ед.
 
     doc = Document()
     _apply_estimate_page(doc)
 
     if mode == "client":
+        title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')} (без цен за ед.)"
+    elif mode == "client_priced":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
     else:
         title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
@@ -609,7 +612,7 @@ def generate_estimate_docx(
 
     if main_items:
         _add_estimate_table(doc, main_items, with_prices=True, show_unit_price=show_unit_price)
-    elif mode == "client":
+    elif is_client:
         doc.add_paragraph("Нет позиций для клиентской сметы.")
 
     if mode == "internal" and sub_items:
@@ -955,14 +958,17 @@ def generate_estimate_pdf(
     output_path: str,
     mode: str = "internal",
 ) -> str:
-    """PDF-смета: те же mode=internal|client и данные, что у DOCX."""
+    """PDF-смета: те же mode=internal|client|client_priced и данные, что у DOCX."""
     mode = (mode or "internal").strip().lower()
-    if mode not in ("internal", "client"):
+    if mode not in ("internal", "client", "client_priced"):
         mode = "internal"
+    is_client = mode in ("client", "client_priced")
     show_unit_price = mode != "client"
 
     pdf = _EstimatePDF()
     if mode == "client":
+        title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')} (без цен за ед.)"
+    elif mode == "client_priced":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
     else:
         title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
@@ -973,7 +979,7 @@ def generate_estimate_pdf(
     pdf.pdf.ln(2)
 
     all_items = list(context.get("items", []) or [])
-    hide_sub = mode == "client" or bool(context.get("hide_subrental_section"))
+    hide_sub = is_client or bool(context.get("hide_subrental_section"))
     if hide_sub:
         main_items = [
             {**i, "warehouse_type": "own", "name": _client_display_name(i.get("name", ""))}
@@ -991,7 +997,7 @@ def generate_estimate_pdf(
         sum_col_w = _pdf_draw_sectioned_table(
             pdf, main_items, with_prices=True, show_unit_price=show_unit_price
         )
-    elif mode == "client":
+    elif is_client:
         pdf.line("Нет позиций для клиентской сметы.")
 
     if mode == "internal" and sub_items:
