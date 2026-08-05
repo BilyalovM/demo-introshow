@@ -3,12 +3,21 @@ import re
 from collections import OrderedDict
 from docxtpl import DocxTemplate
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Cm, Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml, OxmlElement
 from num2words import num2words
 from typing import Dict, Any, List, Optional, Tuple
+
+# Ширины колонок DOCX (см): сумма usable ≈ 16.0 — единый правый край таблиц и блока итогов
+_DOCX_SUM_W = 3.0
+_DOCX_W_TECH = [0.9, 12.1, 3.0]  # № | Наименование | Кол-во
+_DOCX_W_6 = [0.8, 7.0, 1.5, 2.2, 1.5, _DOCX_SUM_W]  # + Цена + Смен
+_DOCX_W_5 = [0.8, 9.2, 1.5, 1.5, _DOCX_SUM_W]  # клиентская без цены
+_DOCX_W_SUB = [0.7, 4.3, 2.2, 2.0, 2.0, 1.8, _DOCX_SUM_W]
+_DOCX_W_TOTALS = [16.0 - _DOCX_SUM_W, _DOCX_SUM_W]  # label | amount = Сумма
 
 # Метка склада в названии позиции — клиенту не показываем
 _SUBRENTAL_NAME_RE = re.compile(r"\s*\(\s*субаренда\s*\)\s*", re.IGNORECASE)
@@ -124,13 +133,56 @@ def _shade_cell(cell, hex_color: str) -> None:
     tcPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}" w:val="clear"/>'))
 
 
-def _set_cell_text(cell, text: str, *, bold: bool = False, size: int = 10, center: bool = False) -> None:
+def _vcenter_cell(cell) -> None:
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def _set_cell_text(
+    cell,
+    text: str,
+    *,
+    bold: bool = False,
+    size: int = 10,
+    center: bool = False,
+    align: Optional[str] = None,
+) -> None:
+    """align: 'left' | 'center' | 'right'. center=True — сокращение для align='center'."""
     cell.text = ""
     p = cell.paragraphs[0]
-    if center:
+    if align is None and center:
+        align = "center"
+    if align == "center":
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    elif align == "right":
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    elif align == "left":
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(str(text))
     _set_run_font(run, bold=bold, size=size)
+    _vcenter_cell(cell)
+
+
+def _set_table_col_widths(table, widths_cm: List[float]) -> None:
+    """Фиксированные ширины колонок + полная ширина таблицы (единый правый край)."""
+    table.autofit = False
+    table.allow_autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    total_twips = int(sum(widths_cm) * 567)  # 1 cm ≈ 567 twips
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    for old in tblPr.findall(qn("w:tblW")):
+        tblPr.remove(old)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), str(total_twips))
+    tblW.set(qn("w:type"), "dxa")
+    tblPr.append(tblW)
+    for row in table.rows:
+        for idx, w in enumerate(widths_cm):
+            if idx < len(row.cells):
+                row.cells[idx].width = Cm(w)
 
 
 def _item_section_name(item: Dict[str, Any]) -> str:
@@ -213,26 +265,32 @@ def _add_estimate_table(
     if not with_prices:
         cols = 3
         headers = ["№", "Наименование", "Кол-во"]
+        # header aligns: name left-ish via section title; qty center
+        header_aligns = ["left", "center", "center"]
+        col_widths = _DOCX_W_TECH
     elif show_unit_price:
         cols = 6
         headers = ["№", "Наименование", "Кол-во", "Цена за ед.", "Кол-во смен", "Сумма"]
+        header_aligns = ["left", "center", "center", "right", "center", "right"]
+        col_widths = _DOCX_W_6
     else:
         cols = 5
         headers = ["№", "Наименование", "Кол-во", "Смен", "Сумма"]
+        header_aligns = ["left", "center", "center", "center", "right"]
+        col_widths = _DOCX_W_5
 
     table = doc.add_table(rows=0, cols=cols)
     table.style = "Table Grid"
-    table.autofit = True
 
     global_idx = 0
     for section, section_items in _group_items(items).items():
         # Section / column header (coral)
         hdr = table.add_row().cells
-        _set_cell_text(hdr[0], section, bold=True, size=10)
+        _set_cell_text(hdr[0], section, bold=True, size=10, align=header_aligns[0])
         for i, h in enumerate(headers):
             if i == 0:
                 continue
-            _set_cell_text(hdr[i], h, bold=True, size=9, center=True)
+            _set_cell_text(hdr[i], h, bold=True, size=9, align=header_aligns[i])
         for c in hdr:
             _shade_cell(c, COLOR_CORAL)
 
@@ -250,66 +308,70 @@ def _add_estimate_table(
             line_total = float(item.get("line_total_discounted", item.get("line_total_base", 0)) or 0)
             section_sum += line_total
 
-            _set_cell_text(row[0], str(global_idx), size=9, center=True)
-            _set_cell_text(row[1], name, size=9)
+            _set_cell_text(row[0], str(global_idx), size=9, align="center")
+            _set_cell_text(row[1], name, size=9, align="left")
             if with_prices and show_unit_price:
-                _set_cell_text(row[2], str(qty), bold=True, size=9, center=True)
+                _set_cell_text(row[2], str(qty), bold=True, size=9, align="center")
                 _shade_cell(row[2], COLOR_GRAY)
-                _set_cell_text(row[3], _fmt_money(item.get("price", 0)), bold=True, size=9, center=True)
-                _set_cell_text(row[4], str(days), bold=True, size=9, center=True)
-                _set_cell_text(row[5], _fmt_money(line_total), bold=True, size=9, center=True)
+                _set_cell_text(row[3], _fmt_money(item.get("price", 0)), bold=True, size=9, align="right")
+                _set_cell_text(row[4], str(days), bold=True, size=9, align="center")
+                _set_cell_text(row[5], _fmt_money(line_total), bold=True, size=9, align="right")
             elif with_prices:
-                _set_cell_text(row[2], str(qty), bold=True, size=9, center=True)
+                _set_cell_text(row[2], str(qty), bold=True, size=9, align="center")
                 _shade_cell(row[2], COLOR_GRAY)
-                _set_cell_text(row[3], str(days), bold=True, size=9, center=True)
-                _set_cell_text(row[4], _fmt_money(line_total), bold=True, size=9, center=True)
+                _set_cell_text(row[3], str(days), bold=True, size=9, align="center")
+                _set_cell_text(row[4], _fmt_money(line_total), bold=True, size=9, align="right")
             else:
-                _set_cell_text(row[2], str(qty), bold=True, size=9, center=True)
+                _set_cell_text(row[2], str(qty), bold=True, size=9, align="center")
                 _shade_cell(row[2], COLOR_GRAY)
 
         # Section total (gray)
         if with_prices:
             tot = table.add_row().cells
             _set_cell_text(tot[0], "", size=9)
-            _set_cell_text(tot[1], "ИТОГО KZT", bold=True, size=10)
+            _set_cell_text(tot[1], "ИТОГО KZT", bold=True, size=10, align="left")
             if show_unit_price:
                 _set_cell_text(tot[2], "", size=9)
                 _set_cell_text(tot[3], "", size=9)
                 _set_cell_text(tot[4], "", size=9)
-                _set_cell_text(tot[5], _fmt_money(section_sum), bold=True, size=10, center=True)
+                _set_cell_text(tot[5], _fmt_money(section_sum), bold=True, size=10, align="right")
             else:
                 _set_cell_text(tot[2], "", size=9)
                 _set_cell_text(tot[3], "", size=9)
-                _set_cell_text(tot[4], _fmt_money(section_sum), bold=True, size=10, center=True)
+                _set_cell_text(tot[4], _fmt_money(section_sum), bold=True, size=10, align="right")
             for c in tot:
                 _shade_cell(c, COLOR_GRAY)
+
+    _set_table_col_widths(table, col_widths)
 
 
 def _add_subrental_table(doc: Document, sub_items: List[Dict[str, Any]]) -> None:
     table = doc.add_table(rows=1, cols=7)
     table.style = "Table Grid"
     headers = ["№", "Наименование", "Поставщик", "Цена клиенту", "Себест.", "Кол-во × смен", "Сумма"]
+    header_aligns = ["center", "center", "center", "right", "right", "center", "right"]
     for i, htxt in enumerate(headers):
-        _set_cell_text(table.rows[0].cells[i], htxt, bold=True, size=9, center=True)
+        _set_cell_text(table.rows[0].cells[i], htxt, bold=True, size=9, align=header_aligns[i])
         _shade_cell(table.rows[0].cells[i], COLOR_CORAL)
     for idx, item in enumerate(sub_items, 1):
         row = table.add_row().cells
         qty = item.get("quantity", 1)
         days = item.get("days", 1)
-        _set_cell_text(row[0], str(idx), size=9, center=True)
-        _set_cell_text(row[1], str(item.get("name", "")), size=9)
-        _set_cell_text(row[2], str(item.get("supplier") or "—"), size=9)
-        _set_cell_text(row[3], _fmt_money(item.get("price", 0)), size=9, center=True)
-        _set_cell_text(row[4], _fmt_money(item.get("cost_price", 0)), size=9, center=True)
-        _set_cell_text(row[5], f"{qty} × {days}", bold=True, size=9, center=True)
+        _set_cell_text(row[0], str(idx), size=9, align="center")
+        _set_cell_text(row[1], str(item.get("name", "")), size=9, align="left")
+        _set_cell_text(row[2], str(item.get("supplier") or "—"), size=9, align="left")
+        _set_cell_text(row[3], _fmt_money(item.get("price", 0)), size=9, align="right")
+        _set_cell_text(row[4], _fmt_money(item.get("cost_price", 0)), size=9, align="right")
+        _set_cell_text(row[5], f"{qty} × {days}", bold=True, size=9, align="center")
         _shade_cell(row[5], COLOR_GRAY)
         _set_cell_text(
             row[6],
             _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
             bold=True,
             size=9,
-            center=True,
+            align="right",
         )
+    _set_table_col_widths(table, _DOCX_W_SUB)
 
 
 def _add_totals_block(doc: Document, context: Dict[str, Any], mode: str) -> None:
@@ -346,10 +408,11 @@ def _add_totals_block(doc: Document, context: Dict[str, Any], mode: str) -> None
     table.style = "Table Grid"
     for label, value in rows:
         cells = table.add_row().cells
-        _set_cell_text(cells[0], label, bold=True, size=10)
-        _set_cell_text(cells[1], _fmt_money(value), bold=True, size=10, center=True)
+        _set_cell_text(cells[0], label, bold=True, size=10, align="left")
+        _set_cell_text(cells[1], _fmt_money(value), bold=True, size=10, align="right")
         _shade_cell(cells[0], COLOR_CORAL)
         _shade_cell(cells[1], COLOR_CORAL)
+    _set_table_col_widths(table, _DOCX_W_TOTALS)
 
     p = doc.add_paragraph(get_rubles_text(float(grand or 0)))
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -373,10 +436,11 @@ def _add_totals_block(doc: Document, context: Dict[str, Any], mode: str) -> None
                 ("Маржа", float(margin)),
             ):
                 cells = mt.add_row().cells
-                _set_cell_text(cells[0], label, bold=True, size=10)
-                _set_cell_text(cells[1], _fmt_money(value), bold=True, size=10, center=True)
+                _set_cell_text(cells[0], label, bold=True, size=10, align="left")
+                _set_cell_text(cells[1], _fmt_money(value), bold=True, size=10, align="right")
                 _shade_cell(cells[0], COLOR_GRAY)
                 _shade_cell(cells[1], COLOR_GRAY)
+            _set_table_col_widths(mt, _DOCX_W_TOTALS)
 
 
 def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
@@ -534,6 +598,7 @@ class _EstimatePDF:
         *,
         header_rgb: Tuple[int, int, int] = RGB_CORAL,
         fill_header: bool = True,
+        aligns: Optional[List[str]] = None,
     ):
         self._reset_x()
         usable = self.pdf.w - self.pdf.l_margin - self.pdf.r_margin
@@ -541,12 +606,16 @@ class _EstimatePDF:
         if total_w > usable and total_w > 0:
             scale = usable / total_w
             col_widths = [w * scale for w in col_widths]
+        n = len(col_widths)
+        aligns = list(aligns or ["L"] * n)
+        while len(aligns) < n:
+            aligns.append("L")
 
         if fill_header:
             self.pdf.set_fill_color(*header_rgb)
             self.pdf.set_font("DejaVu", "B", 8)
             for i, h in enumerate(headers):
-                self.pdf.cell(col_widths[i], 6, h[:40], border=1, fill=True)
+                self.pdf.cell(col_widths[i], 6, h[:40], border=1, fill=True, align=aligns[i])
             self.pdf.ln()
             self._reset_x()
 
@@ -567,18 +636,19 @@ class _EstimatePDF:
             for i, cell in enumerate(cells):
                 x = x0 + sum(col_widths[:i])
                 self.pdf.set_xy(x, y0)
-                self.pdf.cell(col_widths[i], row_h, cell, border=1, fill=is_total)
+                self.pdf.cell(col_widths[i], row_h, cell, border=1, fill=is_total, align=aligns[i])
             if is_total:
                 self.pdf.set_font("DejaVu", size=8)
             self.pdf.set_xy(x0, y0 + row_h)
         self._reset_x()
         self.pdf.set_font("DejaVu", size=10)
 
-    def totals_table(self, rows: List[Tuple[str, str]]):
-        """Coral totals block like Excel footer."""
+    def totals_table(self, rows: List[Tuple[str, str]], sum_col_w: Optional[float] = None):
+        """Coral totals: full page width, amounts right-aligned in Сумма-width column."""
         self._reset_x()
         usable = self.pdf.w - self.pdf.l_margin - self.pdf.r_margin
-        w_label, w_val = usable * 0.62, usable * 0.38
+        w_val = float(sum_col_w) if sum_col_w else min(38.0, usable * 0.22)
+        w_label = usable - w_val
         self.pdf.set_fill_color(*RGB_CORAL)
         self.pdf.set_font("DejaVu", "B", 9)
         for label, value in rows:
@@ -586,7 +656,7 @@ class _EstimatePDF:
             if y0 + 7 > self.pdf.h - 15:
                 self.pdf.add_page()
                 self._reset_x()
-            self.pdf.cell(w_label, 7, label[:70], border=1, fill=True)
+            self.pdf.cell(w_label, 7, label[:70], border=1, fill=True, align="L")
             self.pdf.cell(w_val, 7, value[:40], border=1, fill=True, align="R")
             self.pdf.ln()
             self._reset_x()
@@ -634,6 +704,19 @@ def _pdf_meta_lines(context: Dict[str, Any], with_assignee: bool = False) -> Lis
     return lines
 
 
+# PDF: единая ширина колонки «Сумма» (мм) — совпадает с правым краем блока итогов
+_PDF_SUM_W = 34.0
+
+
+def _pdf_col_aligns(*, with_prices: bool, show_unit_price: bool) -> List[str]:
+    """L/C/R для fpdf cell align."""
+    if not with_prices:
+        return ["C", "L", "C"]
+    if show_unit_price:
+        return ["C", "L", "C", "R", "C", "R"]
+    return ["C", "L", "C", "C", "R"]
+
+
 def _pdf_build_sectioned_rows(
     items: List[Dict[str, Any]],
     *,
@@ -642,13 +725,13 @@ def _pdf_build_sectioned_rows(
 ) -> Tuple[List[str], List[List[str]], List[float]]:
     if not with_prices:
         headers = ["№", "Наименование", "Кол-во"]
-        widths = [12, 140, 28]
+        widths = [12, 134, 28]
     elif show_unit_price:
         headers = ["№", "Наименование", "Кол-во", "Цена", "Смен", "Сумма"]
-        widths = [10, 70, 18, 28, 18, 34]
+        widths = [10, 68, 18, 28, 18, _PDF_SUM_W]
     else:
         headers = ["№", "Наименование", "Кол-во", "Смен", "Сумма"]
-        widths = [10, 90, 20, 20, 38]
+        widths = [10, 88, 20, 20, _PDF_SUM_W]
 
     rows: List[List[str]] = []
     idx = 0
@@ -700,10 +783,13 @@ def _pdf_draw_sectioned_table(
     *,
     with_prices: bool = True,
     show_unit_price: bool = True,
-):
-    """Draw grouped table with coral section headers and gray totals."""
+) -> float:
+    """Draw grouped table with coral section headers and gray totals.
+
+    Returns scaled width of the last column (Сумма / Кол-во) for totals alignment.
+    """
     if not items:
-        return
+        return _PDF_SUM_W
     headers, rows, col_widths = _pdf_build_sectioned_rows(
         items, with_prices=with_prices, show_unit_price=show_unit_price
     )
@@ -712,6 +798,7 @@ def _pdf_draw_sectioned_table(
     if total_w > usable and total_w > 0:
         scale = usable / total_w
         col_widths = [w * scale for w in col_widths]
+    aligns = _pdf_col_aligns(with_prices=with_prices, show_unit_price=show_unit_price)
 
     # Skip generic header — each section has its own coral header row
     pdf.pdf.set_font("DejaVu", size=8)
@@ -737,7 +824,8 @@ def _pdf_draw_sectioned_table(
             for i, cell in enumerate(display):
                 x = x0 + sum(col_widths[:i])
                 pdf.pdf.set_xy(x, y0)
-                pdf.pdf.cell(col_widths[i], row_h, cell[:40], border=1, fill=True)
+                a = aligns[i] if i < len(aligns) else "L"
+                pdf.pdf.cell(col_widths[i], row_h, cell[:40], border=1, fill=True, align=a)
             pdf.pdf.set_font("DejaVu", size=8)
         elif is_total:
             pdf.pdf.set_fill_color(*RGB_GRAY)
@@ -745,7 +833,8 @@ def _pdf_draw_sectioned_table(
             for i, cell in enumerate(cells):
                 x = x0 + sum(col_widths[:i])
                 pdf.pdf.set_xy(x, y0)
-                pdf.pdf.cell(col_widths[i], row_h, cell, border=1, fill=True)
+                a = aligns[i] if i < len(aligns) else "L"
+                pdf.pdf.cell(col_widths[i], row_h, cell, border=1, fill=True, align=a)
             pdf.pdf.set_font("DejaVu", size=8)
         else:
             for i, cell in enumerate(cells):
@@ -755,10 +844,12 @@ def _pdf_draw_sectioned_table(
                 fill_qty = with_prices and i == 2
                 if fill_qty:
                     pdf.pdf.set_fill_color(*RGB_GRAY)
-                pdf.pdf.cell(col_widths[i], row_h, cell, border=1, fill=fill_qty)
+                a = aligns[i] if i < len(aligns) else "L"
+                pdf.pdf.cell(col_widths[i], row_h, cell, border=1, fill=fill_qty, align=a)
         pdf.pdf.set_xy(x0, y0 + row_h)
     pdf._reset_x()
     pdf.pdf.set_font("DejaVu", size=10)
+    return col_widths[-1]
 
 
 def generate_estimate_pdf(
@@ -797,8 +888,9 @@ def generate_estimate_pdf(
         if not main_items and not sub_items and all_items:
             main_items = all_items
 
+    sum_col_w = _PDF_SUM_W
     if main_items:
-        _pdf_draw_sectioned_table(
+        sum_col_w = _pdf_draw_sectioned_table(
             pdf, main_items, with_prices=True, show_unit_price=show_unit_price
         )
     elif mode == "client":
@@ -821,10 +913,17 @@ def generate_estimate_pdf(
                 f"{qty}×{days}",
                 _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
             ])
+        sub_widths = [8, 46, 28, 24, 24, 16, _PDF_SUM_W]
+        usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
+        if sum(sub_widths) > usable:
+            scale = usable / sum(sub_widths)
+            sub_widths = [w * scale for w in sub_widths]
+            sum_col_w = sub_widths[-1]
         pdf.table(
             ["№", "Наименование", "Поставщик", "Цена", "Себест.", "К×С", "Сумма"],
             rows,
-            [8, 48, 28, 24, 24, 16, 32],
+            sub_widths,
+            aligns=["C", "L", "L", "R", "R", "C", "R"],
         )
 
     disc_pct = float(context.get("discount_percentage") or 0)
@@ -857,7 +956,7 @@ def generate_estimate_pdf(
         totals_rows.append(("ИТОГО", _fmt_money(float(grand))))
 
     pdf.pdf.ln(3)
-    pdf.totals_table(totals_rows)
+    pdf.totals_table(totals_rows, sum_col_w=sum_col_w)
     pdf.right(get_rubles_text(float(grand or 0)), bold=True)
 
     if mode == "internal":
@@ -870,13 +969,14 @@ def generate_estimate_pdf(
             pdf.line("Маржа (внутренний блок)", bold=True)
             pdf.pdf.set_fill_color(*RGB_GRAY)
             usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
-            w_label, w_val = usable * 0.62, usable * 0.38
+            w_val = float(sum_col_w)
+            w_label = usable - w_val
             pdf.pdf.set_font("DejaVu", "B", 9)
             for label, value in (
                 ("Себестоимость субаренды", _fmt_money(cost_total)),
                 ("Маржа", _fmt_money(float(margin))),
             ):
-                pdf.pdf.cell(w_label, 7, label, border=1, fill=True)
+                pdf.pdf.cell(w_label, 7, label, border=1, fill=True, align="L")
                 pdf.pdf.cell(w_val, 7, value, border=1, fill=True, align="R")
                 pdf.pdf.ln()
                 pdf._reset_x()
@@ -924,8 +1024,9 @@ def generate_contract_pdf(context: Dict[str, Any], output_path: str) -> str:
     pdf.line("Спецификация оборудования и услуг", bold=True)
 
     items = list(context.get("items", []) or [])
+    sum_col_w = _PDF_SUM_W
     if items:
-        _pdf_draw_sectioned_table(pdf, items, with_prices=True)
+        sum_col_w = _pdf_draw_sectioned_table(pdf, items, with_prices=True)
     else:
         pdf.line("Нет позиций.")
 
@@ -942,7 +1043,7 @@ def generate_contract_pdf(context: Dict[str, Any], output_path: str) -> str:
         totals.append((f"Налог {tax_pct:.0f}%", _fmt_money(float(context.get("tax_amount") or 0))))
     totals.append(("ИТОГО", _fmt_money(grand)))
     pdf.pdf.ln(3)
-    pdf.totals_table(totals)
+    pdf.totals_table(totals, sum_col_w=sum_col_w)
     pdf.right(get_rubles_text(grand), bold=True)
     pdf.pdf.ln(4)
     pdf.line(
