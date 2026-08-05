@@ -1,4 +1,5 @@
 import os
+import re
 from collections import OrderedDict
 from docxtpl import DocxTemplate
 from docx import Document
@@ -8,6 +9,18 @@ from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml, OxmlElement
 from num2words import num2words
 from typing import Dict, Any, List, Optional, Tuple
+
+# Метка склада в названии позиции — клиенту не показываем
+_SUBRENTAL_NAME_RE = re.compile(r"\s*\(\s*субаренда\s*\)\s*", re.IGNORECASE)
+
+
+def _client_display_name(name: Any) -> str:
+    """Убирает «(субаренда)» из названия для клиентского экспорта."""
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    cleaned = _SUBRENTAL_NAME_RE.sub(" ", text)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 # Палитра Excel-шаблона «Новый шаблон сметы.xlsx»
@@ -186,18 +199,26 @@ def _add_estimate_table(
     items: List[Dict[str, Any]],
     *,
     with_prices: bool = True,
+    show_unit_price: bool = True,
     name_suffix_fn=None,
 ) -> None:
-    """Таблица с coral-заголовками секций и серыми ИТОГО — как в Excel."""
+    """Таблица с coral-заголовками секций и серыми ИТОГО — как в Excel.
+
+    with_prices=False — техничка (только № / название / кол-во).
+    with_prices=True, show_unit_price=False — клиентская смета без колонки «Цена».
+    """
     if not items:
         return
 
-    cols = 6 if with_prices else 3
-    headers = (
-        ["№", "Наименование", "Кол-во", "Цена за ед.", "Кол-во смен", "Сумма"]
-        if with_prices
-        else ["№", "Наименование", "Кол-во"]
-    )
+    if not with_prices:
+        cols = 3
+        headers = ["№", "Наименование", "Кол-во"]
+    elif show_unit_price:
+        cols = 6
+        headers = ["№", "Наименование", "Кол-во", "Цена за ед.", "Кол-во смен", "Сумма"]
+    else:
+        cols = 5
+        headers = ["№", "Наименование", "Кол-во", "Смен", "Сумма"]
 
     table = doc.add_table(rows=0, cols=cols)
     table.style = "Table Grid"
@@ -231,12 +252,17 @@ def _add_estimate_table(
 
             _set_cell_text(row[0], str(global_idx), size=9, center=True)
             _set_cell_text(row[1], name, size=9)
-            if with_prices:
+            if with_prices and show_unit_price:
                 _set_cell_text(row[2], str(qty), bold=True, size=9, center=True)
                 _shade_cell(row[2], COLOR_GRAY)
                 _set_cell_text(row[3], _fmt_money(item.get("price", 0)), bold=True, size=9, center=True)
                 _set_cell_text(row[4], str(days), bold=True, size=9, center=True)
                 _set_cell_text(row[5], _fmt_money(line_total), bold=True, size=9, center=True)
+            elif with_prices:
+                _set_cell_text(row[2], str(qty), bold=True, size=9, center=True)
+                _shade_cell(row[2], COLOR_GRAY)
+                _set_cell_text(row[3], str(days), bold=True, size=9, center=True)
+                _set_cell_text(row[4], _fmt_money(line_total), bold=True, size=9, center=True)
             else:
                 _set_cell_text(row[2], str(qty), bold=True, size=9, center=True)
                 _shade_cell(row[2], COLOR_GRAY)
@@ -246,10 +272,15 @@ def _add_estimate_table(
             tot = table.add_row().cells
             _set_cell_text(tot[0], "", size=9)
             _set_cell_text(tot[1], "ИТОГО KZT", bold=True, size=10)
-            _set_cell_text(tot[2], "", size=9)
-            _set_cell_text(tot[3], "", size=9)
-            _set_cell_text(tot[4], "", size=9)
-            _set_cell_text(tot[5], _fmt_money(section_sum), bold=True, size=10, center=True)
+            if show_unit_price:
+                _set_cell_text(tot[2], "", size=9)
+                _set_cell_text(tot[3], "", size=9)
+                _set_cell_text(tot[4], "", size=9)
+                _set_cell_text(tot[5], _fmt_money(section_sum), bold=True, size=10, center=True)
+            else:
+                _set_cell_text(tot[2], "", size=9)
+                _set_cell_text(tot[3], "", size=9)
+                _set_cell_text(tot[4], _fmt_money(section_sum), bold=True, size=10, center=True)
             for c in tot:
                 _shade_cell(c, COLOR_GRAY)
 
@@ -380,12 +411,14 @@ def generate_estimate_docx(
 
     mode:
       - internal («Для нас»): свой склад в основной таблице, блок субаренды, себестоимость и маржа
-      - client («Клиентская»): все позиции (в т.ч. субаренда) как обычные строки; без блока субаренды / маржи
+      - client («Клиентская»): все позиции (в т.ч. субаренда) как обычные строки;
+        без колонки цены за ед., без блока субаренды / маржи, без метки «(субаренда)» в названиях
     """
     mode = (mode or "internal").strip().lower()
     if mode not in ("internal", "client"):
         mode = "internal"
     hide_sub = mode == "client" or bool(context.get("hide_subrental_section"))
+    show_unit_price = mode != "client"
 
     doc = Document()
 
@@ -403,8 +436,11 @@ def generate_estimate_docx(
 
     all_items = list(context.get("items", []) or [])
     if hide_sub:
-        # Клиенту: субаренда в основной таблице как обычные товары (без метки склада)
-        main_items = [{**i, "warehouse_type": "own"} for i in all_items]
+        # Клиенту: субаренда в основной таблице как обычные товары (без метки склада / «субаренда»)
+        main_items = [
+            {**i, "warehouse_type": "own", "name": _client_display_name(i.get("name", ""))}
+            for i in all_items
+        ]
         sub_items = []
     else:
         main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
@@ -413,7 +449,7 @@ def generate_estimate_docx(
             main_items = all_items
 
     if main_items:
-        _add_estimate_table(doc, main_items, with_prices=True)
+        _add_estimate_table(doc, main_items, with_prices=True, show_unit_price=show_unit_price)
     elif mode == "client":
         doc.add_paragraph("Нет позиций для клиентской сметы.")
 
@@ -602,21 +638,27 @@ def _pdf_build_sectioned_rows(
     items: List[Dict[str, Any]],
     *,
     with_prices: bool = True,
+    show_unit_price: bool = True,
 ) -> Tuple[List[str], List[List[str]], List[float]]:
-    if with_prices:
+    if not with_prices:
+        headers = ["№", "Наименование", "Кол-во"]
+        widths = [12, 140, 28]
+    elif show_unit_price:
         headers = ["№", "Наименование", "Кол-во", "Цена", "Смен", "Сумма"]
         widths = [10, 70, 18, 28, 18, 34]
     else:
-        headers = ["№", "Наименование", "Кол-во"]
-        widths = [12, 140, 28]
+        headers = ["№", "Наименование", "Кол-во", "Смен", "Сумма"]
+        widths = [10, 90, 20, 20, 38]
 
     rows: List[List[str]] = []
     idx = 0
     for section, section_items in _group_items(items).items():
-        if with_prices:
+        if not with_prices:
+            rows.append([section, "", "Кол-во"])
+        elif show_unit_price:
             rows.append([section, "", "Кол-во", "Цена", "Смен", "Сумма"])
         else:
-            rows.append([section, "", "Кол-во"])
+            rows.append([section, "", "Кол-во", "Смен", "Сумма"])
         # Mark section header by prefix for fill detection — use coral via special marker
         rows[-1][0] = f"§ {section}"
         section_sum = 0.0
@@ -626,7 +668,7 @@ def _pdf_build_sectioned_rows(
             days = item.get("days", 1)
             line_total = float(item.get("line_total_discounted", item.get("line_total_base", 0)) or 0)
             section_sum += line_total
-            if with_prices:
+            if with_prices and show_unit_price:
                 rows.append([
                     str(idx),
                     str(item.get("name", ""))[:60],
@@ -635,18 +677,36 @@ def _pdf_build_sectioned_rows(
                     str(days),
                     _fmt_money(line_total),
                 ])
+            elif with_prices:
+                rows.append([
+                    str(idx),
+                    str(item.get("name", ""))[:70],
+                    str(qty),
+                    str(days),
+                    _fmt_money(line_total),
+                ])
             else:
                 rows.append([str(idx), str(item.get("name", ""))[:70], str(qty)])
-        if with_prices:
+        if with_prices and show_unit_price:
             rows.append(["", "ИТОГО KZT", "", "", "", _fmt_money(section_sum)])
+        elif with_prices:
+            rows.append(["", "ИТОГО KZT", "", "", _fmt_money(section_sum)])
     return headers, rows, widths
 
 
-def _pdf_draw_sectioned_table(pdf: _EstimatePDF, items: List[Dict[str, Any]], *, with_prices: bool = True):
+def _pdf_draw_sectioned_table(
+    pdf: _EstimatePDF,
+    items: List[Dict[str, Any]],
+    *,
+    with_prices: bool = True,
+    show_unit_price: bool = True,
+):
     """Draw grouped table with coral section headers and gray totals."""
     if not items:
         return
-    headers, rows, col_widths = _pdf_build_sectioned_rows(items, with_prices=with_prices)
+    headers, rows, col_widths = _pdf_build_sectioned_rows(
+        items, with_prices=with_prices, show_unit_price=show_unit_price
+    )
     usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
     total_w = sum(col_widths)
     if total_w > usable and total_w > 0:
@@ -710,6 +770,7 @@ def generate_estimate_pdf(
     mode = (mode or "internal").strip().lower()
     if mode not in ("internal", "client"):
         mode = "internal"
+    show_unit_price = mode != "client"
 
     pdf = _EstimatePDF()
     if mode == "client":
@@ -725,7 +786,10 @@ def generate_estimate_pdf(
     all_items = list(context.get("items", []) or [])
     hide_sub = mode == "client" or bool(context.get("hide_subrental_section"))
     if hide_sub:
-        main_items = [{**i, "warehouse_type": "own"} for i in all_items]
+        main_items = [
+            {**i, "warehouse_type": "own", "name": _client_display_name(i.get("name", ""))}
+            for i in all_items
+        ]
         sub_items = []
     else:
         main_items = [i for i in all_items if (i.get("warehouse_type") or "own") != "subrental"]
@@ -734,7 +798,9 @@ def generate_estimate_pdf(
             main_items = all_items
 
     if main_items:
-        _pdf_draw_sectioned_table(pdf, main_items, with_prices=True)
+        _pdf_draw_sectioned_table(
+            pdf, main_items, with_prices=True, show_unit_price=show_unit_price
+        )
     elif mode == "client":
         pdf.line("Нет позиций для клиентской сметы.")
 
