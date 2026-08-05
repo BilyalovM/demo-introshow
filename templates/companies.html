@@ -643,7 +643,12 @@ async function saveCompanyEdit() {
     const id = current.id;
     const payload = collectCompanyPayload();
     if (!payload.name) { alert('Укажите название компании'); return; }
-    await fetch('/api/companies/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const res = await fetch('/api/companies/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || err.detail || 'Не удалось сохранить компанию');
+        return;
+    }
     await loadAll();
     await openCompany(id);
 }
@@ -652,7 +657,12 @@ async function saveContactEdit() {
     const id = current.id;
     const payload = collectContactPayload();
     if (!payload.name) { alert('Укажите ФИО'); return; }
-    await fetch('/api/contacts/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const res = await fetch('/api/contacts/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || err.detail || 'Не удалось сохранить контакт');
+        return;
+    }
     await loadAll();
     await openContact(id);
 }

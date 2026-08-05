@@ -968,7 +968,7 @@
 </div>
 
 <!-- Quick Deal Modal -->
-<div id="quick-deal-modal" class="slider-overlay" style="display: flex; align-items: center; justify-content: center;">
+<div id="quick-deal-modal" class="slider-overlay" style="align-items: center; justify-content: center;">
     <div class="card" style="width: 500px; max-width: 90%; background: var(--surface); padding: 24px; position: relative; border-radius: var(--r-md); box-shadow: var(--shadow-lg);">
         <button onclick="closeCreateDealModal()" style="position: absolute; top: 12px; right: 16px; background: transparent; border: none; font-size: 24px; cursor: pointer; color: var(--muted);">&times;</button>
         <h3 style="margin-top: 0; margin-bottom: 16px;">Создание быстрой сделки</h3>
@@ -1120,8 +1120,10 @@
             crmCustomFields = await cfRes.json();
             crmUsers = await usersRes.json();
 
-            const savedPipe = currentPipelineId;
+            const storedPipe = parseInt(localStorage.getItem('crmPipelineId') || '', 10) || 0;
+            const savedPipe = storedPipe || currentPipelineId;
             const preferred = crmPipelines.find(p => p.id === savedPipe)
+                || crmPipelines.find(p => p.kind === 'deal')
                 || crmPipelines.find(p => p.kind === 'lead')
                 || crmPipelines[0];
             currentPipelineId = (preferred && preferred.id) || 1;
@@ -1133,12 +1135,15 @@
             pipeSel.value = currentPipelineId;
 
             const filterAssignee = document.getElementById('crm-filter-assignee');
+            const assigneeKeep = filterAssignee.value;
+            filterAssignee.innerHTML = '<option value="">Все</option><option value="me">Мои</option>';
             crmUsers.forEach(u => {
                 const opt = document.createElement('option');
                 opt.value = u.id;
                 opt.textContent = u.full_name || u.username;
                 filterAssignee.appendChild(opt);
             });
+            if (assigneeKeep) filterAssignee.value = assigneeKeep;
 
             await loadStagesForPipeline(currentPipelineId);
             fillSelectors();
@@ -1158,6 +1163,7 @@
 
     async function onPipelineChange() {
         currentPipelineId = parseInt(document.getElementById('crm-pipeline-select').value) || 1;
+        try { localStorage.setItem('crmPipelineId', String(currentPipelineId)); } catch (e) {}
         await loadStagesForPipeline(currentPipelineId);
         fillSelectors();
         await loadDeals();
@@ -1488,7 +1494,8 @@
         e.preventDefault();
         const title = document.getElementById('new-deal-title').value;
         const company_id = parseInt(document.getElementById('new-deal-company').value) || null;
-        const event_date = document.getElementById('new-deal-event-date').value;
+        const event_date = document.getElementById('new-deal-event-date').value
+            || new Date().toISOString().slice(0, 10);
         const address = document.getElementById('new-deal-address').value;
         const assignee_id = parseInt(document.getElementById('new-deal-assignee').value) || null;
         const source = document.getElementById('new-deal-source').value || 'manual';
@@ -1514,10 +1521,12 @@
                 await loadDeals();
                 renderCrm();
             } else {
-                alert('Не удалось создать сделку');
+                const err = await res.json().catch(() => ({}));
+                alert(err.error || err.detail || 'Не удалось создать сделку');
             }
         } catch (err) {
             console.error('Error creating deal:', err);
+            alert('Не удалось создать сделку');
         }
     }
 
@@ -2077,9 +2086,11 @@
         if (!newTitle) return;
 
         try {
+            const eventDate = document.getElementById('edit-deal-event-date').value
+                || new Date().toISOString().slice(0, 10);
             const payload = {
                 title: newTitle,
-                event_date: document.getElementById('edit-deal-event-date').value,
+                event_date: eventDate,
                 setup_date: document.getElementById('edit-deal-setup-date').value || null,
                 event_address: document.getElementById('edit-deal-address').value || null,
                 comment: document.getElementById('edit-deal-comment').value || null
@@ -2091,12 +2102,17 @@
                 body: JSON.stringify(payload)
             });
 
-            if (res.ok) {
-                await loadDeals();
-                renderCrm();
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                console.error('Title save failed', err);
+                alert(err.error || 'Не удалось сохранить название сделки');
+                return;
             }
+            await loadDeals();
+            renderCrm();
         } catch (e) {
             console.error(e);
+            alert('Не удалось сохранить название сделки');
         }
     }
 
@@ -2105,9 +2121,14 @@
         e.preventDefault();
         if(!activeDealId) return;
 
+        const eventDateEl = document.getElementById('edit-deal-event-date');
+        if (eventDateEl && !eventDateEl.value) {
+            eventDateEl.value = new Date().toISOString().slice(0, 10);
+        }
+
         const payload = {
             title: document.getElementById('edit-deal-title').value,
-            event_date: document.getElementById('edit-deal-event-date').value,
+            event_date: eventDateEl ? eventDateEl.value : '',
             setup_date: document.getElementById('edit-deal-setup-date').value || null,
             event_address: document.getElementById('edit-deal-address').value || null,
             comment: document.getElementById('edit-deal-comment').value || null,
@@ -2120,24 +2141,38 @@
         };
 
         try {
-            await fetch(`/api/deals/${activeDealId}`, {
+            const res = await fetch(`/api/deals/${activeDealId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(err.error || 'Не удалось сохранить сделку');
+                return;
+            }
 
             const fieldValues = [];
             document.querySelectorAll('.cf-input').forEach(input => {
-                const fieldId = parseInt(input.getAttribute('data-field-id'));
+                const fieldId = parseInt(input.getAttribute('data-field-id'), 10);
+                if (!fieldId) return;
                 let value = input.type === 'checkbox' ? (input.checked ? 'Да' : 'Нет') : input.value;
                 fieldValues.push({ field_id: fieldId, value: value });
             });
             if (fieldValues.length > 0) {
-                await fetch(`/api/deals/${activeDealId}/fields`, {
+                const fieldsRes = await fetch(`/api/deals/${activeDealId}/fields`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ fields: fieldValues })
                 });
+                if (!fieldsRes.ok) {
+                    const err = await fieldsRes.json().catch(() => ({}));
+                    alert(err.error || err.detail || 'Сделка сохранена, но доп. поля не записались');
+                    await loadDeals();
+                    renderCrm();
+                    openDealSlider(activeDealId);
+                    return;
+                }
             }
 
             await loadDeals();

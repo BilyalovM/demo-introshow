@@ -1067,7 +1067,7 @@ async function saveQuote(silent) {
 
     try {
         if (savedDealId) {
-            await fetch(`/api/deals/${savedDealId}`, {
+            const dealRes = await fetch(`/api/deals/${savedDealId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1082,7 +1082,11 @@ async function saveQuote(silent) {
                     assignee_id: h.assigneeId,
                 })
             });
-            await fetch(`/api/deals/${savedDealId}/items`, {
+            if (!dealRes.ok) {
+                const err = await dealRes.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось сохранить карточку сделки');
+            }
+            const itemsRes = await fetch(`/api/deals/${savedDealId}/items`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1091,6 +1095,10 @@ async function saveQuote(silent) {
                     items: cart.map(c => ({ equipment_id: c.id, quantity: c.qty, days: c.days, price: c.price }))
                 })
             });
+            if (!itemsRes.ok) {
+                const err = await itemsRes.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось сохранить позиции сметы');
+            }
         } else {
             const response = await fetch('/api/deals', {
                 method: 'POST',
@@ -1111,7 +1119,10 @@ async function saveQuote(silent) {
                     items_json: JSON.stringify(cart.map(c => ({ id: c.id, qty: c.qty, days: c.days, price: c.price })))
                 })
             });
-            if (!response.ok) throw new Error('save failed');
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось создать сделку');
+            }
             const data = await response.json();
             savedDealId = data.id;
             history.replaceState(null, '', '/quotes/' + savedDealId);
@@ -1121,7 +1132,7 @@ async function saveQuote(silent) {
         return savedDealId;
     } catch (e) {
         console.error(e);
-        alert('Ошибка при сохранении сметы');
+        alert(e.message || 'Ошибка при сохранении сметы');
         return null;
     }
 }

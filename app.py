@@ -3811,8 +3811,12 @@ def update_deal(deal_id: int, update: DealUpdate, db: Session = Depends(get_db),
         return JSONResponse(status_code=403, content={"error": "Нет доступа"})
 
     data = update.dict(exclude_unset=True)
+    # Фронт всегда шлёт assignee_id в форме сделки — блокируем только реальную смену
     if "assignee_id" in data and user.role not in ("admin", "manager"):
-        return JSONResponse(status_code=403, content={"error": "Нет права менять ответственного"})
+        new_assignee = data.get("assignee_id")
+        if new_assignee != d.assignee_id:
+            return JSONResponse(status_code=403, content={"error": "Нет права менять ответственного"})
+        data.pop("assignee_id", None)
 
     # Автоподстановка основного контакта при смене компании
     if "company_id" in data and data["company_id"] and "contact_id" not in data:
