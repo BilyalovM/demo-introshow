@@ -1,8 +1,18 @@
 # Версии Intro Show CRM
 
+## Production (после cutover)
+
+| | |
+|---|---|
+| **Production** | **v2** (`main`) |
+| Production URL | https://demo-introshow.vercel.app |
+| Rollback | redeploy / promote ветку `v1-stable` или tag `v1.0.0` |
+
+---
+
 ## v1.0.0 / ветка `v1-stable`
 
-**Снимок рабочей системы до UX-оверхола v2.**
+**Снимок рабочей системы до UX-оверхола v2.** Сохранён для отката.
 
 Включено: сметы (внутренняя / клиентская / техничка), CRM-канбан, внутренние чаты, задачи (Битрикс UX), авансы/расходы, зарплатная ведомость, команда→техничка, Inbox, склад/бронь, PWA-демо на Vercel (SQLite).
 
@@ -23,36 +33,31 @@ git checkout v1.0.0
 git checkout v1-stable
 ```
 
-Vercel: в проекте → Deployments → найти деплой с ветки `main` / `v1-stable` на момент тега → **Promote to Production**.  
-Либо переключить Production Branch на `v1-stable` и Redeploy.
+Vercel (production rollback):
+
+1. Deployments → найти последний успешный деплой с `v1-stable` / commit `5b07a96` → **Promote to Production**, **или**
+2. Project Settings → Git → Production Branch = `v1-stable` → Redeploy, **или**
+3. `git checkout main && git reset --hard v1.0.0 && git push origin main` (только если осознанно откатываете main; предпочтительнее Promote без rewrite).
+
+Ветку `v1-stable` и tag `v1.0.0` **не удалять**.
 
 ---
 
-## v2 — ветка `v2`
+## v2 — ветка `v2` → production `main`
 
-Новая версия с UX-оверхолом: хаб сделки, единая смета, экран «Сегодня», денежная картина, пайплайн отгрузки, in-app уведомления, шаблоны, клиентский пакет, готовность к Postgres.
+UX-оверхол: хаб сделки, единая смета, экран «Сегодня», денежная картина, пайплайн отгрузки, in-app уведомления, шаблоны, клиентский пакет, готовность к Postgres.
 
-Разработка только на `v2`. Пока v2 не принят в прод — **Production остаётся на v1** (`main` = freeze / `v1-stable`). Preview — из ветки `v2`.
+**Cutover выполнен:** `v2` смержен в `main`; production = v2.
+
+Дальнейшая разработка: ветка `v2` (или feature-ветки → `v2` → `main`).
 
 ### URL-стратегия
 
 | Окружение | Ветка | Назначение |
 |---|---|---|
-| Production | `main` / `v1-stable` | Стабильный v1.0.0 |
-| Preview | `v2` | Тест UX-оверхола |
-
-Vercel CLI в среде агента недоступен — деплой preview: GitHub → Vercel (авто для `v2`) или `vercel` локально с этой ветки. **Не** делайте `vercel --prod` для v2, пока не решите cutover.
-
-### Cutover на v2 (когда готовы)
-
-```bash
-git checkout main
-git merge v2   # или PR v2 → main
-git push origin main
-# затем Promote preview → Production в Vercel
-```
-
-Откат после cutover: снова `git checkout v1.0.0` / деплой `v1-stable`.
+| Production | `main` (= v2) | Боевой демо https://demo-introshow.vercel.app |
+| Rollback snapshot | `v1-stable` / `v1.0.0` | Стабильный v1 |
+| Preview | feature / `v2` | Тест до merge в main |
 
 ---
 
