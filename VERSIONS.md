@@ -1,12 +1,13 @@
 # Версии Intro Show CRM
 
-## Production (после cutover)
+## Production (cutover)
 
 | | |
 |---|---|
-| **Production** | **v2** (`main`) |
+| Git `main` / `v2` | **v2** @ `50a6fb1` (A4 estimate fix + UX overhaul) |
 | Production URL | https://demo-introshow.vercel.app |
-| Rollback | redeploy / promote ветку `v1-stable` или tag `v1.0.0` |
+| Vercel live | Redeploy `main` after `vercel login` if site still serves v1 roadmap (`updated_at` 2026-07-29) |
+| Rollback | Promote / redeploy `v1-stable` или tag `v1.0.0` (не удалять) |
 
 ---
 
