@@ -8,6 +8,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml, OxmlElement
+from docx.text.paragraph import Paragraph
 from num2words import num2words
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -175,17 +176,22 @@ def _set_cell_text(
     align: Optional[str] = None,
 ) -> None:
     """align: 'left' | 'center' | 'right'. center=True — сокращение для align='center'."""
-    cell.text = ""
-    p = cell.paragraphs[0]
+    # Полная очистка <w:p> (после merge иначе остаётся пустой абзац → лишний \\n)
+    tc = cell._tc
+    for el in tc.findall(qn("w:p")):
+        tc.remove(el)
+    p = OxmlElement("w:p")
+    tc.append(p)
+    para = Paragraph(p, cell)
     if align is None and center:
         align = "center"
     if align == "center":
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     elif align == "right":
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     elif align == "left":
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run = p.add_run(str(text))
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = para.add_run(str(text))
     _set_run_font(run, bold=bold, size=size)
     _vcenter_cell(cell)
 
@@ -241,18 +247,32 @@ def _set_table_col_widths(table, widths_cm: List[float]) -> None:
         tblGrid.append(gridCol)
 
     for row in table.rows:
-        for idx, tw in enumerate(width_twips):
-            if idx >= len(row.cells):
-                continue
+        seen_tc = set()
+        idx = 0
+        while idx < len(width_twips) and idx < len(row.cells):
             cell = row.cells[idx]
-            cell.width = Cm(widths_cm[idx])
-            tcPr = cell._tc.get_or_add_tcPr()
+            tc = cell._tc
+            if id(tc) in seen_tc:
+                idx += 1
+                continue
+            seen_tc.add(id(tc))
+            span = 1
+            tcPr = tc.get_or_add_tcPr()
+            gridSpan = tcPr.find(qn("w:gridSpan"))
+            if gridSpan is not None:
+                try:
+                    span = max(1, int(gridSpan.get(qn("w:val"))))
+                except (TypeError, ValueError):
+                    span = 1
+            tw = sum(width_twips[idx : idx + span])
+            cell.width = Cm(tw / 567.0)
             for old in tcPr.findall(qn("w:tcW")):
                 tcPr.remove(old)
             tcW = OxmlElement("w:tcW")
             tcW.set(qn("w:w"), str(tw))
             tcW.set(qn("w:type"), "dxa")
             tcPr.append(tcW)
+            idx += span
 
 
 def _item_section_name(item: Dict[str, Any]) -> str:
@@ -356,16 +376,16 @@ def _add_estimate_table(
     for section, section_items in _group_items(items).items():
         # Section / column header (coral): категория в №+Наименование (merge),
         # справа — Кол-во / Смен / Сумма (полное имя не обрезается).
-        hdr = table.add_row().cells
-        _set_cell_text(hdr[0], section, bold=True, size=10, align="left")
+        hdr_row = table.add_row()
         if cols >= 2:
-            _set_cell_text(hdr[1], "", size=9)
+            hdr_row.cells[0].merge(hdr_row.cells[1])
+        # Важно: брать cells ПОСЛЕ merge (иначе устаревшая ссылка на удалённый tc)
+        hdr = hdr_row.cells
+        _set_cell_text(hdr[0], section, bold=True, size=10, align="left")
         for i in range(2, cols):
             _set_cell_text(hdr[i], headers[i], bold=True, size=9, align=header_aligns[i])
         for c in hdr:
             _shade_cell(c, COLOR_CORAL)
-        if cols >= 2:
-            hdr[0].merge(hdr[1])
 
         section_sum = 0.0
         for item in section_items:
@@ -893,14 +913,17 @@ def _pdf_draw_sectioned_table(
         if is_section:
             pdf.pdf.set_fill_color(*RGB_CORAL)
             pdf.pdf.set_font("DejaVu", "B", 8)
-            # Section title in col0, column labels in rest
+            # Категория на ширине №+Наименование; справа — заголовки колонок
             label = cells[0][2:]  # strip §
-            display = [label] + cells[1:]
-            for i, cell in enumerate(display):
-                x = x0 + sum(col_widths[:i])
+            span_w = col_widths[0] + (col_widths[1] if len(col_widths) > 1 else 0)
+            pdf.pdf.set_xy(x0, y0)
+            pdf.pdf.cell(span_w, row_h, label[:70], border=1, fill=True, align="L")
+            x = x0 + span_w
+            for i in range(2, len(cells)):
                 pdf.pdf.set_xy(x, y0)
                 a = aligns[i] if i < len(aligns) else "L"
-                pdf.pdf.cell(col_widths[i], row_h, cell[:40], border=1, fill=True, align=a)
+                pdf.pdf.cell(col_widths[i], row_h, cells[i][:40], border=1, fill=True, align=a)
+                x += col_widths[i]
             pdf.pdf.set_font("DejaVu", size=8)
         elif is_total:
             pdf.pdf.set_fill_color(*RGB_GRAY)
