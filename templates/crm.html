@@ -1028,14 +1028,37 @@
 </div>
 
 <!-- Pipeline admin modal -->
-<div id="pipeline-admin-modal" class="slider-overlay" style="display:none; align-items:center; justify-content:center;">
-    <div class="card" style="width:520px; max-width:94%; padding:22px; position:relative; max-height:85vh; overflow:auto;">
-        <button onclick="closePipelineAdmin()" style="position:absolute; top:10px; right:14px; border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--muted);">&times;</button>
-        <h3 style="margin-top:0;">Воронки продаж</h3>
-        <div id="pipeline-admin-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;"></div>
-        <div style="display:flex; gap:8px;">
-            <input type="text" id="new-pipeline-name" placeholder="Название новой воронки" style="flex:1;">
-            <button class="btn btn-green" onclick="createPipeline()">Создать</button>
+<div id="pipeline-admin-modal" class="slider-overlay" style="align-items:center; justify-content:center; z-index:1200;" onclick="if(event.target===this) closePipelineAdmin()">
+    <div class="card" style="width:760px; max-width:96%; padding:22px; position:relative; max-height:90vh; overflow:auto;" onclick="event.stopPropagation()">
+        <button type="button" onclick="closePipelineAdmin()" style="position:absolute; top:10px; right:14px; border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--muted);">&times;</button>
+        <h3 style="margin-top:0; margin-bottom:6px;">Воронки CRM</h3>
+        <p class="muted" style="font-size:13px; margin:0 0 14px;">Лиды → успешная стадия создаёт сделку в воронке продаж. Маршрутизация источников настраивается ниже.</p>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:10px;">
+            <button type="button" class="btn btn-sm pipe-admin-tab active" id="pipe-tab-list" onclick="switchPipeAdminTab('list')">Воронки и стадии</button>
+            <button type="button" class="btn btn-sm pipe-admin-tab" id="pipe-tab-routing" onclick="switchPipeAdminTab('routing')">Маршрутизация источников</button>
+        </div>
+
+        <div id="pipe-admin-pane-list">
+            <div id="pipeline-admin-list" style="display:flex; flex-direction:column; gap:12px; margin-bottom:16px;"></div>
+            <div style="border:1px dashed var(--border); border-radius:10px; padding:12px;">
+                <div style="font-weight:700; margin-bottom:8px; font-size:13px;">Новая воронка</div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <input type="text" id="new-pipeline-name" placeholder="Название" style="flex:1; min-width:160px;">
+                    <select id="new-pipeline-kind" style="padding:8px 10px;">
+                        <option value="lead">Лиды</option>
+                        <option value="deal" selected>Продажи</option>
+                    </select>
+                    <select id="new-pipeline-target" title="Целевая воронка для лидов" style="padding:8px 10px; display:none;"></select>
+                    <button type="button" class="btn btn-green" onclick="createPipeline()">Создать</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="pipe-admin-pane-routing" style="display:none;">
+            <p class="muted" style="font-size:13px; margin:0 0 12px;">Куда попадают новые обращения с сайта, мессенджеров, 1С и ручного создания (если не выбрана воронка вручную).</p>
+            <div id="pipeline-routing-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
+            <button type="button" class="btn btn-primary" onclick="savePipelineRouting()">Сохранить правила</button>
         </div>
     </div>
 </div>
@@ -1097,9 +1120,16 @@
             crmCustomFields = await cfRes.json();
             crmUsers = await usersRes.json();
 
-            currentPipelineId = (crmPipelines[0] && crmPipelines[0].id) || 1;
+            const savedPipe = currentPipelineId;
+            const preferred = crmPipelines.find(p => p.id === savedPipe)
+                || crmPipelines.find(p => p.kind === 'lead')
+                || crmPipelines[0];
+            currentPipelineId = (preferred && preferred.id) || 1;
             const pipeSel = document.getElementById('crm-pipeline-select');
-            pipeSel.innerHTML = crmPipelines.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+            pipeSel.innerHTML = crmPipelines.map(p => {
+                const kindLabel = p.kind === 'lead' ? 'Лиды' : 'Продажи';
+                return `<option value="${p.id}">${escapeHtml(p.name)} (${kindLabel})</option>`;
+            }).join('');
             pipeSel.value = currentPipelineId;
 
             const filterAssignee = document.getElementById('crm-filter-assignee');
@@ -1364,7 +1394,15 @@
     }
 
     function isLostStage(stageObj) {
-        return stageObj && /проигра/i.test(stageObj.name || '');
+        if (!stageObj) return false;
+        if (stageObj.is_lost) return true;
+        return /проигра|отказ/i.test(stageObj.name || '');
+    }
+
+    function isWonStage(stageObj) {
+        if (!stageObj) return false;
+        if (stageObj.is_won || stageObj.creates_deal) return true;
+        return /успешн/i.test(stageObj.name || '');
     }
 
     function openLossReasonModal(dealId, stageId) {
@@ -1397,6 +1435,10 @@
             if (!response.ok) {
                 const err = await response.json().catch(() => ({}));
                 throw new Error(err.error || 'API failure');
+            }
+            const result = await response.json().catch(() => ({}));
+            if (result.converted_deal_id) {
+                alert(`Лид конвертирован в сделку №${result.converted_deal_id}. Откройте воронку «Продажи», чтобы продолжить работу.`);
             }
             await loadDeals();
             renderCrm();
@@ -1555,8 +1597,8 @@
             document.getElementById('edit-deal-qualified').checked = !!data.is_qualified;
             document.getElementById('edit-deal-loss-reason').value = data.loss_reason || '';
             const lossWrap = document.getElementById('edit-deal-loss-wrap');
-            const stageName = (crmStages.find(s => s.id === data.stage) || {}).name || '';
-            lossWrap.style.display = /проигра/i.test(stageName) ? 'block' : 'none';
+            const stageObj = crmStages.find(s => s.id === data.stage) || {};
+            lossWrap.style.display = isLostStage(stageObj) ? 'block' : 'none';
             await loadContactsForCompany(data.company_id, data.contact_id);
             activeDealActivities = data.activities || [];
             activeDealInvoices = data.invoices || [];
@@ -2247,54 +2289,310 @@
         openDealSlider(activeDealId);
     }
 
+    let pipeAdminPipes = [];
+    let pipeAdminRouting = [];
+    let pipeAdminExpanded = null;
+
+    function switchPipeAdminTab(tab) {
+        document.getElementById('pipe-admin-pane-list').style.display = tab === 'list' ? 'block' : 'none';
+        document.getElementById('pipe-admin-pane-routing').style.display = tab === 'routing' ? 'block' : 'none';
+        document.getElementById('pipe-tab-list').classList.toggle('active', tab === 'list');
+        document.getElementById('pipe-tab-routing').classList.toggle('active', tab === 'routing');
+        if (tab === 'routing') renderPipelineRouting();
+    }
+
+    function onNewPipelineKindChange() {
+        const kind = document.getElementById('new-pipeline-kind').value;
+        const target = document.getElementById('new-pipeline-target');
+        target.style.display = kind === 'lead' ? '' : 'none';
+        const deals = pipeAdminPipes.filter(p => p.kind === 'deal');
+        target.innerHTML = deals.map(p => `<option value="${p.id}">→ ${escapeHtml(p.name)}</option>`).join('')
+            || '<option value="">Нет воронки продаж</option>';
+    }
+
     async function openPipelineAdmin() {
         const modal = document.getElementById('pipeline-admin-modal');
-        modal.style.display = 'flex';
-        const list = document.getElementById('pipeline-admin-list');
-        const pipes = await (await fetch('/api/pipelines')).json();
-        list.innerHTML = pipes.map(p => `
-            <div style="display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
-                <input type="text" value="${escapeHtml(p.name)}" id="pipe-name-${p.id}" style="flex:1;">
-                <button class="btn btn-sm" onclick="renamePipeline(${p.id})">Сохранить</button>
-                <button class="btn btn-sm" style="color:var(--danger);" onclick="deletePipeline(${p.id})">Удалить</button>
-            </div>
-        `).join('') || '<div class="muted">Воронок пока нет</div>';
+        modal.classList.add('active');
+        switchPipeAdminTab('list');
+        await refreshPipelineAdmin();
+        const kindSel = document.getElementById('new-pipeline-kind');
+        kindSel.onchange = onNewPipelineKindChange;
+        onNewPipelineKindChange();
     }
 
     function closePipelineAdmin() {
-        document.getElementById('pipeline-admin-modal').style.display = 'none';
+        document.getElementById('pipeline-admin-modal').classList.remove('active');
+    }
+
+    async function refreshPipelineAdmin() {
+        const [pipesRes, routingRes] = await Promise.all([
+            fetch('/api/pipelines'),
+            fetch('/api/pipeline-routing'),
+        ]);
+        pipeAdminPipes = await pipesRes.json();
+        pipeAdminRouting = routingRes.ok ? await routingRes.json() : [];
+        crmPipelines = pipeAdminPipes;
+        renderPipelineAdminList();
+        onNewPipelineKindChange();
+    }
+
+    function renderPipelineAdminList() {
+        const list = document.getElementById('pipeline-admin-list');
+        if (!pipeAdminPipes.length) {
+            list.innerHTML = '<div class="muted">Воронок пока нет</div>';
+            return;
+        }
+        const dealOptions = pipeAdminPipes.filter(p => p.kind === 'deal')
+            .map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+
+        list.innerHTML = pipeAdminPipes.map(p => {
+            const expanded = pipeAdminExpanded === p.id;
+            const kindLabel = p.kind === 'lead' ? 'Лиды' : 'Продажи';
+            const stages = (p.stages || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+            const stagesHtml = stages.map((s, idx) => `
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border);">
+                    <span class="muted" style="width:22px;text-align:center;font-size:12px;">${idx + 1}</span>
+                    <input type="text" id="stage-name-${s.id}" value="${escapeHtml(s.name)}" style="flex:1;min-width:120px;">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Успех">
+                        <input type="checkbox" id="stage-won-${s.id}" ${s.is_won ? 'checked' : ''}> Успех
+                    </label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Отказ">
+                        <input type="checkbox" id="stage-lost-${s.id}" ${s.is_lost ? 'checked' : ''}> Отказ
+                    </label>
+                    ${p.kind === 'lead' ? `<label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Создать сделку">
+                        <input type="checkbox" id="stage-creates-${s.id}" ${s.creates_deal ? 'checked' : ''}> → Сделка
+                    </label>` : `<label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Бронь оборудования">
+                        <input type="checkbox" id="stage-rent-${s.id}" ${s.is_active_rent ? 'checked' : ''}> Бронь
+                    </label>`}
+                    <button type="button" class="btn btn-sm" onclick="moveStage(${p.id},${s.id},-1)" title="Выше">↑</button>
+                    <button type="button" class="btn btn-sm" onclick="moveStage(${p.id},${s.id},1)" title="Ниже">↓</button>
+                    <button type="button" class="btn btn-sm" onclick="saveStage(${s.id}, '${p.kind}')">OK</button>
+                    <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deleteStage(${s.id})">✕</button>
+                </div>
+            `).join('') || '<div class="muted" style="font-size:12px;">Стадий нет</div>';
+
+            return `
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary);">${kindLabel}</span>
+                    <input type="text" value="${escapeHtml(p.name)}" id="pipe-name-${p.id}" style="flex:1;min-width:140px;">
+                    <select id="pipe-kind-${p.id}" style="padding:6px 8px;">
+                        <option value="lead" ${p.kind === 'lead' ? 'selected' : ''}>Лиды</option>
+                        <option value="deal" ${p.kind !== 'lead' ? 'selected' : ''}>Продажи</option>
+                    </select>
+                    ${p.kind === 'lead' || true ? `
+                    <select id="pipe-target-${p.id}" style="padding:6px 8px; ${p.kind === 'lead' ? '' : 'display:none;'}" title="Целевая воронка продаж">
+                        <option value="0">— целевая воронка —</option>
+                        ${dealOptions.replace(`value="${p.target_pipeline_id}"`, `value="${p.target_pipeline_id}" selected`)}
+                    </select>` : ''}
+                    <button type="button" class="btn btn-sm" onclick="savePipeline(${p.id})">Сохранить</button>
+                    <button type="button" class="btn btn-sm" onclick="togglePipelineStages(${p.id})">${expanded ? 'Скрыть стадии' : 'Стадии (' + stages.length + ')'}</button>
+                    <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deletePipeline(${p.id})">Удалить</button>
+                </div>
+                <div id="pipe-stages-${p.id}" style="display:${expanded ? 'block' : 'none'}; margin-top:10px;">
+                    ${stagesHtml}
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                        <input type="text" id="new-stage-name-${p.id}" placeholder="Новая стадия" style="flex:1;">
+                        <button type="button" class="btn btn-sm btn-green" onclick="addStage(${p.id})">+ Стадия</button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        // Fix selected target options (replace above is fragile)
+        pipeAdminPipes.forEach(p => {
+            const sel = document.getElementById('pipe-target-' + p.id);
+            if (sel && p.target_pipeline_id) sel.value = String(p.target_pipeline_id);
+            const kindSel = document.getElementById('pipe-kind-' + p.id);
+            if (kindSel) {
+                kindSel.onchange = () => {
+                    const t = document.getElementById('pipe-target-' + p.id);
+                    if (t) t.style.display = kindSel.value === 'lead' ? '' : 'none';
+                };
+            }
+        });
+    }
+
+    function togglePipelineStages(id) {
+        pipeAdminExpanded = pipeAdminExpanded === id ? null : id;
+        renderPipelineAdminList();
+    }
+
+    function renderPipelineRouting() {
+        const box = document.getElementById('pipeline-routing-list');
+        const pipeOpts = pipeAdminPipes.map(p =>
+            `<option value="${p.id}">${escapeHtml(p.name)} (${p.kind === 'lead' ? 'Лиды' : 'Продажи'})</option>`
+        ).join('');
+        const userOpts = '<option value="">— без ответственного —</option>' +
+            (crmUsers || []).map(u => `<option value="${u.id}">${escapeHtml(u.full_name || u.username)}</option>`).join('');
+
+        box.innerHTML = (pipeAdminRouting || []).map(r => `
+            <div style="display:grid;grid-template-columns:140px 1fr 1fr auto;gap:8px;align-items:center;" data-routing-source="${escapeHtml(r.source)}">
+                <div style="font-weight:600;font-size:13px;">${escapeHtml(r.label || r.source)}</div>
+                <select class="routing-pipeline" style="padding:7px 8px;">${pipeOpts}</select>
+                <select class="routing-assignee" style="padding:7px 8px;">${userOpts}</select>
+                <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap;">
+                    <input type="checkbox" class="routing-active" ${r.is_active !== false ? 'checked' : ''}> вкл
+                </label>
+            </div>
+        `).join('') || '<div class="muted">Нет источников</div>';
+
+        (pipeAdminRouting || []).forEach(r => {
+            const row = box.querySelector(`[data-routing-source="${r.source}"]`);
+            if (!row) return;
+            if (r.pipeline_id) row.querySelector('.routing-pipeline').value = String(r.pipeline_id);
+            if (r.assignee_id) row.querySelector('.routing-assignee').value = String(r.assignee_id);
+        });
+    }
+
+    async function savePipelineRouting() {
+        const box = document.getElementById('pipeline-routing-list');
+        const rows = [...box.querySelectorAll('[data-routing-source]')];
+        const rules = rows.map(row => ({
+            source: row.getAttribute('data-routing-source'),
+            pipeline_id: parseInt(row.querySelector('.routing-pipeline').value) || null,
+            assignee_id: row.querySelector('.routing-assignee').value
+                ? parseInt(row.querySelector('.routing-assignee').value) : null,
+            is_active: row.querySelector('.routing-active').checked,
+        })).filter(r => r.pipeline_id);
+        const res = await fetch('/api/pipeline-routing', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rules }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Не удалось сохранить правила');
+            return;
+        }
+        pipeAdminRouting = await res.json();
+        alert('Правила маршрутизации сохранены');
     }
 
     async function createPipeline() {
         const name = document.getElementById('new-pipeline-name').value.trim();
-        if (!name) return;
+        if (!name) { alert('Укажите название воронки'); return; }
+        const kind = document.getElementById('new-pipeline-kind').value || 'deal';
+        const targetEl = document.getElementById('new-pipeline-target');
+        const target_pipeline_id = kind === 'lead' && targetEl.value ? parseInt(targetEl.value) : null;
         const res = await fetch('/api/pipelines', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
+            body: JSON.stringify({ name, kind, target_pipeline_id })
         });
-        if (!res.ok) { alert('Не удалось создать воронку (нужны права админа)'); return; }
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Не удалось создать воронку (нужны права админа/менеджера)');
+            return;
+        }
         document.getElementById('new-pipeline-name').value = '';
         await initCrm();
-        openPipelineAdmin();
+        await refreshPipelineAdmin();
     }
 
-    async function renamePipeline(id) {
+    async function savePipeline(id) {
         const name = document.getElementById('pipe-name-' + id).value.trim();
-        await fetch('/api/pipelines/' + id, {
+        const kind = document.getElementById('pipe-kind-' + id).value;
+        const targetEl = document.getElementById('pipe-target-' + id);
+        const target_pipeline_id = kind === 'lead' && targetEl
+            ? (parseInt(targetEl.value) || 0) : 0;
+        const res = await fetch('/api/pipelines/' + id, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
+            body: JSON.stringify({ name, kind, target_pipeline_id })
         });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Не удалось сохранить');
+            return;
+        }
         await initCrm();
-        openPipelineAdmin();
+        await refreshPipelineAdmin();
     }
 
     async function deletePipeline(id) {
         if (!confirm('Удалить воронку? Можно только если в ней нет сделок.')) return;
         const res = await fetch('/api/pipelines/' + id, { method: 'DELETE' });
-        const data = await res.json();
-        if (data.error) alert(data.error);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) { alert(data.error || 'Ошибка удаления'); return; }
+        pipeAdminExpanded = null;
         await initCrm();
-        openPipelineAdmin();
+        await refreshPipelineAdmin();
+    }
+
+    async function addStage(pipelineId) {
+        const input = document.getElementById('new-stage-name-' + pipelineId);
+        const name = (input && input.value || '').trim();
+        if (!name) { alert('Укажите название стадии'); return; }
+        const res = await fetch(`/api/pipelines/${pipelineId}/stages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Не удалось добавить стадию');
+            return;
+        }
+        pipeAdminExpanded = pipelineId;
+        await initCrm();
+        await refreshPipelineAdmin();
+    }
+
+    async function saveStage(stageId, pipeKind) {
+        const name = document.getElementById('stage-name-' + stageId).value.trim();
+        const body = {
+            name,
+            is_won: !!document.getElementById('stage-won-' + stageId)?.checked,
+            is_lost: !!document.getElementById('stage-lost-' + stageId)?.checked,
+        };
+        if (pipeKind === 'lead') {
+            body.creates_deal = !!document.getElementById('stage-creates-' + stageId)?.checked;
+        } else {
+            body.is_active_rent = !!document.getElementById('stage-rent-' + stageId)?.checked;
+        }
+        const res = await fetch('/api/stages/' + stageId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Не удалось сохранить стадию');
+            return;
+        }
+        await initCrm();
+        await refreshPipelineAdmin();
+    }
+
+    async function deleteStage(stageId) {
+        if (!confirm('Удалить стадию?')) return;
+        const res = await fetch('/api/stages/' + stageId, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) { alert(data.error || 'Ошибка удаления'); return; }
+        await initCrm();
+        await refreshPipelineAdmin();
+    }
+
+    async function moveStage(pipelineId, stageId, dir) {
+        const pipe = pipeAdminPipes.find(p => p.id === pipelineId);
+        if (!pipe) return;
+        const stages = (pipe.stages || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+        const idx = stages.findIndex(s => s.id === stageId);
+        const swap = idx + dir;
+        if (idx < 0 || swap < 0 || swap >= stages.length) return;
+        const ids = stages.map(s => s.id);
+        [ids[idx], ids[swap]] = [ids[swap], ids[idx]];
+        const res = await fetch(`/api/pipelines/${pipelineId}/stages/reorder`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage_ids: ids }),
+        });
+        if (!res.ok) {
+            alert('Не удалось изменить порядок');
+            return;
+        }
+        pipeAdminExpanded = pipelineId;
+        await initCrm();
+        await refreshPipelineAdmin();
     }
 
     // ---- Дополнительные поля (Bitrix24-style custom fields) ----

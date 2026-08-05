@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, engine
 from sqlalchemy import text, func
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -55,11 +55,25 @@ with Session(engine) as session:
         session.commit()
     except Exception:
         session.rollback() # column already exists
+
+    # 1b. Pipeline kinds / stage flags — ДО любых ORM-запросов к Pipeline/Stage
+    for ddl in [
+        "ALTER TABLE pipelines ADD COLUMN kind VARCHAR DEFAULT 'deal'",
+        "ALTER TABLE pipelines ADD COLUMN target_pipeline_id INTEGER",
+        "ALTER TABLE stages ADD COLUMN is_won BOOLEAN DEFAULT 0",
+        "ALTER TABLE stages ADD COLUMN is_lost BOOLEAN DEFAULT 0",
+        "ALTER TABLE stages ADD COLUMN creates_deal BOOLEAN DEFAULT 0",
+    ]:
+        try:
+            session.execute(text(ddl))
+            session.commit()
+        except Exception:
+            session.rollback()
         
     # 2. Seed main pipeline if empty
     default_pipeline = session.query(Pipeline).first()
     if not default_pipeline:
-        default_pipeline = Pipeline(name="Основная воронка")
+        default_pipeline = Pipeline(name="Основная воронка", kind="deal")
         session.add(default_pipeline)
         session.commit()
         session.refresh(default_pipeline)
@@ -71,13 +85,103 @@ with Session(engine) as session:
             "Сделка проиграна"
         ]
         for i, stage_name in enumerate(default_stages):
-            st = Stage(pipeline_id=default_pipeline.id, name=stage_name, order_index=i+1)
+            st = Stage(
+                pipeline_id=default_pipeline.id,
+                name=stage_name,
+                order_index=i+1,
+                is_won="успешн" in stage_name.lower(),
+                is_lost="проигра" in stage_name.lower(),
+                is_active_rent=any(k in stage_name for k in ("Предоплата", "Монтаж", "Мероприятие")),
+            )
             session.add(st)
         session.commit()
         
     # 3. Update existing deals to the default pipeline if they are null
     session.execute(text(f"UPDATE deals SET pipeline_id = {default_pipeline.id} WHERE pipeline_id IS NULL"))
     session.commit()
+
+    try:
+        for p in session.query(Pipeline).all():
+            if not getattr(p, "kind", None):
+                p.kind = "deal"
+        # Пометить существующие стадии успех/проигрыш
+        for st in session.query(Stage).all():
+            name_l = (st.name or "").lower()
+            if "успешн" in name_l and not st.is_won:
+                st.is_won = True
+            if "проигра" in name_l and not st.is_lost:
+                st.is_lost = True
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    # Seed воронки «Лиды» + привязка к продажам
+    try:
+        deal_pipeline = (
+            session.query(Pipeline)
+            .filter(Pipeline.kind == "deal")
+            .order_by(Pipeline.id)
+            .first()
+        ) or session.query(Pipeline).order_by(Pipeline.id).first()
+        if deal_pipeline and not getattr(deal_pipeline, "kind", None):
+            deal_pipeline.kind = "deal"
+            session.commit()
+
+        leads_pipeline = (
+            session.query(Pipeline)
+            .filter(Pipeline.kind == "lead")
+            .order_by(Pipeline.id)
+            .first()
+        )
+        if not leads_pipeline:
+            by_name = session.query(Pipeline).filter(Pipeline.name == "Лиды").first()
+            if by_name:
+                leads_pipeline = by_name
+                leads_pipeline.kind = "lead"
+            else:
+                leads_pipeline = Pipeline(
+                    name="Лиды",
+                    kind="lead",
+                    target_pipeline_id=deal_pipeline.id if deal_pipeline else None,
+                )
+                session.add(leads_pipeline)
+                session.commit()
+                session.refresh(leads_pipeline)
+                lead_stages = [
+                    ("Новый лид", False, False, False),
+                    ("В работе", False, False, False),
+                    ("Квалифицирован", False, False, False),
+                    ("Успешно", True, False, True),
+                    ("Отказ", False, True, False),
+                ]
+                for i, (nm, won, lost, creates) in enumerate(lead_stages):
+                    session.add(Stage(
+                        pipeline_id=leads_pipeline.id,
+                        name=nm,
+                        order_index=i + 1,
+                        is_won=won,
+                        is_lost=lost,
+                        creates_deal=creates,
+                    ))
+                session.commit()
+        if leads_pipeline and deal_pipeline and not leads_pipeline.target_pipeline_id:
+            leads_pipeline.target_pipeline_id = deal_pipeline.id
+            session.commit()
+
+        # Дефолтные правила маршрутизации источников → Лиды
+        if leads_pipeline:
+            for src in ("whatsapp", "telegram", "instagram", "site", "maps", "onec", "manual", "referral", "other"):
+                exists = session.query(PipelineRoutingRule).filter(PipelineRoutingRule.source == src).first()
+                if not exists:
+                    session.add(PipelineRoutingRule(
+                        source=src,
+                        pipeline_id=leads_pipeline.id,
+                        assignee_id=None,
+                        is_active=True,
+                    ))
+            session.commit()
+    except Exception:
+        session.rollback()
 
     # 4. Add AI & 3D properties and custom fields to equipment
     try:
@@ -338,11 +442,16 @@ class Project2DSave(BaseModel):
 
 class PipelineCreate(BaseModel):
     name: str
+    kind: Optional[str] = "deal"  # lead | deal
+    target_pipeline_id: Optional[int] = None
 
 class StageCreate(BaseModel):
     name: str
-    order_index: int
+    order_index: Optional[int] = None
     is_active_rent: Optional[bool] = False
+    is_won: Optional[bool] = False
+    is_lost: Optional[bool] = False
+    creates_deal: Optional[bool] = False
 
 verify_password = auth.verify_password
 get_password_hash = auth.get_password_hash
@@ -441,7 +550,7 @@ class PublicLeadIn(BaseModel):
 
 
 def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str] = None) -> dict:
-    """Создаёт компанию/контакт + сделку на первой стадии воронки."""
+    """Создаёт компанию/контакт + сделку на первой стадии воронки (по правилам маршрутизации)."""
     source = (force_source or payload.source or "site").strip().lower()
     if source not in LEAD_SOURCES:
         source = "other"
@@ -489,7 +598,7 @@ def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str]
         db.commit()
         db.refresh(contact)
 
-    pipeline = db.query(Pipeline).order_by(Pipeline.id).first()
+    pipeline, route_assignee = _resolve_pipeline_for_source(db, source)
     stage = None
     if pipeline:
         stage = db.query(Stage).filter(Stage.pipeline_id == pipeline.id).order_by(Stage.order_index, Stage.id).first()
@@ -510,7 +619,7 @@ def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str]
         event_address=event_address,
         comment=message or None,
         source=source,
-        assignee_id=_default_assignee_id(db),
+        assignee_id=route_assignee or _default_assignee_id(db),
         is_qualified=False,
     )
     db.add(deal)
@@ -2285,103 +2394,277 @@ def delete_custom_field(field_id: int, db: Session = Depends(get_db), user: User
     return {"status": "success"}
 
 class PipelineRename(BaseModel):
-    name: str
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    target_pipeline_id: Optional[int] = None
 
-
-@app.get("/api/pipelines")
-def get_pipelines(db: Session = Depends(get_db)):
-    pipelines = db.query(Pipeline).all()
-    return [{"id": p.id, "name": p.name, "stages_count": len(p.stages)} for p in pipelines]
-
-@app.post("/api/pipelines")
-def create_pipeline(pl: PipelineCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    if user.role != "admin":
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-    db_pl = Pipeline(name=pl.name)
-    db.add(db_pl)
-    db.commit()
-    db.refresh(db_pl)
-    # Базовые стадии как у основной воронки
-    defaults = [
-        "Первичный контакт", "Согласование сметы", "Договор и счет",
-        "Предоплата внесена", "Монтаж / Мероприятие", "Успешно реализовано",
-        "Сделка проиграна",
-    ]
-    for i, name in enumerate(defaults):
-        db.add(Stage(
-            pipeline_id=db_pl.id, name=name, order_index=i + 1,
-            is_active_rent=any(k in name for k in ("Предоплата", "Монтаж", "Мероприятие")),
-        ))
-    db.commit()
-    return {"id": db_pl.id, "name": db_pl.name}
-
-
-@app.put("/api/pipelines/{pipeline_id}")
-def rename_pipeline(pipeline_id: int, pl: PipelineRename, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    if user.role != "admin":
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-    pipe = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
-    if not pipe:
-        return JSONResponse(status_code=404, content={"error": "Not found"})
-    pipe.name = pl.name
-    db.commit()
-    return {"id": pipe.id, "name": pipe.name}
-
-@app.delete("/api/pipelines/{pipeline_id}")
-def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    if user.role != "admin":
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
-    pl = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
-    if not pl:
-        return {"error": "Pipeline not found"}
-    if db.query(Deal).filter(Deal.pipeline_id == pipeline_id).first():
-        return {"error": "Cannot delete pipeline with active deals"}
-    db.delete(pl)
-    db.commit()
-    return {"status": "ok"}
-
-@app.get("/api/pipelines/{pipeline_id}/stages")
-def get_stages(pipeline_id: int, db: Session = Depends(get_db)):
-    stages = db.query(Stage).filter(Stage.pipeline_id == pipeline_id).order_by(Stage.order_index).all()
-    return [{"id": s.id, "name": s.name, "order_index": s.order_index, "is_active_rent": s.is_active_rent} for s in stages]
-
-@app.post("/api/pipelines/{pipeline_id}/stages")
-def create_stage(pipeline_id: int, stage: StageCreate, db: Session = Depends(get_db)):
-    st = Stage(pipeline_id=pipeline_id, name=stage.name, order_index=stage.order_index, is_active_rent=stage.is_active_rent)
-    db.add(st)
-    db.commit()
-    db.refresh(st)
-    return {"id": st.id, "name": st.name, "order_index": st.order_index, "is_active_rent": st.is_active_rent}
 
 class StageUpdate(BaseModel):
     name: Optional[str] = None
     order_index: Optional[int] = None
     is_active_rent: Optional[bool] = None
+    is_won: Optional[bool] = None
+    is_lost: Optional[bool] = None
+    creates_deal: Optional[bool] = None
+
+
+class StagesReorder(BaseModel):
+    stage_ids: List[int]
+
+
+class RoutingRuleIn(BaseModel):
+    source: str
+    pipeline_id: int
+    assignee_id: Optional[int] = None
+    is_active: Optional[bool] = True
+
+
+class RoutingRulesBulk(BaseModel):
+    rules: List[RoutingRuleIn]
+
+
+@app.get("/api/pipelines")
+def get_pipelines(db: Session = Depends(get_db)):
+    pipelines = db.query(Pipeline).order_by(Pipeline.id).all()
+    return [_serialize_pipeline(p, include_stages=True) for p in pipelines]
+
+
+@app.post("/api/pipelines")
+def create_pipeline(pl: PipelineCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
+    kind = (pl.kind or "deal").strip().lower()
+    if kind not in ("lead", "deal"):
+        kind = "deal"
+    name = (pl.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Укажите название воронки"})
+
+    target_id = pl.target_pipeline_id
+    if kind == "lead" and not target_id:
+        deal_pipe = db.query(Pipeline).filter(Pipeline.kind == "deal").order_by(Pipeline.id).first()
+        target_id = deal_pipe.id if deal_pipe else None
+
+    db_pl = Pipeline(name=name, kind=kind, target_pipeline_id=target_id if kind == "lead" else None)
+    db.add(db_pl)
+    db.commit()
+    db.refresh(db_pl)
+
+    if kind == "lead":
+        defaults = [
+            ("Новый лид", False, False, False, False),
+            ("В работе", False, False, False, False),
+            ("Квалифицирован", False, False, False, False),
+            ("Успешно", True, False, True, False),
+            ("Отказ", False, True, False, False),
+        ]
+    else:
+        defaults = [
+            ("Первичный контакт", False, False, False, False),
+            ("Согласование сметы", False, False, False, False),
+            ("Договор и счет", False, False, False, False),
+            ("Предоплата внесена", False, False, False, True),
+            ("Монтаж / Мероприятие", False, False, False, True),
+            ("Успешно реализовано", True, False, False, False),
+            ("Сделка проиграна", False, True, False, False),
+        ]
+    for i, (nm, won, lost, creates, rent) in enumerate(defaults):
+        db.add(Stage(
+            pipeline_id=db_pl.id,
+            name=nm,
+            order_index=i + 1,
+            is_won=won,
+            is_lost=lost,
+            creates_deal=creates,
+            is_active_rent=rent,
+        ))
+    db.commit()
+    db.refresh(db_pl)
+    return _serialize_pipeline(db_pl, include_stages=True)
+
+
+@app.put("/api/pipelines/{pipeline_id}")
+def rename_pipeline(pipeline_id: int, pl: PipelineRename, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
+    pipe = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipe:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    if pl.name is not None:
+        name = pl.name.strip()
+        if not name:
+            return JSONResponse(status_code=400, content={"error": "Пустое название"})
+        pipe.name = name
+    if pl.kind is not None:
+        kind = pl.kind.strip().lower()
+        if kind in ("lead", "deal"):
+            pipe.kind = kind
+            if kind != "lead":
+                pipe.target_pipeline_id = None
+    if pl.target_pipeline_id is not None:
+        if pl.target_pipeline_id == 0:
+            pipe.target_pipeline_id = None
+        elif pl.target_pipeline_id != pipe.id:
+            pipe.target_pipeline_id = pl.target_pipeline_id
+    db.commit()
+    return _serialize_pipeline(pipe, include_stages=True)
+
+
+@app.delete("/api/pipelines/{pipeline_id}")
+def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
+    pl = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pl:
+        return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
+    if db.query(Deal).filter(Deal.pipeline_id == pipeline_id).first():
+        return JSONResponse(status_code=400, content={"error": "Нельзя удалить воронку с активными сделками"})
+    if db.query(Pipeline).count() <= 1:
+        return JSONResponse(status_code=400, content={"error": "Нельзя удалить единственную воронку"})
+    # Снять ссылки маршрутизации / target
+    db.query(PipelineRoutingRule).filter(PipelineRoutingRule.pipeline_id == pipeline_id).delete()
+    for other in db.query(Pipeline).filter(Pipeline.target_pipeline_id == pipeline_id).all():
+        other.target_pipeline_id = None
+    db.delete(pl)
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/api/pipelines/{pipeline_id}/stages")
+def get_stages(pipeline_id: int, db: Session = Depends(get_db)):
+    stages = db.query(Stage).filter(Stage.pipeline_id == pipeline_id).order_by(Stage.order_index, Stage.id).all()
+    return [_serialize_stage(s) for s in stages]
+
+
+@app.post("/api/pipelines/{pipeline_id}/stages")
+def create_stage(pipeline_id: int, stage: StageCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
+    pipe = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipe:
+        return JSONResponse(status_code=404, content={"error": "Воронка не найдена"})
+    name = (stage.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Укажите название стадии"})
+    max_order = db.query(Stage).filter(Stage.pipeline_id == pipeline_id).count()
+    order_index = stage.order_index if stage.order_index is not None else (max_order + 1)
+    st = Stage(
+        pipeline_id=pipeline_id,
+        name=name,
+        order_index=order_index,
+        is_active_rent=bool(stage.is_active_rent),
+        is_won=bool(stage.is_won),
+        is_lost=bool(stage.is_lost),
+        creates_deal=bool(stage.creates_deal),
+    )
+    db.add(st)
+    db.commit()
+    db.refresh(st)
+    return _serialize_stage(st)
+
+
+@app.put("/api/pipelines/{pipeline_id}/stages/reorder")
+def reorder_stages(pipeline_id: int, body: StagesReorder, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
+    stages = {s.id: s for s in db.query(Stage).filter(Stage.pipeline_id == pipeline_id).all()}
+    for i, sid in enumerate(body.stage_ids):
+        st = stages.get(sid)
+        if st:
+            st.order_index = i + 1
+    db.commit()
+    return get_stages(pipeline_id, db)
+
 
 @app.put("/api/stages/{stage_id}")
-def update_stage(stage_id: int, stage_update: StageUpdate, db: Session = Depends(get_db)):
+def update_stage(stage_id: int, stage_update: StageUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
     st = db.query(Stage).filter(Stage.id == stage_id).first()
     if not st:
-        return {"error": "Stage not found"}
+        return JSONResponse(status_code=404, content={"error": "Stage not found"})
     if stage_update.name is not None:
-        st.name = stage_update.name
+        name = stage_update.name.strip()
+        if not name:
+            return JSONResponse(status_code=400, content={"error": "Пустое название"})
+        st.name = name
     if stage_update.order_index is not None:
         st.order_index = stage_update.order_index
     if stage_update.is_active_rent is not None:
         st.is_active_rent = stage_update.is_active_rent
+    if stage_update.is_won is not None:
+        st.is_won = stage_update.is_won
+    if stage_update.is_lost is not None:
+        st.is_lost = stage_update.is_lost
+    if stage_update.creates_deal is not None:
+        st.creates_deal = stage_update.creates_deal
     db.commit()
-    return {"status": "ok"}
+    return _serialize_stage(st)
+
 
 @app.delete("/api/stages/{stage_id}")
-def delete_stage(stage_id: int, db: Session = Depends(get_db)):
+def delete_stage(stage_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
     st = db.query(Stage).filter(Stage.id == stage_id).first()
     if not st:
-        return {"error": "Stage not found"}
+        return JSONResponse(status_code=404, content={"error": "Stage not found"})
     if db.query(Deal).filter(Deal.stage == stage_id).first():
-        return {"error": "Cannot delete stage with active deals"}
+        return JSONResponse(status_code=400, content={"error": "Нельзя удалить стадию с активными сделками"})
+    pipe_id = st.pipeline_id
+    if db.query(Stage).filter(Stage.pipeline_id == pipe_id).count() <= 1:
+        return JSONResponse(status_code=400, content={"error": "Нельзя удалить единственную стадию"})
     db.delete(st)
     db.commit()
     return {"status": "ok"}
+
+
+@app.get("/api/pipeline-routing")
+def get_pipeline_routing(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rules = db.query(PipelineRoutingRule).order_by(PipelineRoutingRule.source).all()
+    by_source = {r.source: r for r in rules}
+    result = []
+    for src, label in LEAD_SOURCES.items():
+        r = by_source.get(src)
+        result.append({
+            "source": src,
+            "label": label,
+            "pipeline_id": r.pipeline_id if r else None,
+            "assignee_id": r.assignee_id if r else None,
+            "is_active": bool(r.is_active) if r else False,
+            "id": r.id if r else None,
+        })
+    return result
+
+
+@app.put("/api/pipeline-routing")
+def save_pipeline_routing(body: RoutingRulesBulk, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_pipeline_admin(user)
+    if denied:
+        return denied
+    for item in body.rules:
+        src = (item.source or "").strip().lower()
+        if src not in LEAD_SOURCES:
+            continue
+        pipe = db.query(Pipeline).filter(Pipeline.id == item.pipeline_id).first()
+        if not pipe:
+            continue
+        rule = db.query(PipelineRoutingRule).filter(PipelineRoutingRule.source == src).first()
+        if not rule:
+            rule = PipelineRoutingRule(source=src)
+            db.add(rule)
+        rule.pipeline_id = item.pipeline_id
+        rule.assignee_id = item.assignee_id
+        rule.is_active = True if item.is_active is None else bool(item.is_active)
+    db.commit()
+    return get_pipeline_routing(db, user)
 
 # -- CRM Deals --
 
@@ -2728,6 +3011,177 @@ def _notify_user(
 def _default_assignee_id(db: Session) -> Optional[int]:
     u = db.query(User).filter(User.role.in_(["admin", "manager"])).order_by(User.id).first()
     return u.id if u else None
+
+
+def _pipeline_kind(pipe: Optional[Pipeline]) -> str:
+    if not pipe:
+        return "deal"
+    kind = (getattr(pipe, "kind", None) or "deal").strip().lower()
+    return kind if kind in ("lead", "deal") else "deal"
+
+
+def _stage_is_won(st: Optional[Stage]) -> bool:
+    if not st:
+        return False
+    if getattr(st, "is_won", False) or getattr(st, "creates_deal", False):
+        return True
+    return "успешн" in (st.name or "").lower()
+
+
+def _stage_is_lost(st: Optional[Stage]) -> bool:
+    if not st:
+        return False
+    if getattr(st, "is_lost", False):
+        return True
+    return "проигра" in (st.name or "").lower() or (st.name or "").strip().lower() == "отказ"
+
+
+def _stage_creates_deal(st: Optional[Stage], pipe: Optional[Pipeline] = None) -> bool:
+    if not st:
+        return False
+    if getattr(st, "creates_deal", False):
+        return True
+    pipe = pipe or getattr(st, "pipeline", None)
+    return _pipeline_kind(pipe) == "lead" and _stage_is_won(st)
+
+
+def _serialize_stage(s: Stage) -> dict:
+    return {
+        "id": s.id,
+        "name": s.name,
+        "order_index": s.order_index,
+        "is_active_rent": bool(s.is_active_rent),
+        "is_won": bool(getattr(s, "is_won", False)),
+        "is_lost": bool(getattr(s, "is_lost", False)),
+        "creates_deal": bool(getattr(s, "creates_deal", False)),
+        "pipeline_id": s.pipeline_id,
+    }
+
+
+def _serialize_pipeline(p: Pipeline, include_stages: bool = False) -> dict:
+    data = {
+        "id": p.id,
+        "name": p.name,
+        "kind": _pipeline_kind(p),
+        "target_pipeline_id": getattr(p, "target_pipeline_id", None),
+        "stages_count": len(p.stages or []),
+    }
+    if include_stages:
+        stages = sorted(p.stages or [], key=lambda s: (s.order_index or 0, s.id))
+        data["stages"] = [_serialize_stage(s) for s in stages]
+    return data
+
+
+def _resolve_pipeline_for_source(db: Session, source: Optional[str]) -> tuple:
+    """Возвращает (pipeline, assignee_id) по правилам маршрутизации."""
+    src = (source or "manual").strip().lower()
+    rule = (
+        db.query(PipelineRoutingRule)
+        .filter(PipelineRoutingRule.source == src, PipelineRoutingRule.is_active == True)  # noqa: E712
+        .first()
+    )
+    if rule:
+        pipe = db.query(Pipeline).filter(Pipeline.id == rule.pipeline_id).first()
+        if pipe:
+            return pipe, rule.assignee_id
+
+    lead_pipe = (
+        db.query(Pipeline)
+        .filter(Pipeline.kind == "lead")
+        .order_by(Pipeline.id)
+        .first()
+    )
+    if lead_pipe:
+        return lead_pipe, None
+    return db.query(Pipeline).order_by(Pipeline.id).first(), None
+
+
+def _first_stage(db: Session, pipeline_id: Optional[int]) -> Optional[Stage]:
+    if not pipeline_id:
+        return None
+    return (
+        db.query(Stage)
+        .filter(Stage.pipeline_id == pipeline_id)
+        .order_by(Stage.order_index, Stage.id)
+        .first()
+    )
+
+
+def _convert_lead_to_deal(db: Session, lead: Deal, lead_pipeline: Pipeline) -> Optional[Deal]:
+    """Создаёт сделку в целевой deal-воронке из успешного лида. Идемпотентно."""
+    existing = db.query(Deal).filter(Deal.prev_deal_id == lead.id).first()
+    if existing:
+        return existing
+
+    target_id = getattr(lead_pipeline, "target_pipeline_id", None)
+    target = db.query(Pipeline).filter(Pipeline.id == target_id).first() if target_id else None
+    if not target:
+        target = (
+            db.query(Pipeline)
+            .filter(Pipeline.kind == "deal")
+            .order_by(Pipeline.id)
+            .first()
+        )
+    if not target or target.id == lead.pipeline_id:
+        return None
+
+    first = _first_stage(db, target.id)
+    title = lead.title or f"Сделка из лида №{lead.id}"
+    if title.lower().startswith("заявка"):
+        title = title.replace("Заявка:", "Сделка:", 1).replace("заявка:", "Сделка:", 1)
+
+    new_deal = Deal(
+        title=title[:200],
+        company_id=lead.company_id,
+        contact_id=lead.contact_id,
+        assignee_id=lead.assignee_id or _default_assignee_id(db),
+        pipeline_id=target.id,
+        stage=first.id if first else 1,
+        setup_date=lead.setup_date,
+        event_date=lead.event_date or "",
+        event_address=lead.event_address,
+        city=lead.city,
+        shifts=lead.shifts or 1.0,
+        discount_percentage=lead.discount_percentage or 0.0,
+        tax_percentage=FIXED_TAX_PERCENTAGE,
+        final_sum=lead.final_sum or 0.0,
+        comment=lead.comment,
+        chat_channel=lead.chat_channel,
+        chat_id=lead.chat_id,
+        prev_deal_id=lead.id,
+        source=lead.source or lead.chat_channel or "manual",
+        is_qualified=True,
+        is_archived=False,
+    )
+    db.add(new_deal)
+    db.flush()
+
+    # Копируем позиции сметы, если были на лиде
+    for it in list(lead.items or []):
+        db.add(DealItem(
+            deal_id=new_deal.id,
+            equipment_id=it.equipment_id,
+            quantity=it.quantity,
+            days=it.days,
+            price=it.price,
+        ))
+
+    lead.is_qualified = True
+    db.add(DealHistory(
+        deal_id=lead.id,
+        action_text=f"Лид конвертирован в сделку №{new_deal.id} («{target.name}»)",
+    ))
+    db.add(DealHistory(
+        deal_id=new_deal.id,
+        action_text=f"Сделка создана из лида №{lead.id}",
+    ))
+    return new_deal
+
+
+def _require_pipeline_admin(user: User):
+    if not user or user.role not in ("admin", "manager"):
+        return JSONResponse(status_code=403, content={"error": "Нужны права администратора или менеджера"})
+    return None
 
 
 def _user_crm_own_only(user: User) -> bool:
@@ -3088,9 +3542,8 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
     new_stage_obj = db.query(Stage).filter(Stage.id == stage_update.stage).first()
-    if new_stage_obj and "проигра" in (new_stage_obj.name or "").lower():
+    if new_stage_obj and _stage_is_lost(new_stage_obj):
         reason = (stage_update.loss_reason or "").strip()
-        # При каждом переносе на проигранную стадию причина обязательна (текстом)
         if not reason:
             return JSONResponse(status_code=400, content={"error": "Укажите причину отказа"})
         db_deal.loss_reason = reason
@@ -3106,12 +3559,19 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
 
     new_name = new_stage_obj.name if new_stage_obj else str(stage_update.stage)
     hist = f"Стадия изменена: {old_name or old_stage} → {new_name}"
-    if db_deal.loss_reason and new_stage_obj and "проигра" in (new_stage_obj.name or "").lower():
+    if db_deal.loss_reason and new_stage_obj and _stage_is_lost(new_stage_obj):
         hist += f" (причина: {db_deal.loss_reason})"
     db.add(DealHistory(deal_id=deal_id, action_text=hist))
 
-    # При «Успешно» — сформировать зарплатную ведомость из строк персонала сметы (если ещё нет)
-    if new_stage_obj and "успешн" in (new_stage_obj.name or "").lower():
+    converted_deal_id = None
+    pipe = db.query(Pipeline).filter(Pipeline.id == db_deal.pipeline_id).first()
+    if new_stage_obj and pipe and _pipeline_kind(pipe) == "lead" and _stage_creates_deal(new_stage_obj, pipe):
+        new_deal = _convert_lead_to_deal(db, db_deal, pipe)
+        if new_deal:
+            converted_deal_id = new_deal.id
+
+    # При «Успешно» в deal-воронке — зарплатная ведомость
+    if new_stage_obj and _stage_is_won(new_stage_obj) and _pipeline_kind(pipe) == "deal":
         if not db_deal.payroll_lines:
             n = generate_payroll_for_deal(db, db_deal, replace=True)
             if n:
@@ -3122,7 +3582,7 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
 
     db.commit()
 
-    if new_stage_obj and ("Монтаж" in new_stage_obj.name or "доставлен" in new_stage_obj.name.lower()):
+    if new_stage_obj and ("Монтаж" in (new_stage_obj.name or "") or "доставлен" in (new_stage_obj.name or "").lower()):
         company = db_deal.company
         if company:
             msg = f"Здравствуйте, {company.director_name or company.name}! Ваш заказ '{db_deal.title}' перешел в статус: {new_stage_obj.name}. Оборудование доставлено/монтируется."
@@ -3130,13 +3590,17 @@ def update_deal_stage(deal_id: int, stage_update: DealStageUpdate, db: Session =
                 notifications.send_wa_message(company.phone, msg)
             if company.telegram_chat_id:
                 notifications.send_tg_message(company.telegram_chat_id, msg)
-            for sub in db_deal.push_subscriptions:
+            for sub in getattr(db_deal, "push_subscriptions", []) or []:
                 notifications.send_web_push({
                     "endpoint": sub.endpoint,
                     "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
                 }, msg)
 
-    return {"status": "success"}
+    resp = {"status": "success"}
+    if converted_deal_id:
+        resp["converted_deal_id"] = converted_deal_id
+        resp["message"] = f"Создана сделка №{converted_deal_id} в воронке продаж"
+    return resp
 
 @app.get("/api/deals/{deal_id}")
 def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -4000,7 +4464,7 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
     chat_id = str(chat_id)
     closed_stage_ids = {
         s.id for s in db.query(Stage).all()
-        if any(k in (s.name or "") for k in ("Успешно", "проигра", "Проигра"))
+        if _stage_is_won(s) or _stage_is_lost(s)
     }
 
     linked = (
@@ -4034,13 +4498,8 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         db.commit()
         db.refresh(company)
 
-    pipeline = db.query(Pipeline).first()
-    first_stage = (
-        db.query(Stage)
-        .filter(Stage.pipeline_id == pipeline.id)
-        .order_by(Stage.order_index)
-        .first()
-    ) if pipeline else None
+    pipeline, route_assignee = _resolve_pipeline_for_source(db, channel)
+    first_stage = _first_stage(db, pipeline.id) if pipeline else None
 
     prev_deal = linked[0] if linked else None
     label = CHANNEL_LABELS.get(channel, channel)
@@ -4054,7 +4513,7 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         chat_id=chat_id,
         prev_deal_id=prev_deal.id if prev_deal else None,
         source=channel,
-        assignee_id=_default_assignee_id(db),
+        assignee_id=route_assignee or _default_assignee_id(db),
     )
     db.add(deal)
     db.commit()

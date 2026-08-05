@@ -61,14 +61,24 @@
 
         <div class="card">
             <h3 style="margin-top:0;">Источники лидов</h3>
-            <p style="margin-bottom:10px">Публичная форма создаёт сделку в CRM. Можно встроить на сайт или дать ссылку для карт.</p>
+            <p style="margin-bottom:10px">Публичная форма создаёт карточку в CRM. Можно встроить на сайт или дать ссылку для карт.</p>
             <ul style="margin:0 0 12px 1.2rem; line-height:1.6; font-size:14px;">
                 <li>Сайт: <a href="/lead?source=site" target="_blank" style="color:var(--primary)">/lead?source=site</a></li>
                 <li>Карты: <a href="/lead?source=maps" target="_blank" style="color:var(--primary)">/lead?source=maps</a></li>
                 <li>API: <code>POST /api/leads</code> (JSON: name, phone, source…)</li>
                 <li>1С: <code>POST /api/1c/leads</code> (ключ ONEC_API_KEY)</li>
             </ul>
-            <p class="muted" style="font-size:12.5px;margin:0">Опционально защитите форму переменной окружения <code>LEAD_API_KEY</code> (заголовок X-Lead-Key).</p>
+            <p class="muted" style="font-size:12.5px;margin:0 0 12px">Опционально защитите форму переменной окружения <code>LEAD_API_KEY</code> (заголовок X-Lead-Key).</p>
+            <p style="margin:0 0 8px;font-size:14px;">Воронки, стадии и <strong>куда попадает каждый источник</strong> настраиваются в CRM:</p>
+            <a href="/crm" class="btn" style="display:inline-block;text-decoration:none;background:var(--primary);color:#fff;padding:0.65rem 1.1rem;border-radius:8px;">Открыть CRM → ⚙ Воронки</a>
+        </div>
+
+        <div class="card" id="crm-routing-settings">
+            <h3 style="margin-top:0;">Маршрутизация CRM</h3>
+            <p style="margin-bottom:12px;font-size:14px;">Правила «источник → воронка» (WhatsApp, Telegram, сайт, 1С…). Изменения применяются к новым лидам сразу.</p>
+            <div id="settings-routing-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+            <button type="button" onclick="saveSettingsRouting()">Сохранить правила</button>
+            <p id="settings-routing-msg" style="display:none;margin-top:8px;font-size:13px;"></p>
         </div>
 
         {% if request.state.user and request.state.user.role == 'admin' %}
@@ -399,9 +409,81 @@
             });
         }
 
+        let settingsPipes = [];
+        let settingsUsers = [];
+
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        async function loadSettingsRouting() {
+            const box = document.getElementById('settings-routing-list');
+            if (!box) return;
+            try {
+                const [pipesRes, rulesRes, usersRes] = await Promise.all([
+                    fetch('/api/pipelines'),
+                    fetch('/api/pipeline-routing'),
+                    fetch('/api/users/names'),
+                ]);
+                settingsPipes = await pipesRes.json();
+                settingsUsers = usersRes.ok ? await usersRes.json() : [];
+                const rules = rulesRes.ok ? await rulesRes.json() : [];
+                const pipeOpts = settingsPipes.map(p =>
+                    `<option value="${p.id}">${escapeHtml(p.name)} (${p.kind === 'lead' ? 'Лиды' : 'Продажи'})</option>`
+                ).join('');
+                const userOpts = '<option value="">— без ответственного —</option>' +
+                    settingsUsers.map(u => `<option value="${u.id}">${escapeHtml(u.full_name || u.username)}</option>`).join('');
+                box.innerHTML = rules.map(r => `
+                    <div style="display:grid;grid-template-columns:1fr 1.2fr 1.2fr;gap:8px;align-items:center;" data-src="${escapeHtml(r.source)}">
+                        <div style="font-weight:600;font-size:13px;">${escapeHtml(r.label || r.source)}</div>
+                        <select class="sr-pipe" style="padding:0.55rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">${pipeOpts}</select>
+                        <select class="sr-user" style="padding:0.55rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">${userOpts}</select>
+                    </div>
+                `).join('') || '<p class="muted">Нет данных</p>';
+                rules.forEach(r => {
+                    const row = box.querySelector(`[data-src="${r.source}"]`);
+                    if (!row) return;
+                    if (r.pipeline_id) row.querySelector('.sr-pipe').value = String(r.pipeline_id);
+                    if (r.assignee_id) row.querySelector('.sr-user').value = String(r.assignee_id);
+                });
+            } catch (e) {
+                box.innerHTML = '<p style="color:#dc2626">Не удалось загрузить правила</p>';
+            }
+        }
+
+        async function saveSettingsRouting() {
+            const box = document.getElementById('settings-routing-list');
+            const msg = document.getElementById('settings-routing-msg');
+            const rows = [...box.querySelectorAll('[data-src]')];
+            const rules = rows.map(row => ({
+                source: row.getAttribute('data-src'),
+                pipeline_id: parseInt(row.querySelector('.sr-pipe').value) || null,
+                assignee_id: row.querySelector('.sr-user').value ? parseInt(row.querySelector('.sr-user').value) : null,
+                is_active: true,
+            })).filter(r => r.pipeline_id);
+            msg.style.display = 'block';
+            msg.style.color = 'var(--muted)';
+            msg.textContent = 'Сохранение…';
+            const res = await fetch('/api/pipeline-routing', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rules }),
+            });
+            if (res.ok) {
+                msg.style.color = '#16a34a';
+                msg.textContent = 'Правила сохранены';
+            } else {
+                const err = await res.json().catch(() => ({}));
+                msg.style.color = '#dc2626';
+                msg.textContent = err.error || 'Ошибка сохранения';
+            }
+        }
+
         window.onload = () => {
             checkStatus();
             loadIntegrationStatus();
+            loadSettingsRouting();
         };
     </script>
 {% endblock %}

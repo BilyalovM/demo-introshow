@@ -141,7 +141,11 @@ class Pipeline(Base):
     __tablename__ = "pipelines"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    
+    # lead — воронка лидов; deal — продажи/сделки
+    kind = Column(String, default="deal")
+    # Для lead-воронки: куда создавать сделку при успешной стадии
+    target_pipeline_id = Column(Integer, ForeignKey("pipelines.id"), nullable=True)
+
     stages = relationship("Stage", back_populates="pipeline", cascade="all, delete-orphan")
     deals = relationship("Deal", back_populates="pipeline")
 
@@ -152,9 +156,26 @@ class Stage(Base):
     name = Column(String)
     order_index = Column(Integer, default=0)
     is_active_rent = Column(Boolean, default=False)
-    
+    is_won = Column(Boolean, default=False)
+    is_lost = Column(Boolean, default=False)
+    # В lead-воронке: переход на эту стадию создаёт сделку в target_pipeline
+    creates_deal = Column(Boolean, default=False)
+
     pipeline = relationship("Pipeline", back_populates="stages")
     deals = relationship("Deal", back_populates="stage_obj")
+
+
+class PipelineRoutingRule(Base):
+    """Куда класть новые лиды/сделки по источнику (whatsapp, site, 1c…)."""
+    __tablename__ = "pipeline_routing_rules"
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String, unique=True, index=True)  # whatsapp / telegram / site / …
+    pipeline_id = Column(Integer, ForeignKey("pipelines.id"), nullable=False)
+    assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    pipeline = relationship("Pipeline")
+    assignee = relationship("User", foreign_keys=[assignee_id])
 
 class Deal(Base):
     __tablename__ = "deals"
