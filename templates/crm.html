@@ -678,13 +678,45 @@
                                     </select>
                                 </label>
                             </div>
-                            <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-top:4px;">
-                                <input type="checkbox" id="edit-deal-qualified"> Квалифицирована
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                <label class="field">
+                                    <span>Менеджер продаж</span>
+                                    <select id="edit-deal-sales-manager"><option value="">— не выбран —</option></select>
+                                </label>
+                                <label class="field">
+                                    <span>Менеджер проекта</span>
+                                    <select id="edit-deal-project-manager"><option value="">— не выбран —</option></select>
+                                </label>
+                            </div>
+                            <label class="field">
+                                <span>Квалификация лида</span>
+                                <select id="edit-deal-qualification">
+                                    <option value="">— не выбрано —</option>
+                                    <option value="rental">Аренда</option>
+                                    <option value="sale">Продажа</option>
+                                    <option value="spam">Спам-отказ</option>
+                                </select>
                             </label>
+                            <p class="muted" style="font-size:11.5px;margin:0;">Обязательно перед «Успешно»: аренда/продажа создаёт сделку, спам уходит в отказ.</p>
+                            <input type="hidden" id="edit-deal-qualified" value="">
                             <div id="edit-deal-loss-wrap" style="display:none;">
                                 <label class="field">
                                     <span>Причина отказа</span>
                                     <textarea id="edit-deal-loss-reason" rows="2" placeholder="Дорого / выбрали конкурента / …"></textarea>
+                                </label>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top:8px;" id="edit-deal-fix-block">
+                                <label class="field">
+                                    <span>Фикс продаж (₸)</span>
+                                    <input type="number" id="edit-deal-sales-fix" min="0" step="1000" placeholder="0">
+                                </label>
+                                <label class="field">
+                                    <span>Фикс проекта (₸)</span>
+                                    <input type="number" id="edit-deal-project-fix" min="0" step="1000" placeholder="0">
+                                </label>
+                                <label class="field">
+                                    <span>Цель маржи (%)</span>
+                                    <input type="number" id="edit-deal-margin-target" min="0" max="100" step="0.5" value="10">
                                 </label>
                             </div>
                         </div>
@@ -1217,6 +1249,11 @@
         }
 
         const userOpts = crmUsers.map(u => `<option value="${u.id}">${escapeHtml(u.full_name || u.username)}</option>`).join('');
+        const userOptsEmpty = '<option value="">— не выбран —</option>' + userOpts;
+        ['edit-deal-sales-manager', 'edit-deal-project-manager'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = userOptsEmpty;
+        });
         ['edit-deal-assignee', 'new-deal-assignee', 'act-assignee', 'deal-task-assignee'].forEach(id => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -1300,6 +1337,9 @@
                 const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣', site: '🌐', maps: '📍', onec: '🧮' }[deal.chat_channel || deal.source] || '';
                 const overdueBadge = deal.has_overdue_activity ? '<span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700;">!</span>' : '';
                 const assignee = deal.assignee_name ? `<span style="font-size:11px;color:var(--muted);">👤 ${escapeHtml(deal.assignee_name)}</span>` : '';
+                const qualBadge = deal.qualification_label
+                    ? `<span style="font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:999px;background:${deal.qualification==='spam'?'#fef2f2':deal.qualification==='sale'?'#eff6ff':'#f0fdf4'};color:${deal.qualification==='spam'?'#b91c1c':deal.qualification==='sale'?'#1d4ed8':'#15803d'};">${escapeHtml(deal.qualification_label)}</span>`
+                    : '';
                 card.innerHTML = `
                     <div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start;">
                         <h4 class="deal-title-link" style="margin:0 0 6px 0; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--primary);">${chIcon ? chIcon + ' ' : ''}${escapeHtml(deal.title)}</h4>
@@ -1313,7 +1353,7 @@
                     ${deal.loss_reason && isLostStage(crmStages.find(s => s.id === deal.stage))
                         ? `<div style="margin-top:6px;font-size:11.5px;color:#b91c1c;line-height:1.35;">Причина: ${escapeHtml(deal.loss_reason)}</div>`
                         : ''}
-                    <div style="margin-top:8px;">${assignee}</div>
+                    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">${assignee}${qualBadge}</div>
                 `;
                 
                 // Add click listener specifically to title link
@@ -1423,20 +1463,37 @@
         setTimeout(() => input.focus(), 50);
     }
 
-    async function pickConvertPipelineId(stageObj) {
+    function dealQualification(dealId) {
+        const fromForm = document.getElementById('edit-deal-qualification');
+        if (activeDealId === dealId && fromForm && fromForm.value) return fromForm.value;
+        const deal = crmDeals.find(d => d.id === dealId);
+        return (deal && deal.qualification) || '';
+    }
+
+    async function pickConvertPipelineId(stageObj, qualification) {
         if (!(stageObj && (stageObj.creates_deal || isWonStage(stageObj)))) return null;
         const pipeMeta = crmPipelines || [];
         const current = pipeMeta.find(p => p.id === currentPipelineId);
         if (!current || current.kind !== 'lead') return null;
         const dealPipes = pipeMeta.filter(p => p.kind === 'deal');
-        if (dealPipes.length < 2) return dealPipes[0] ? dealPipes[0].id : null;
+        if (!dealPipes.length) return null;
+        if (dealPipes.length === 1) return dealPipes[0].id;
+
+        let suggested = 1;
+        if (qualification === 'sale') {
+            const idx = dealPipes.findIndex(p => /продаж/i.test(p.name || ''));
+            if (idx >= 0) suggested = idx + 1;
+        } else if (qualification === 'rental') {
+            const idx = dealPipes.findIndex(p => /аренд|прокат/i.test(p.name || ''));
+            if (idx >= 0) suggested = idx + 1;
+        }
         const labels = dealPipes.map((p, i) => `${i + 1}) ${p.name}`).join('\n');
         const raw = prompt(
-            `Куда создать сделку?\n${labels}\n\nВведите номер (по умолчанию 1 — обычно «Аренда»):`,
-            '1'
+            `Куда создать сделку?\n${labels}\n\nВведите номер (подсказано по квалификации: ${suggested}):`,
+            String(suggested)
         );
         if (raw === null) return null; // отмена
-        const idx = Math.max(0, (parseInt(raw, 10) || 1) - 1);
+        const idx = Math.max(0, (parseInt(raw, 10) || suggested) - 1);
         return dealPipes[Math.min(idx, dealPipes.length - 1)].id;
     }
 
@@ -1450,10 +1507,20 @@
         let convertTo = null;
         const pipeMeta = crmPipelines || [];
         const current = pipeMeta.find(p => p.id === currentPipelineId);
+        const qual = dealQualification(dealId);
         if (current && current.kind === 'lead' && stageObj && (stageObj.creates_deal || isWonStage(stageObj))) {
-            convertTo = await pickConvertPipelineId(stageObj);
-            if (convertTo === null && pipeMeta.filter(p => p.kind === 'deal').length >= 2) {
-                return false; // пользователь отменил выбор
+            if (!qual) {
+                alert('Сначала укажите квалификацию лида: аренда / продажа / спам-отказ (в карточке лида).');
+                openDealSlider(dealId);
+                return false;
+            }
+            if (qual === 'spam') {
+                // Сервер уведёт в отказ; loss_reason подставится автоматически
+            } else {
+                convertTo = await pickConvertPipelineId(stageObj, qual);
+                if (convertTo === null && pipeMeta.filter(p => p.kind === 'deal').length >= 2) {
+                    return false; // пользователь отменил выбор
+                }
             }
         }
         const oldStageId = deal ? deal.stage : null;
@@ -1462,6 +1529,7 @@
             const body = { stage: newStageId };
             if (lossReason) body.loss_reason = lossReason.trim();
             if (convertTo) body.convert_to_pipeline_id = convertTo;
+            if (qual) body.qualification = qual;
             const response = await fetch(`/api/deals/${dealId}/stage`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1472,7 +1540,9 @@
                 throw new Error(err.error || 'API failure');
             }
             const result = await response.json().catch(() => ({}));
-            if (result.converted_deal_id) {
+            if (result.spam_rejected) {
+                alert(result.message || 'Спам-отказ: сделка не создана, лид в «Отказ».');
+            } else if (result.converted_deal_id) {
                 const pipeName = result.converted_pipeline || 'сделок';
                 alert(`Лид конвертирован в сделку №${result.converted_deal_id} («${pipeName}»). Переключите воронку, чтобы продолжить.`);
             }
@@ -1633,7 +1703,20 @@
             document.getElementById('edit-deal-comment').value = data.comment || '';
             document.getElementById('edit-deal-assignee').value = data.assignee_id || '';
             document.getElementById('edit-deal-source').value = data.source || 'manual';
-            document.getElementById('edit-deal-qualified').checked = !!data.is_qualified;
+            const salesSel = document.getElementById('edit-deal-sales-manager');
+            const projectSel = document.getElementById('edit-deal-project-manager');
+            if (salesSel) salesSel.value = data.sales_manager_id || '';
+            if (projectSel) projectSel.value = data.project_manager_id || '';
+            const qualSel = document.getElementById('edit-deal-qualification');
+            if (qualSel) qualSel.value = data.qualification || '';
+            const salesFix = document.getElementById('edit-deal-sales-fix');
+            const projectFix = document.getElementById('edit-deal-project-fix');
+            const marginTarget = document.getElementById('edit-deal-margin-target');
+            if (salesFix) salesFix.value = data.sales_fix_kzt || 0;
+            if (projectFix) projectFix.value = data.project_fix_kzt || 0;
+            if (marginTarget) marginTarget.value = data.margin_target_pct != null ? data.margin_target_pct : 10;
+            const fixBlock = document.getElementById('edit-deal-fix-block');
+            if (fixBlock) fixBlock.style.display = data.hide_prices ? 'none' : '';
             document.getElementById('edit-deal-loss-reason').value = data.loss_reason || '';
             const lossWrap = document.getElementById('edit-deal-loss-wrap');
             const stageObj = crmStages.find(s => s.id === data.stage) || {};
@@ -2156,6 +2239,7 @@
             eventDateEl.value = new Date().toISOString().slice(0, 10);
         }
 
+        const qualVal = (document.getElementById('edit-deal-qualification') || {}).value || '';
         const payload = {
             title: document.getElementById('edit-deal-title').value,
             event_date: eventDateEl ? eventDateEl.value : '',
@@ -2165,9 +2249,15 @@
             company_id: parseInt(document.getElementById('edit-deal-company').value) || null,
             contact_id: parseInt(document.getElementById('edit-deal-contact').value) || null,
             assignee_id: parseInt(document.getElementById('edit-deal-assignee').value) || null,
+            sales_manager_id: parseInt(document.getElementById('edit-deal-sales-manager').value) || null,
+            project_manager_id: parseInt(document.getElementById('edit-deal-project-manager').value) || null,
             source: document.getElementById('edit-deal-source').value || 'manual',
-            is_qualified: document.getElementById('edit-deal-qualified').checked,
+            qualification: qualVal || null,
+            is_qualified: qualVal === 'rental' || qualVal === 'sale',
             loss_reason: document.getElementById('edit-deal-loss-reason').value || null,
+            sales_fix_kzt: parseFloat(document.getElementById('edit-deal-sales-fix').value) || 0,
+            project_fix_kzt: parseFloat(document.getElementById('edit-deal-project-fix').value) || 0,
+            margin_target_pct: parseFloat(document.getElementById('edit-deal-margin-target').value) || 10,
         };
 
         try {
@@ -2826,9 +2916,13 @@
             ['− Себест. субаренды', m.subrental_cost, 'muted'],
             ['− ФОТ (начислено)', m.payroll, 'muted'],
             ['− Расходы проекта', m.expenses, 'muted'],
+            ['− Фикс менеджера продаж', m.sales_fix_kzt || 0, 'muted'],
+            ['− Фикс менеджера проекта', m.project_fix_kzt || 0, 'muted'],
             ['Авансы (уже в ФОТ к выплате)', m.advances, 'muted'],
             ['= Маржа проекта', m.margin, 'primary'],
         ];
+        const targetPct = m.margin_target_pct != null ? m.margin_target_pct : 10;
+        const factPct = m.margin_pct != null ? m.margin_pct : 0;
         box.innerHTML = `
             <div class="slider-info-card" style="margin:0;">
                 <div class="slider-info-card-header"><span>Денежная картина</span></div>
@@ -2838,6 +2932,7 @@
                             <span class="${tone === 'muted' ? 'muted' : ''}" style="${tone === 'primary' ? 'font-weight:700;' : ''}">${label}</span>
                             <strong style="${tone === 'primary' ? 'color:var(--primary);font-size:1.05rem;' : ''}">${moneyFmt(val)}</strong>
                         </div>`).join('')}
+                    <div class="muted" style="font-size:12px;margin-top:8px;">Маржа факт: <strong>${factPct}%</strong> · цель: ${targetPct}%</div>
                 </div>
             </div>`;
     }
@@ -2863,6 +2958,13 @@
                     <div class="muted" style="font-size:11px;">Маржа</div>
                     <div style="font-weight:800;margin-top:2px;color:var(--primary);">${dealHidePrices || !money ? '—' : moneyFmt(money.margin)}</div>
                     <button type="button" class="btn btn-sm" style="margin-top:4px;padding:2px 8px;font-size:11px;" onclick="switchSliderTab('money')">Деньги</button>
+                </div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">
+                <div class="muted" style="font-size:11px;">Менеджеры</div>
+                <div style="font-size:12.5px;margin-top:4px;line-height:1.45;">
+                    <div>Продажи: <strong>${escapeHtml((data && data.sales_manager_name) || '—')}</strong></div>
+                    <div>Проект: <strong>${escapeHtml((data && data.project_manager_name) || '—')}</strong></div>
                 </div>
             </div>
             <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);">

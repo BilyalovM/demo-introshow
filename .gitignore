@@ -39,7 +39,10 @@ database.db
 !contract_template.docx
 scrape_ainex.js
 .vercel
-.env*
+.env
+.env.local
+.env.*
+!.env.example
 tmp_meeting/
 *.db-journal
 backups/

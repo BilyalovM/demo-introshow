@@ -191,14 +191,23 @@ class Deal(Base):
     comment = Column(String)
     contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
     assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Менеджер продаж / менеджер проекта (роль на сделке)
+    sales_manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    project_manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     # Привязка к чату мессенджера (для автосозданных сделок из входящих сообщений)
     chat_channel = Column(String, nullable=True)   # whatsapp / telegram / instagram
     chat_id = Column(String, nullable=True)
     prev_deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True)  # прошлое обращение клиента
     source = Column(String, nullable=True)  # whatsapp / telegram / instagram / manual / referral / site / other
     loss_reason = Column(String, nullable=True)
+    # Квалификация лида: rental / sale / spam (пусто — ещё не выбрано)
+    qualification = Column(String, nullable=True)
     is_qualified = Column(Boolean, default=False)
     is_archived = Column(Boolean, default=False)
+    # Фикс менеджеров (KZT) + целевая маржа % (ориентир, не жёсткая логика)
+    sales_fix_kzt = Column(Float, default=0.0)
+    project_fix_kzt = Column(Float, default=0.0)
+    margin_target_pct = Column(Float, default=10.0)
     # Операционный пайплайн после успеха: none / packed / departed / on_site / returned / closed
     ops_status = Column(String, default="none")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -206,6 +215,8 @@ class Deal(Base):
     company = relationship("Company", back_populates="deals")
     contact = relationship("Contact", foreign_keys=[contact_id])
     assignee = relationship("User", foreign_keys=[assignee_id])
+    sales_manager = relationship("User", foreign_keys=[sales_manager_id])
+    project_manager = relationship("User", foreign_keys=[project_manager_id])
     pipeline = relationship("Pipeline", back_populates="deals")
     stage_obj = relationship("Stage", back_populates="deals")
     items = relationship("DealItem", back_populates="deal")
@@ -612,6 +623,13 @@ class AuditLog(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     user = relationship("User", foreign_keys=[user_id])
+
+
+class AppSetting(Base):
+    """Простые настройки приложения (шапка сметы / реквизиты компании)."""
+    __tablename__ = "app_settings"
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=True)
 
 
 def init_db():

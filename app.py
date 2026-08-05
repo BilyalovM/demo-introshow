@@ -32,8 +32,8 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, engine
-from sqlalchemy import text, func
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, engine
+from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
 from document_generator import generate_contract, get_rubles_text
@@ -316,12 +316,36 @@ with Session(engine) as session:
         "ALTER TABLE deal_staff_assignments ADD COLUMN created_by VARCHAR",
         # v2 security: logout-all через инкремент версии сессии
         "ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0",
+        # Квалификация лида + менеджеры + фиксы
+        "ALTER TABLE deals ADD COLUMN qualification VARCHAR",
+        "ALTER TABLE deals ADD COLUMN sales_manager_id INTEGER",
+        "ALTER TABLE deals ADD COLUMN project_manager_id INTEGER",
+        "ALTER TABLE deals ADD COLUMN sales_fix_kzt FLOAT DEFAULT 0",
+        "ALTER TABLE deals ADD COLUMN project_fix_kzt FLOAT DEFAULT 0",
+        "ALTER TABLE deals ADD COLUMN margin_target_pct FLOAT DEFAULT 10",
     ]:
         try:
             session.execute(text(ddl))
             session.commit()
         except Exception:
             session.rollback()
+
+    # Seed реквизитов компании для шапки сметы (если ещё пусто)
+    try:
+        defaults = {
+            "company_name": "Intro Show",
+            "company_phone": "+7 (701) 554-13-80",
+            "company_email": "show.intro@yandex.kz",
+            "company_address": "Тюлькубасская улица, 4, Алматы",
+            "company_bin": "",
+        }
+        for key, val in defaults.items():
+            existing = session.query(AppSetting).filter(AppSetting.key == key).first()
+            if not existing:
+                session.add(AppSetting(key=key, value=val))
+        session.commit()
+    except Exception:
+        session.rollback()
 
     # 4b2. Налог всегда 16%: выравниваем существующие сделки
     try:
@@ -456,11 +480,21 @@ class FolderCreate(BaseModel):
     name: str
     parent_id: Optional[int] = None
 
+QUALIFICATION_VALUES = ("rental", "sale", "spam")
+QUALIFICATION_LABELS = {
+    "rental": "Аренда",
+    "sale": "Продажа",
+    "spam": "Спам-отказ",
+}
+
+
 class DealCreate(BaseModel):
     title: str
     company_id: Optional[int] = None
     contact_id: Optional[int] = None
     assignee_id: Optional[int] = None
+    sales_manager_id: Optional[int] = None
+    project_manager_id: Optional[int] = None
     pipeline_id: Optional[int] = 1
     setup_date: Optional[str] = None
     event_date: str
@@ -471,7 +505,11 @@ class DealCreate(BaseModel):
     tax_percentage: float = FIXED_TAX_PERCENTAGE
     items_json: Optional[str] = None
     source: Optional[str] = "manual"
+    qualification: Optional[str] = None
     is_qualified: Optional[bool] = False
+    sales_fix_kzt: Optional[float] = 0.0
+    project_fix_kzt: Optional[float] = 0.0
+    margin_target_pct: Optional[float] = 10.0
 
 class DealStageUpdate(BaseModel):
     stage: int
@@ -479,6 +517,8 @@ class DealStageUpdate(BaseModel):
     loss_reason: Optional[str] = None
     # При конвертации лида: целевая deal-воронка (Аренда / Продажа)
     convert_to_pipeline_id: Optional[int] = None
+    # Можно передать квалификацию вместе со сменой стадии
+    qualification: Optional[str] = None
 
 class CompanyCreate(BaseModel):
     name: str
@@ -683,6 +723,7 @@ def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str]
         title_bits.append(f"({LEAD_SOURCES[source]})")
     title = " ".join(title_bits)
 
+    assignee_id = route_assignee or _default_assignee_id(db)
     deal = Deal(
         title=title[:200],
         company_id=company.id,
@@ -694,7 +735,9 @@ def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str]
         event_address=event_address,
         comment=message or None,
         source=source,
-        assignee_id=route_assignee or _default_assignee_id(db),
+        assignee_id=assignee_id,
+        sales_manager_id=assignee_id,
+        qualification=None,
         is_qualified=False,
     )
     db.add(deal)
@@ -2076,6 +2119,41 @@ def get_settings_status(user: User = Depends(get_current_user)):
         "onec": bool(os.getenv("ONEC_API_KEY")),
     }
 
+
+class CompanyLetterheadUpdate(BaseModel):
+    company_name: Optional[str] = None
+    company_phone: Optional[str] = None
+    company_email: Optional[str] = None
+    company_address: Optional[str] = None
+    company_bin: Optional[str] = None
+
+
+@app.get("/api/settings/company")
+def get_company_letterhead(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Реквизиты компании для шапки сметы (DOCX/PDF)."""
+    return _get_company_letterhead(db)
+
+
+@app.put("/api/settings/company")
+def update_company_letterhead(
+    payload: CompanyLetterheadUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role not in ("admin", "manager"):
+        return JSONResponse(status_code=403, content={"error": "Нужны права администратора или менеджера"})
+    data = payload.dict(exclude_unset=True)
+    for key, value in data.items():
+        if key not in ("company_name", "company_phone", "company_email", "company_address", "company_bin"):
+            continue
+        row = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if row:
+            row.value = (value or "").strip()
+        else:
+            db.add(AppSetting(key=key, value=(value or "").strip()))
+    db.commit()
+    return _get_company_letterhead(db)
+
 @app.post("/api/equipment")
 def create_equipment(item: EquipmentCreate, db: Session = Depends(get_db)):
     data = item.dict()
@@ -3151,8 +3229,12 @@ def _money_picture(deal: Deal, totals: Optional[dict] = None) -> dict:
     payroll_gross = float(payroll.get("total_gross") or 0)
     expenses = sum(float(e.amount or 0) for e in (deal.expenses or []))
     advances = sum(float(a.amount or 0) for a in (deal.advances or []))
-    # Маржа проекта: выручка − себест. субаренды − ФОТ − расходы (авансы уже в ФОТ к выплате)
-    margin = revenue - cost_sub - payroll_gross - expenses
+    sales_fix = float(getattr(deal, "sales_fix_kzt", None) or 0)
+    project_fix = float(getattr(deal, "project_fix_kzt", None) or 0)
+    margin_target = float(getattr(deal, "margin_target_pct", None) or 10)
+    # Маржа: выручка − субаренда − ФОТ − расходы − фиксы менеджеров
+    margin = revenue - cost_sub - payroll_gross - expenses - sales_fix - project_fix
+    margin_pct = (margin / revenue * 100.0) if revenue else 0.0
     return {
         "revenue": revenue,
         "subrental_cost": cost_sub,
@@ -3161,6 +3243,10 @@ def _money_picture(deal: Deal, totals: Optional[dict] = None) -> dict:
         "payroll_net": float(payroll.get("total_net") or 0),
         "expenses": expenses,
         "advances": advances,
+        "sales_fix_kzt": sales_fix,
+        "project_fix_kzt": project_fix,
+        "margin_target_pct": margin_target,
+        "margin_pct": round(margin_pct, 1),
         "margin": margin,
         "estimate_margin": float(totals.get("margin") or 0),
     }
@@ -3332,11 +3418,14 @@ def _convert_lead_to_deal(
     if title.lower().startswith("заявка"):
         title = title.replace("Заявка:", "Сделка:", 1).replace("заявка:", "Сделка:", 1)
 
+    sales_mgr = getattr(lead, "sales_manager_id", None) or lead.assignee_id or _default_assignee_id(db)
     new_deal = Deal(
         title=title[:200],
         company_id=lead.company_id,
         contact_id=lead.contact_id,
-        assignee_id=lead.assignee_id or _default_assignee_id(db),
+        assignee_id=lead.assignee_id or sales_mgr,
+        sales_manager_id=sales_mgr,
+        project_manager_id=getattr(lead, "project_manager_id", None),
         pipeline_id=target.id,
         stage=first.id if first else 1,
         setup_date=lead.setup_date,
@@ -3352,8 +3441,12 @@ def _convert_lead_to_deal(
         chat_id=lead.chat_id,
         prev_deal_id=lead.id,
         source=lead.source or lead.chat_channel or "manual",
+        qualification=_normalize_qualification(getattr(lead, "qualification", None)),
         is_qualified=True,
         is_archived=False,
+        sales_fix_kzt=float(getattr(lead, "sales_fix_kzt", None) or 0),
+        project_fix_kzt=float(getattr(lead, "project_fix_kzt", None) or 0),
+        margin_target_pct=float(getattr(lead, "margin_target_pct", None) or 10),
     )
     db.add(new_deal)
     db.flush()
@@ -3433,12 +3526,83 @@ def _user_is_project(user: User) -> bool:
     return auth.user_has_flag(user, "role_project") or not auth.user_has_flag(user, "role_sales")
 
 
+def _normalize_qualification(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip().lower()
+    aliases = {
+        "аренда": "rental",
+        "прокат": "rental",
+        "rental": "rental",
+        "продажа": "sale",
+        "продажи": "sale",
+        "sale": "sale",
+        "sales": "sale",
+        "спам": "spam",
+        "спам-отказ": "spam",
+        "отказ": "spam",
+        "spam": "spam",
+    }
+    norm = aliases.get(raw, raw)
+    return norm if norm in QUALIFICATION_VALUES else None
+
+
+def _pipeline_for_qualification(db: Session, qualification: Optional[str]) -> Optional[Pipeline]:
+    q = _normalize_qualification(qualification)
+    if q == "sale":
+        return (
+            db.query(Pipeline)
+            .filter(Pipeline.kind == "deal", Pipeline.name.in_(["Продажа", "Продажи"]))
+            .order_by(Pipeline.id)
+            .first()
+        )
+    if q == "rental":
+        return (
+            db.query(Pipeline)
+            .filter(Pipeline.kind == "deal", Pipeline.name.in_(["Аренда", "Прокат"]))
+            .order_by(Pipeline.id)
+            .first()
+        )
+    return None
+
+
+def _lost_stage_for_pipeline(db: Session, pipeline_id: Optional[int]) -> Optional[Stage]:
+    if not pipeline_id:
+        return None
+    stages = (
+        db.query(Stage)
+        .filter(Stage.pipeline_id == pipeline_id)
+        .order_by(Stage.order_index, Stage.id)
+        .all()
+    )
+    for st in stages:
+        if _stage_is_lost(st):
+            return st
+    return None
+
+
+def _user_display_name(u: Optional[User]) -> str:
+    if not u:
+        return "—"
+    return u.full_name or u.username or "—"
+
+
+def _get_company_letterhead(db: Session) -> dict:
+    keys = ("company_name", "company_phone", "company_email", "company_address", "company_bin")
+    rows = {r.key: (r.value or "") for r in db.query(AppSetting).filter(AppSetting.key.in_(keys)).all()}
+    return {k: rows.get(k, "") for k in keys}
+
+
 def _user_assigned_to_deal(db: Session, user: User, deal: Deal) -> bool:
     if not user or not deal:
         return False
     if user.role == "admin":
         return True
     if deal.assignee_id == user.id:
+        return True
+    if getattr(deal, "sales_manager_id", None) == user.id:
+        return True
+    if getattr(deal, "project_manager_id", None) == user.id:
         return True
     return db.query(DealStaffAssignment).filter(
         DealStaffAssignment.deal_id == deal.id,
@@ -3470,10 +3634,23 @@ def _estimate_header_fields(deal: Deal) -> dict:
 
     manager_name = ""
     try:
-        if deal.assignee:
+        pm = getattr(deal, "project_manager", None)
+        if pm:
+            manager_name = pm.full_name or pm.username or ""
+        elif deal.assignee:
             manager_name = deal.assignee.full_name or deal.assignee.username or ""
     except Exception:
         manager_name = ""
+
+    sales_name = ""
+    try:
+        sm = getattr(deal, "sales_manager", None)
+        if sm:
+            sales_name = sm.full_name or sm.username or ""
+        elif deal.assignee:
+            sales_name = deal.assignee.full_name or deal.assignee.username or ""
+    except Exception:
+        sales_name = ""
 
     shifts = _deal_shifts(deal)
     shifts_label = str(int(shifts)) if shifts == int(shifts) else str(shifts)
@@ -3484,6 +3661,8 @@ def _estimate_header_fields(deal: Deal) -> dict:
         "project_name": deal.title or "",
         "contact_name": contact_name,
         "manager_name": manager_name,
+        "sales_manager_name": sales_name,
+        "project_manager_name": manager_name,
         "city": (getattr(deal, "city", None) or "") or "",
         "event_address": deal.event_address or "",
         "departure_date": depart,
@@ -3639,6 +3818,7 @@ def _serialize_deal_card(d: Deal, db: Session) -> dict:
     assignee_name = None
     if d.assignee_id and d.assignee:
         assignee_name = d.assignee.full_name or d.assignee.username
+    qual = _normalize_qualification(getattr(d, "qualification", None))
     return {
         "id": d.id,
         "title": d.title,
@@ -3653,10 +3833,14 @@ def _serialize_deal_card(d: Deal, db: Session) -> dict:
         "chat_channel": d.chat_channel,
         "assignee_id": d.assignee_id,
         "assignee_name": assignee_name,
+        "sales_manager_id": getattr(d, "sales_manager_id", None),
+        "project_manager_id": getattr(d, "project_manager_id", None),
         "contact_id": d.contact_id,
         "source": d.source or d.chat_channel or "manual",
         "loss_reason": d.loss_reason,
-        "is_qualified": bool(d.is_qualified),
+        "qualification": qual,
+        "qualification_label": QUALIFICATION_LABELS.get(qual or "", ""),
+        "is_qualified": bool(d.is_qualified) or qual in ("rental", "sale"),
         "is_archived": bool(d.is_archived),
         "has_overdue_activity": _deal_has_overdue_activity(db, d.id),
     }
@@ -3682,9 +3866,17 @@ def get_deals(
     if pipeline_id:
         query = query.filter(Deal.pipeline_id == pipeline_id)
     if _user_crm_own_only(user):
-        query = query.filter(Deal.assignee_id == user.id)
+        query = query.filter(or_(
+            Deal.assignee_id == user.id,
+            Deal.sales_manager_id == user.id,
+            Deal.project_manager_id == user.id,
+        ))
     elif assignee == "me":
-        query = query.filter(Deal.assignee_id == user.id)
+        query = query.filter(or_(
+            Deal.assignee_id == user.id,
+            Deal.sales_manager_id == user.id,
+            Deal.project_manager_id == user.id,
+        ))
     elif assignee and assignee.isdigit():
         query = query.filter(Deal.assignee_id == int(assignee))
     if source:
@@ -3728,12 +3920,17 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
             contact_id = primary.id
 
     assignee_id = deal.assignee_id or user.id or _default_assignee_id(db)
+    qual = _normalize_qualification(deal.qualification)
+    sales_mgr = deal.sales_manager_id or assignee_id
+    project_mgr = deal.project_manager_id
 
     db_deal = Deal(
         title=deal.title,
         company_id=deal.company_id,
         contact_id=contact_id,
         assignee_id=assignee_id,
+        sales_manager_id=sales_mgr,
+        project_manager_id=project_mgr,
         pipeline_id=deal.pipeline_id,
         setup_date=deal.setup_date,
         event_date=deal.event_date,
@@ -3744,7 +3941,11 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
         tax_percentage=FIXED_TAX_PERCENTAGE,
         stage=stage_id,
         source=deal.source or "manual",
-        is_qualified=bool(deal.is_qualified),
+        qualification=qual,
+        is_qualified=bool(deal.is_qualified) or qual in ("rental", "sale"),
+        sales_fix_kzt=float(deal.sales_fix_kzt or 0),
+        project_fix_kzt=float(deal.project_fix_kzt or 0),
+        margin_target_pct=float(deal.margin_target_pct if deal.margin_target_pct is not None else 10),
     )
     db.add(db_deal)
     db.commit()
@@ -3788,12 +3989,67 @@ def update_deal_stage(
     if not db_deal:
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
+    if stage_update.qualification is not None:
+        q_in = _normalize_qualification(stage_update.qualification)
+        if stage_update.qualification and not q_in:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Квалификация: аренда / продажа / спам-отказ"},
+            )
+        db_deal.qualification = q_in
+        db_deal.is_qualified = q_in in ("rental", "sale")
+
     new_stage_obj = db.query(Stage).filter(Stage.id == stage_update.stage).first()
+    pipe = db.query(Pipeline).filter(Pipeline.id == db_deal.pipeline_id).first()
+    qual = _normalize_qualification(getattr(db_deal, "qualification", None))
+
+    # Спам/отказ: при попытке «успеха» лида — уводим в lost без создания сделки
+    spam_redirected = False
+    if (
+        new_stage_obj
+        and pipe
+        and _pipeline_kind(pipe) == "lead"
+        and _stage_creates_deal(new_stage_obj, pipe)
+        and qual == "spam"
+    ):
+        lost = _lost_stage_for_pipeline(db, pipe.id)
+        if not lost:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Нет стадии отказа в воронке лидов — добавьте «Отказ»"},
+            )
+        new_stage_obj = lost
+        stage_update.stage = lost.id
+        if not (stage_update.loss_reason or db_deal.loss_reason or "").strip():
+            stage_update.loss_reason = "спам-отказ"
+        spam_redirected = True
+
     if new_stage_obj and _stage_is_lost(new_stage_obj):
-        reason = (stage_update.loss_reason or "").strip()
+        reason = (stage_update.loss_reason or db_deal.loss_reason or "").strip()
+        if qual == "spam" and not reason:
+            reason = "спам-отказ"
         if not reason:
             return JSONResponse(status_code=400, content={"error": "Укажите причину отказа"})
         db_deal.loss_reason = reason
+
+    # Конвертация лида требует квалификации аренда/продажа
+    if (
+        new_stage_obj
+        and pipe
+        and _pipeline_kind(pipe) == "lead"
+        and _stage_creates_deal(new_stage_obj, pipe)
+        and not spam_redirected
+    ):
+        if not qual:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Укажите квалификацию лида: аренда / продажа / спам-отказ"},
+            )
+        if qual not in ("rental", "sale"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Для создания сделки выберите аренда или продажа"},
+            )
 
     old_stage = db_deal.stage
     old_name = ""
@@ -3808,6 +4064,8 @@ def update_deal_stage(
     hist = f"Стадия изменена: {old_name or old_stage} → {new_name}"
     if db_deal.loss_reason and new_stage_obj and _stage_is_lost(new_stage_obj):
         hist += f" (причина: {db_deal.loss_reason})"
+    if spam_redirected:
+        hist += " [спам → отказ без сделки]"
     db.add(DealHistory(deal_id=deal_id, action_text=hist))
     audit.write_audit(
         db, user_id=user.id if user else None, entity_type="deal", entity_id=deal_id,
@@ -3818,11 +4076,21 @@ def update_deal_stage(
 
     converted_deal_id = None
     converted_pipeline_name = None
-    pipe = db.query(Pipeline).filter(Pipeline.id == db_deal.pipeline_id).first()
-    if new_stage_obj and pipe and _pipeline_kind(pipe) == "lead" and _stage_creates_deal(new_stage_obj, pipe):
+    if (
+        new_stage_obj
+        and pipe
+        and _pipeline_kind(pipe) == "lead"
+        and _stage_creates_deal(new_stage_obj, pipe)
+        and not spam_redirected
+    ):
+        convert_pid = stage_update.convert_to_pipeline_id
+        if not convert_pid:
+            suggested = _pipeline_for_qualification(db, qual)
+            if suggested:
+                convert_pid = suggested.id
         new_deal = _convert_lead_to_deal(
             db, db_deal, pipe,
-            convert_to_pipeline_id=stage_update.convert_to_pipeline_id,
+            convert_to_pipeline_id=convert_pid,
         )
         if new_deal:
             converted_deal_id = new_deal.id
@@ -3831,7 +4099,7 @@ def update_deal_stage(
             audit.write_audit(
                 db, user_id=user.id if user else None, entity_type="deal", entity_id=new_deal.id,
                 action="create",
-                diff={"from_lead": deal_id, "pipeline": converted_pipeline_name},
+                diff={"from_lead": deal_id, "pipeline": converted_pipeline_name, "qualification": qual},
                 ip=audit.request_ip(request),
             )
 
@@ -3861,7 +4129,10 @@ def update_deal_stage(
                     "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
                 }, msg)
 
-    resp = {"status": "success"}
+    resp = {"status": "success", "stage": db_deal.stage}
+    if spam_redirected:
+        resp["spam_rejected"] = True
+        resp["message"] = "Лид отмечен как спам-отказ — сделка не создана"
     if converted_deal_id:
         resp["converted_deal_id"] = converted_deal_id
         resp["converted_pipeline"] = converted_pipeline_name
@@ -3923,6 +4194,13 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
     assignee_name = None
     if d.assignee_id and d.assignee:
         assignee_name = d.assignee.full_name or d.assignee.username
+    sales_manager_name = None
+    if getattr(d, "sales_manager_id", None) and getattr(d, "sales_manager", None):
+        sales_manager_name = d.sales_manager.full_name or d.sales_manager.username
+    project_manager_name = None
+    if getattr(d, "project_manager_id", None) and getattr(d, "project_manager", None):
+        project_manager_name = d.project_manager.full_name or d.project_manager.username
+    qual = _normalize_qualification(getattr(d, "qualification", None))
 
     activities = [{
         "id": a.id, "type": a.type, "title": a.title, "due_at": a.due_at,
@@ -3987,9 +4265,18 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "contact_id": d.contact_id,
         "assignee_id": d.assignee_id,
         "assignee_name": assignee_name,
+        "sales_manager_id": getattr(d, "sales_manager_id", None),
+        "sales_manager_name": sales_manager_name,
+        "project_manager_id": getattr(d, "project_manager_id", None),
+        "project_manager_name": project_manager_name,
         "source": d.source or d.chat_channel or "manual",
         "loss_reason": d.loss_reason,
-        "is_qualified": bool(d.is_qualified),
+        "qualification": qual,
+        "qualification_label": QUALIFICATION_LABELS.get(qual or "", ""),
+        "is_qualified": bool(d.is_qualified) or qual in ("rental", "sale"),
+        "sales_fix_kzt": float(getattr(d, "sales_fix_kzt", None) or 0),
+        "project_fix_kzt": float(getattr(d, "project_fix_kzt", None) or 0),
+        "margin_target_pct": float(getattr(d, "margin_target_pct", None) or 10),
         "is_archived": bool(d.is_archived),
         "ops_status": getattr(d, "ops_status", None) or "none",
         "ops_status_label": OPS_STATUS_LABELS.get(getattr(d, "ops_status", None) or "none", "—"),
@@ -4088,11 +4375,17 @@ class DealUpdate(BaseModel):
     company_id: Optional[int] = None
     contact_id: Optional[int] = None
     assignee_id: Optional[int] = None
+    sales_manager_id: Optional[int] = None
+    project_manager_id: Optional[int] = None
     source: Optional[str] = None
     loss_reason: Optional[str] = None
+    qualification: Optional[str] = None
     is_qualified: Optional[bool] = None
     is_archived: Optional[bool] = None
     pipeline_id: Optional[int] = None
+    sales_fix_kzt: Optional[float] = None
+    project_fix_kzt: Optional[float] = None
+    margin_target_pct: Optional[float] = None
 
 @app.put("/api/deals/{deal_id}")
 def update_deal(
@@ -4105,16 +4398,30 @@ def update_deal(
     d = db.query(Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
-    if _user_crm_own_only(user) and d.assignee_id != user.id:
+    if _user_crm_own_only(user) and not _user_assigned_to_deal(db, user, d):
         return JSONResponse(status_code=403, content={"error": "Нет доступа"})
 
     data = update.dict(exclude_unset=True)
     # Фронт всегда шлёт assignee_id в форме сделки — блокируем только реальную смену
-    if "assignee_id" in data and user.role not in ("admin", "manager"):
-        new_assignee = data.get("assignee_id")
-        if new_assignee != d.assignee_id:
-            return JSONResponse(status_code=403, content={"error": "Нет права менять ответственного"})
-        data.pop("assignee_id", None)
+    for mgr_field in ("assignee_id", "sales_manager_id", "project_manager_id"):
+        if mgr_field in data and user.role not in ("admin", "manager"):
+            if data.get(mgr_field) != getattr(d, mgr_field, None):
+                return JSONResponse(status_code=403, content={"error": "Нет права менять ответственного"})
+            data.pop(mgr_field, None)
+
+    if "qualification" in data:
+        q_raw = data.get("qualification")
+        if q_raw in ("", None):
+            data["qualification"] = None
+        else:
+            q_norm = _normalize_qualification(q_raw)
+            if not q_norm:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Квалификация: аренда / продажа / спам-отказ"},
+                )
+            data["qualification"] = q_norm
+            data["is_qualified"] = q_norm in ("rental", "sale")
 
     # Автоподстановка основного контакта при смене компании
     if "company_id" in data and data["company_id"] and "contact_id" not in data:
@@ -4130,6 +4437,19 @@ def update_deal(
         if old != value:
             changed[field] = {"from": old, "to": value}
         setattr(d, field, value)
+
+    hist_bits = []
+    if "qualification" in changed:
+        q_to = changed["qualification"]["to"]
+        hist_bits.append(f"Квалификация: {QUALIFICATION_LABELS.get(q_to or '', q_to or '—')}")
+    if "sales_manager_id" in changed:
+        sm = db.query(User).filter(User.id == data.get("sales_manager_id")).first() if data.get("sales_manager_id") else None
+        hist_bits.append(f"Менеджер продаж: {_user_display_name(sm)}")
+    if "project_manager_id" in changed:
+        pm = db.query(User).filter(User.id == data.get("project_manager_id")).first() if data.get("project_manager_id") else None
+        hist_bits.append(f"Менеджер проекта: {_user_display_name(pm)}")
+    for bit in hist_bits:
+        db.add(DealHistory(deal_id=deal_id, action_text=bit))
 
     if changed:
         audit.write_audit(
@@ -4806,12 +5126,12 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
 
     # Компания: ищем по номеру/чату, иначе создаём карточку клиента
     company = _find_company_for_chat(db, channel, chat_id)
+    label = CHANNEL_LABELS.get(channel, channel)
+    phone = ""
+    if channel == "whatsapp":
+        raw = chat_id.split("@")[0]
+        phone = f"+{raw}" if raw.isdigit() else ""
     if not company:
-        label = CHANNEL_LABELS.get(channel, channel)
-        phone = ""
-        if channel == "whatsapp":
-            raw = chat_id.split("@")[0]
-            phone = f"+{raw}" if raw.isdigit() else ""
         company = Company(
             name=sender_name or f"Клиент {label}",
             phone=phone,
@@ -4822,15 +5142,48 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         db.add(company)
         db.commit()
         db.refresh(company)
+    elif phone and not (company.phone or "").strip():
+        company.phone = phone
+        db.commit()
+
+    # Контакт: имя/телефон из чата (квалификацию менеджер ставит вручную)
+    contact = None
+    if company.id:
+        contact = (
+            db.query(Contact)
+            .filter(Contact.company_id == company.id, Contact.is_primary == True)  # noqa: E712
+            .first()
+        )
+        if not contact and phone:
+            contact = db.query(Contact).filter(
+                Contact.company_id == company.id, Contact.phone == phone
+            ).first()
+        if not contact:
+            contact = Contact(
+                name=sender_name or company.name or f"Контакт {label}",
+                phone=phone or company.phone or None,
+                company_id=company.id,
+                is_primary=True,
+            )
+            db.add(contact)
+            db.commit()
+            db.refresh(contact)
+        else:
+            if sender_name and not (contact.name or "").strip():
+                contact.name = sender_name
+            if phone and not (contact.phone or "").strip():
+                contact.phone = phone
+            db.commit()
 
     pipeline, route_assignee = _resolve_pipeline_for_source(db, channel)
     first_stage = _first_stage(db, pipeline.id) if pipeline else None
 
     prev_deal = linked[0] if linked else None
-    label = CHANNEL_LABELS.get(channel, channel)
+    assignee_id = route_assignee or _default_assignee_id(db)
     deal = Deal(
         title=f"Заявка из {label} — {sender_name or chat_id}",
         company_id=company.id,
+        contact_id=contact.id if contact else None,
         pipeline_id=pipeline.id if pipeline else 1,
         stage=first_stage.id if first_stage else 1,
         event_date="",
@@ -4838,13 +5191,20 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         chat_id=chat_id,
         prev_deal_id=prev_deal.id if prev_deal else None,
         source=channel,
-        assignee_id=route_assignee or _default_assignee_id(db),
+        assignee_id=assignee_id,
+        sales_manager_id=assignee_id,
+        qualification=None,  # менеджер квалифицирует вручную
     )
     db.add(deal)
     db.commit()
     db.refresh(deal)
 
     db.add(DealHistory(deal_id=deal.id, action_text=f"Сделка создана автоматически: входящее сообщение в {label}"))
+    if contact:
+        db.add(DealHistory(
+            deal_id=deal.id,
+            action_text=f"Контакт из чата: {contact.name or '—'} {contact.phone or ''}".strip(),
+        ))
     if prev_deal:
         db.add(DealHistory(
             deal_id=deal.id,
@@ -5750,7 +6110,7 @@ def download_deal_estimate(
     mode_norm = _normalize_estimate_mode(mode)
 
     # Клиентская: субаренда как обычные позиции (без отдельного блока); internal — полный вид
-    context = _build_estimate_context(d, mode_norm)
+    context = _build_estimate_context(d, mode_norm, db=db)
 
     from document_generator import generate_estimate_docx
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
@@ -5777,16 +6137,31 @@ def download_deal_estimate(
     )
 
 
-def _build_estimate_context(d: Deal, mode_norm: str) -> dict:
+def _build_estimate_context(d: Deal, mode_norm: str, db: Session = None) -> dict:
     # Не исключаем субаренду: в client document_generator кладёт её в основную таблицу
     # (без блока «Субаренда» / себестоимости). hide_subrental_section управляет только вёрсткой.
     result = _calc_deal(d, exclude_subrental=False)
     header = _estimate_header_fields(d)
     is_client = mode_norm in ("client", "client_priced")
+    letterhead = {}
+    if db is not None:
+        letterhead = _get_company_letterhead(db)
+    else:
+        try:
+            with Session(engine) as s:
+                letterhead = _get_company_letterhead(s)
+        except Exception:
+            letterhead = {}
     return {
         "number": f"CRM-{d.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
         **header,
+        "letterhead": letterhead,
+        "our_company_name": letterhead.get("company_name") or "Intro Show",
+        "our_company_phone": letterhead.get("company_phone") or "",
+        "our_company_email": letterhead.get("company_email") or "",
+        "our_company_address": letterhead.get("company_address") or "",
+        "our_company_bin": letterhead.get("company_bin") or "",
         "items": result["items"],
         "equipment_base": result.get("equipment_base", 0),
         "equipment_total": result["equipment_total"],
@@ -5818,7 +6193,7 @@ def download_deal_estimate_pdf(
     mode_norm = _normalize_estimate_mode(mode)
 
     from document_generator import generate_estimate_pdf
-    context = _build_estimate_context(d, mode_norm)
+    context = _build_estimate_context(d, mode_norm, db=db)
     fd, temp_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     generate_estimate_pdf(context, temp_path, mode=mode_norm)

@@ -50,4 +50,4 @@ uvicorn app:app --reload --port 8000
 перезапуске serverless-функции). Задайте `SESSION_SECRET` в настройках
 проекта Vercel. Production держите на `main`/`v1-stable`; preview — ветка `v2`.
 
-Для Postgres на VPS задайте `DATABASE_URL` (см. VERSIONS.md); без неё работает SQLite.
+Для Postgres на VPS задайте `DATABASE_URL` (см. VERSIONS.md и [docs/deploy-server.md](docs/deploy-server.md)); без неё работает SQLite. Шаблон переменных: `.env.example`.

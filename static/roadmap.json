@@ -1,15 +1,16 @@
 {
   "updated_at": "2026-08-05",
   "title": "Intro Show CRM — статус и roadmap",
-  "summary": "v2 в production. Добавлены audit log, ужесточение сессий, rate limit login/лидов, воронки Аренда/Продажа, режимы сметы с/без цен.",
+  "summary": "v2 готов к привыканию сотрудников: квалификация лидов, менеджеры продаж/проекта, фиксы в марже, шапка сметы, deploy-server.md. Vercel — демо; боевой контур — VPS+Postgres.",
   "stats": {
-    "core_pct": 98,
-    "done": 40,
+    "core_pct": 99,
+    "done": 45,
     "partial": 2,
     "missing": 1
   },
   "process": [
     { "stage": "Лиды / чаты (сайт, WA, TG, IG, 1С)", "status": "done" },
+    { "stage": "Квалификация лида (аренда/продажа/спам)", "status": "done" },
     { "stage": "Сделки / CRM-канбан", "status": "done" },
     { "stage": "Смета (3 вида + шапка + итоги)", "status": "done" },
     { "stage": "Хаб сделки (timeline + блоки)", "status": "done" },
@@ -24,6 +25,7 @@
     { "stage": "Авансы / расходы / зарплата", "status": "done" },
     { "stage": "Audit / сессии / rate limit", "status": "done" },
     { "stage": "Воронки Аренда + Продажа", "status": "done" },
+    { "stage": "Документация деплоя VPS", "status": "done" },
     { "stage": "Договор / счёт / PDF", "status": "partial" },
     { "stage": "Бухгалтерия / 1С", "status": "partial" },
     { "stage": "Боевой VPS + Postgres", "status": "missing" }
@@ -33,7 +35,7 @@
     { "block": "Deal hub", "detail": "Карточка сделки: поля слева; справа хаб (смета, маржа, команда, задачи, отгрузка, чат)" },
     { "block": "Unified estimate", "detail": "CRM «Товары» = preview + «Открыть смету»; редактирование на /quotes/" },
     { "block": "Сегодня", "detail": "/today — назначения/техничка, мои задачи, unread чаты" },
-    { "block": "Money picture", "detail": "Выручка → субаренда → ФОТ → расходы → авансы → маржа" },
+    { "block": "Money picture", "detail": "Выручка → субаренда → ФОТ → расходы → фиксы менеджеров → маржа" },
     { "block": "Ops pipeline", "detail": "ops_status: собрали / уехали / на площадке / вернули / закрыли" },
     { "block": "Notifications", "detail": "Колокольчик: @mention, назначение на проект, новая задача; polling" },
     { "block": "Templates", "detail": "Шаблоны сметы и чек-листа" },
@@ -43,14 +45,20 @@
     { "block": "Audit log", "detail": "Журнал: сделки/сметы/права/ведомость/маршрутизация; UI в Настройки" },
     { "block": "Sessions", "detail": "Secure cookie, TTL 7д, session_version + logout-all" },
     { "block": "Rate limit", "detail": "POST login и /api/leads — sliding window, 429" },
-    { "block": "Аренда/Продажа", "detail": "Две deal-воронки; выбор при конвертации лида" }
+    { "block": "Аренда/Продажа", "detail": "Две deal-воронки; выбор при конвертации лида" },
+    { "block": "Lead qualification", "detail": "Поле rental/sale/spam; обязательно перед успехом; spam → отказ без сделки" },
+    { "block": "Sales/Project managers", "detail": "sales_manager_id + project_manager_id в карточке и истории" },
+    { "block": "Manager fix pay", "detail": "sales_fix_kzt / project_fix_kzt + margin_target_pct в денежной картине" },
+    { "block": "Estimate letterhead", "detail": "Реквизиты компании в Настройках → шапка DOCX/PDF сметы" },
+    { "block": "Bot→CRM light", "detail": "Из чата: контакт имя/телефон/source; квалификация пустая для менеджера" },
+    { "block": "Deploy docs", "detail": "docs/deploy-server.md + .env.example + backup.sh" }
   ],
   "partial": [
     { "topic": "Договор / счёт / 1С", "gap": "PDF есть; UI-синк 1С и ЭЦП — позже" },
     { "topic": "Бухгалтерия / 1С", "gap": "API есть; полный UI-синк — позже" }
   ],
   "missing": [
-    { "topic": "Боевой VPS + Postgres", "detail": "Миграция данных с SQLite; постоянная БД вместо эфемерного demo" }
+    { "topic": "Боевой VPS + Postgres", "detail": "Провайдер/сервер ещё не поднят; инструкция в docs/deploy-server.md" }
   ],
   "phases": [
     {
@@ -78,7 +86,9 @@
         { "id": "v2-8", "content": "Клиентский пакет PDF", "status": "done" },
         { "id": "v2-9", "content": "DATABASE_URL / Postgres readiness", "status": "done" },
         { "id": "v2-10", "content": "Глобальный поиск", "status": "done" },
-        { "id": "v2-11", "content": "Audit / сессии / rate limit / Аренда+Продажа", "status": "done" }
+        { "id": "v2-11", "content": "Audit / сессии / rate limit / Аренда+Продажа", "status": "done" },
+        { "id": "v2-12", "content": "Квалификация лидов + менеджеры + фиксы + шапка сметы", "status": "done" },
+        { "id": "v2-13", "content": "docs/deploy-server.md для пуска сотрудников", "status": "done" }
       ]
     },
     {

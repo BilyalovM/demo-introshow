@@ -288,6 +288,36 @@ def _group_items(items: List[Dict[str, Any]]) -> "OrderedDict[str, List[Dict[str
     return grouped
 
 
+def _add_letterhead(doc: Document, context: Dict[str, Any]) -> None:
+    """Блок реквизитов компании (из Настроек) над названием сметы."""
+    name = (context.get("our_company_name") or "").strip()
+    phone = (context.get("our_company_phone") or "").strip()
+    email = (context.get("our_company_email") or "").strip()
+    address = (context.get("our_company_address") or "").strip()
+    bin_code = (context.get("our_company_bin") or "").strip()
+    if not any((name, phone, email, address, bin_code)):
+        return
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if name:
+        run = p.add_run(name)
+        _set_run_font(run, bold=True, size=12)
+    lines = []
+    if address:
+        lines.append(address)
+    contact_bits = [b for b in (phone, email) if b]
+    if contact_bits:
+        lines.append(" · ".join(contact_bits))
+    if bin_code:
+        lines.append(f"БИН {bin_code}")
+    for line in lines:
+        lp = doc.add_paragraph()
+        lp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        lr = lp.add_run(line)
+        _set_run_font(lr, size=9)
+    doc.add_paragraph("")
+
+
 def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = False) -> None:
     """Шапка как в Excel: проект, контакт, менеджер, город, дни, выезд/возврат."""
     meta_pairs = []
@@ -298,8 +328,10 @@ def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = Fals
         meta_pairs.append(("Заказчик", context["company_name"]))
     if context.get("contact_name"):
         meta_pairs.append(("Контактное лицо проекта", context["contact_name"]))
-    if context.get("manager_name"):
-        meta_pairs.append(("Менеджер проекта", context["manager_name"]))
+    if context.get("sales_manager_name"):
+        meta_pairs.append(("Менеджер продаж", context["sales_manager_name"]))
+    if context.get("manager_name") or context.get("project_manager_name"):
+        meta_pairs.append(("Менеджер проекта", context.get("project_manager_name") or context.get("manager_name")))
     city = context.get("city") or ""
     address = context.get("event_address") or ""
     loc = " / ".join([p for p in (city, address) if p])
@@ -581,6 +613,7 @@ def generate_estimate_docx(
 
     doc = Document()
     _apply_estimate_page(doc)
+    _add_letterhead(doc, context)
 
     if mode == "client":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')} (без цен за ед.)"
@@ -764,6 +797,25 @@ class _EstimatePDF:
         self.pdf.output(path)
 
 
+def _pdf_letterhead_lines(context: Dict[str, Any]) -> List[str]:
+    name = (context.get("our_company_name") or "").strip()
+    phone = (context.get("our_company_phone") or "").strip()
+    email = (context.get("our_company_email") or "").strip()
+    address = (context.get("our_company_address") or "").strip()
+    bin_code = (context.get("our_company_bin") or "").strip()
+    lines = []
+    if name:
+        lines.append(name)
+    if address:
+        lines.append(address)
+    contact_bits = [b for b in (phone, email) if b]
+    if contact_bits:
+        lines.append(" · ".join(contact_bits))
+    if bin_code:
+        lines.append(f"БИН {bin_code}")
+    return lines
+
+
 def _pdf_meta_lines(context: Dict[str, Any], with_assignee: bool = False) -> List[str]:
     lines = []
     project = context.get("project_name") or context.get("event_name")
@@ -773,8 +825,11 @@ def _pdf_meta_lines(context: Dict[str, Any], with_assignee: bool = False) -> Lis
         lines.append(f"Заказчик: {context['company_name']}")
     if context.get("contact_name"):
         lines.append(f"Контактное лицо проекта: {context['contact_name']}")
-    if context.get("manager_name"):
-        lines.append(f"Менеджер проекта: {context['manager_name']}")
+    if context.get("sales_manager_name"):
+        lines.append(f"Менеджер продаж: {context['sales_manager_name']}")
+    pm = context.get("project_manager_name") or context.get("manager_name")
+    if pm:
+        lines.append(f"Менеджер проекта: {pm}")
     city = context.get("city") or ""
     address = context.get("event_address") or ""
     loc = " / ".join([p for p in (city, address) if p])
@@ -966,6 +1021,12 @@ def generate_estimate_pdf(
     show_unit_price = mode != "client"
 
     pdf = _EstimatePDF()
+    lh_lines = _pdf_letterhead_lines(context)
+    company_title = (context.get("our_company_name") or "").strip()
+    for i, lh in enumerate(lh_lines):
+        pdf.line(lh, bold=(i == 0 and lh == company_title))
+    if lh_lines:
+        pdf.pdf.ln(1)
     if mode == "client":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')} (без цен за ед.)"
     elif mode == "client_priced":

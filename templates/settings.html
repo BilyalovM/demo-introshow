@@ -70,17 +70,32 @@
         </div>
 
         <div class="card">
-            <h3 style="margin-top:0;">Информация о компании (Intro Show)</h3>
-            <div style="margin-top: 1rem; line-height: 1.6; color: var(--text);">
-                <p><strong>Адрес:</strong> Тюлькубасская улица, 4, Алматы, Алматинская область, Казахстан</p>
-                <p><strong>График работы:</strong> Пн - Вс, 10:00 - 22:00</p>
-                <p><strong>Телефоны:</strong></p>
-                <ul style="margin-left: 1.5rem; margin-bottom: 1rem;">
-                    <li>+7 (701) 554-13-80 (менеджер)</li>
-                    <li>+7 (702) 227-66-73 (менеджер)</li>
-                </ul>
-                <p><strong>Email:</strong> show.intro@yandex.kz</p>
-                <p><strong>Сайт:</strong> <a href="https://intro-show-rental.satu.kz/" target="_blank" style="color: var(--primary);">intro-show-rental.satu.kz</a></p>
+            <h3 style="margin-top:0;">Шапка сметы / реквизиты компании</h3>
+            <p style="font-size:14px;margin-bottom:12px;">Эти данные попадают в шапку клиентской и внутренней сметы (DOCX/PDF).</p>
+            <form id="company-letterhead-form" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <label style="display:block;font-size:13px;font-weight:600;">Название компании
+                    <input id="lh-name" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <label style="display:block;font-size:13px;font-weight:600;">БИН
+                    <input id="lh-bin" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <label style="display:block;font-size:13px;font-weight:600;">Телефон
+                    <input id="lh-phone" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <label style="display:block;font-size:13px;font-weight:600;">Email
+                    <input id="lh-email" type="email" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <label style="display:block;font-size:13px;font-weight:600;grid-column:1 / -1;">Адрес
+                    <input id="lh-address" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <div style="grid-column:1 / -1;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                    <button type="submit">Сохранить реквизиты</button>
+                    <p id="lh-msg" style="display:none;margin:0;font-size:13px;"></p>
+                </div>
+            </form>
+            <hr style="border:none;border-top:1px solid var(--border);margin:1.2rem 0;">
+            <div style="line-height:1.6;color:var(--text);font-size:13.5px;">
+                <p style="margin:0 0 6px;"><strong>Справка:</strong> график Пн–Вс 10:00–22:00 · сайт <a href="https://intro-show-rental.satu.kz/" target="_blank" style="color:var(--primary);">intro-show-rental.satu.kz</a></p>
             </div>
         </div>
 
@@ -586,10 +601,55 @@
             }
         }
 
+        async function loadCompanyLetterhead() {
+            try {
+                const res = await fetch('/api/settings/company');
+                if (!res.ok) return;
+                const d = await res.json();
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+                set('lh-name', d.company_name);
+                set('lh-phone', d.company_phone);
+                set('lh-email', d.company_email);
+                set('lh-address', d.company_address);
+                set('lh-bin', d.company_bin);
+            } catch (e) { console.error(e); }
+        }
+
+        const lhForm = document.getElementById('company-letterhead-form');
+        if (lhForm) {
+            lhForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const msg = document.getElementById('lh-msg');
+                msg.style.display = 'block';
+                msg.style.color = 'var(--muted)';
+                msg.textContent = 'Сохранение…';
+                try {
+                    const res = await fetch('/api/settings/company', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            company_name: document.getElementById('lh-name').value.trim(),
+                            company_phone: document.getElementById('lh-phone').value.trim(),
+                            company_email: document.getElementById('lh-email').value.trim(),
+                            company_address: document.getElementById('lh-address').value.trim(),
+                            company_bin: document.getElementById('lh-bin').value.trim(),
+                        }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    msg.style.color = res.ok ? '#16a34a' : '#dc2626';
+                    msg.textContent = res.ok ? 'Реквизиты сохранены' : (data.error || 'Ошибка сохранения');
+                } catch (err) {
+                    msg.style.color = '#dc2626';
+                    msg.textContent = 'Ошибка соединения';
+                }
+            });
+        }
+
         window.onload = () => {
             checkStatus();
             loadIntegrationStatus();
             loadSettingsRouting();
+            loadCompanyLetterhead();
             loadAuditLog();
             initWaHookHint();
             const filt = document.getElementById('audit-entity-filter');
