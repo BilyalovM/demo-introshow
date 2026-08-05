@@ -11,13 +11,41 @@ from docx.oxml import parse_xml, OxmlElement
 from num2words import num2words
 from typing import Dict, Any, List, Optional, Tuple
 
-# Ширины колонок DOCX (см): сумма usable ≈ 16.0 — единый правый край таблиц и блока итогов
-_DOCX_SUM_W = 3.0
-_DOCX_W_TECH = [0.9, 12.1, 3.0]  # № | Наименование | Кол-во
-_DOCX_W_6 = [0.8, 7.0, 1.5, 2.2, 1.5, _DOCX_SUM_W]  # + Цена + Смен
-_DOCX_W_5 = [0.8, 9.2, 1.5, 1.5, _DOCX_SUM_W]  # клиентская без цены
-_DOCX_W_SUB = [0.7, 4.3, 2.2, 2.0, 2.0, 1.8, _DOCX_SUM_W]
-_DOCX_W_TOTALS = [16.0 - _DOCX_SUM_W, _DOCX_SUM_W]  # label | amount = Сумма
+# A4 (21.0 cm) − поля 2.0 cm слева/справа = 17.0 cm usable.
+# Имя — flex: sum(фиксированных) + name ≤ usable. Не шире страницы (регресс c174c16: 16 cm
+# при полях 2.54 cm + CENTER обрезало таблицу слева).
+_DOCX_MARGIN_LR_CM = 2.0
+_DOCX_USABLE_CM = 21.0 - 2 * _DOCX_MARGIN_LR_CM  # 17.0
+_DOCX_SUM_W = 2.8
+_DOCX_NO_W = 0.8
+_DOCX_QTY_W = 1.5
+_DOCX_SHIFTS_W = 1.5
+_DOCX_PRICE_W = 2.2
+
+
+def _docx_col_widths(fixed_after_name: List[float], *, no_w: float = _DOCX_NO_W) -> List[float]:
+    """№ | name(flex) | …fixed… | сумма — name забирает остаток usable."""
+    fixed_sum = no_w + sum(fixed_after_name)
+    name_w = max(3.0, _DOCX_USABLE_CM - fixed_sum)
+    return [no_w, name_w, *fixed_after_name]
+
+
+_DOCX_W_TECH = _docx_col_widths([_DOCX_QTY_W + 0.5], no_w=0.9)  # № | name | Кол-во
+_DOCX_W_6 = _docx_col_widths([_DOCX_QTY_W, _DOCX_PRICE_W, _DOCX_SHIFTS_W, _DOCX_SUM_W])
+_DOCX_W_5 = _docx_col_widths([_DOCX_QTY_W, _DOCX_SHIFTS_W, _DOCX_SUM_W])  # клиент без цены
+_DOCX_W_SUB = _docx_col_widths([2.0, 2.0, 1.8, 1.6, _DOCX_SUM_W], no_w=0.7)
+_DOCX_W_TOTALS = [_DOCX_USABLE_CM - _DOCX_SUM_W, _DOCX_SUM_W]
+
+
+def _apply_estimate_page(doc: Document) -> None:
+    """Единые поля A4 — usable совпадает с _DOCX_USABLE_CM."""
+    for section in doc.sections:
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
+        section.left_margin = Cm(_DOCX_MARGIN_LR_CM)
+        section.right_margin = Cm(_DOCX_MARGIN_LR_CM)
+        section.top_margin = Cm(1.5)
+        section.bottom_margin = Cm(1.5)
 
 # Метка склада в названии позиции — клиенту не показываем
 _SUBRENTAL_NAME_RE = re.compile(r"\s*\(\s*субаренда\s*\)\s*", re.IGNORECASE)
@@ -163,26 +191,68 @@ def _set_cell_text(
 
 
 def _set_table_col_widths(table, widths_cm: List[float]) -> None:
-    """Фиксированные ширины колонок + полная ширина таблицы (единый правый край)."""
+    """Фиксированные ширины колонок ≤ usable; LEFT + indent 0 (не уезжает за край)."""
     table.autofit = False
     table.allow_autofit = False
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    total_twips = int(sum(widths_cm) * 567)  # 1 cm ≈ 567 twips
+    table.alignment = WD_TABLE_ALIGNMENT.LEFT
+    total_cm = sum(widths_cm)
+    if total_cm > _DOCX_USABLE_CM + 0.01:
+        scale = _DOCX_USABLE_CM / total_cm
+        widths_cm = [w * scale for w in widths_cm]
+        total_cm = sum(widths_cm)
+    total_twips = int(round(total_cm * 567))  # 1 cm ≈ 567 twips
+    width_twips = [int(round(w * 567)) for w in widths_cm]
+    # Поправка округления: сумма gridCol = tblW
+    drift = total_twips - sum(width_twips)
+    if width_twips:
+        width_twips[1 if len(width_twips) > 1 else 0] += drift
+
     tbl = table._tbl
     tblPr = tbl.tblPr
     if tblPr is None:
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
-    for old in tblPr.findall(qn("w:tblW")):
-        tblPr.remove(old)
+    for tag in ("w:tblW", "w:tblInd", "w:tblLayout"):
+        for old in tblPr.findall(qn(tag)):
+            tblPr.remove(old)
     tblW = OxmlElement("w:tblW")
     tblW.set(qn("w:w"), str(total_twips))
     tblW.set(qn("w:type"), "dxa")
     tblPr.append(tblW)
+    tblInd = OxmlElement("w:tblInd")
+    tblInd.set(qn("w:w"), "0")
+    tblInd.set(qn("w:type"), "dxa")
+    tblPr.append(tblInd)
+    tblLayout = OxmlElement("w:tblLayout")
+    tblLayout.set(qn("w:type"), "fixed")
+    tblPr.append(tblLayout)
+
+    # tblGrid — Word надёжнее берёт ширины отсюда, чем только с tcW
+    tblGrid = tbl.tblGrid
+    if tblGrid is None:
+        tblGrid = OxmlElement("w:tblGrid")
+        tbl.insert(1, tblGrid)
+    else:
+        for old in list(tblGrid):
+            tblGrid.remove(old)
+    for tw in width_twips:
+        gridCol = OxmlElement("w:gridCol")
+        gridCol.set(qn("w:w"), str(tw))
+        tblGrid.append(gridCol)
+
     for row in table.rows:
-        for idx, w in enumerate(widths_cm):
-            if idx < len(row.cells):
-                row.cells[idx].width = Cm(w)
+        for idx, tw in enumerate(width_twips):
+            if idx >= len(row.cells):
+                continue
+            cell = row.cells[idx]
+            cell.width = Cm(widths_cm[idx])
+            tcPr = cell._tc.get_or_add_tcPr()
+            for old in tcPr.findall(qn("w:tcW")):
+                tcPr.remove(old)
+            tcW = OxmlElement("w:tcW")
+            tcW.set(qn("w:w"), str(tw))
+            tcW.set(qn("w:type"), "dxa")
+            tcPr.append(tcW)
 
 
 def _item_section_name(item: Dict[str, Any]) -> str:
@@ -284,15 +354,18 @@ def _add_estimate_table(
 
     global_idx = 0
     for section, section_items in _group_items(items).items():
-        # Section / column header (coral)
+        # Section / column header (coral): категория в №+Наименование (merge),
+        # справа — Кол-во / Смен / Сумма (полное имя не обрезается).
         hdr = table.add_row().cells
-        _set_cell_text(hdr[0], section, bold=True, size=10, align=header_aligns[0])
-        for i, h in enumerate(headers):
-            if i == 0:
-                continue
-            _set_cell_text(hdr[i], h, bold=True, size=9, align=header_aligns[i])
+        _set_cell_text(hdr[0], section, bold=True, size=10, align="left")
+        if cols >= 2:
+            _set_cell_text(hdr[1], "", size=9)
+        for i in range(2, cols):
+            _set_cell_text(hdr[i], headers[i], bold=True, size=9, align=header_aligns[i])
         for c in hdr:
             _shade_cell(c, COLOR_CORAL)
+        if cols >= 2:
+            hdr[0].merge(hdr[1])
 
         section_sum = 0.0
         for item in section_items:
@@ -446,6 +519,7 @@ def _add_totals_block(doc: Document, context: Dict[str, Any], mode: str) -> None
 def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
     """Техничка для склада/персонала: позиции и количества без цен."""
     doc = Document()
+    _apply_estimate_page(doc)
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -485,6 +559,7 @@ def generate_estimate_docx(
     show_unit_price = mode != "client"
 
     doc = Document()
+    _apply_estimate_page(doc)
 
     if mode == "client":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
