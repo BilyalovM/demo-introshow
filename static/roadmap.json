@@ -1,10 +1,10 @@
 {
-  "updated_at": "2026-08-05",
+  "updated_at": "2026-08-08",
   "title": "Intro Show CRM — статус и roadmap",
-  "summary": "v2 готов к привыканию сотрудников: квалификация лидов, менеджеры продаж/проекта, фиксы в марже, шапка сметы, deploy-server.md. Vercel — демо; боевой контур — VPS+Postgres.",
+  "summary": "v2: квалификация, менеджеры, фиксы, шапка сметы + MVP субаренды (резерв/выдача/возврат, блок на Сегодня). Vercel — демо; боевой контур — VPS+Postgres.",
   "stats": {
     "core_pct": 99,
-    "done": 45,
+    "done": 46,
     "partial": 2,
     "missing": 1
   },
@@ -16,6 +16,7 @@
     { "stage": "Хаб сделки (timeline + блоки)", "status": "done" },
     { "stage": "Единая смета (редакт только /quotes/)", "status": "done" },
     { "stage": "Экран «Сегодня»", "status": "done" },
+    { "stage": "Субаренда: резерв / выдача / возврат", "status": "done" },
     { "stage": "Денежная картина / маржа проекта", "status": "done" },
     { "stage": "Отгрузка (собрали→…→закрыли)", "status": "done" },
     { "stage": "In-app уведомления", "status": "done" },
@@ -35,6 +36,7 @@
     { "block": "Deal hub", "detail": "Карточка сделки: поля слева; справа хаб (смета, маржа, команда, задачи, отгрузка, чат)" },
     { "block": "Unified estimate", "detail": "CRM «Товары» = preview + «Открыть смету»; редактирование на /quotes/" },
     { "block": "Сегодня", "detail": "/today — назначения/техничка, мои задачи, unread чаты" },
+    { "block": "Subrental ops", "detail": "Статусы reserved/issued/returned на позициях сметы; блок в CRM; «Субаренда сегодня» на /today" },
     { "block": "Money picture", "detail": "Выручка → субаренда → ФОТ → расходы → фиксы менеджеров → маржа" },
     { "block": "Ops pipeline", "detail": "ops_status: собрали / уехали / на площадке / вернули / закрыли" },
     { "block": "Notifications", "detail": "Колокольчик: @mention, назначение на проект, новая задача; polling" },
@@ -46,7 +48,7 @@
     { "block": "Sessions", "detail": "Secure cookie, TTL 7д, session_version + logout-all" },
     { "block": "Rate limit", "detail": "POST login и /api/leads — sliding window, 429" },
     { "block": "Аренда/Продажа", "detail": "Две deal-воронки; выбор при конвертации лида" },
-    { "block": "Lead qualification", "detail": "Поле rental/sale/spam; обязательно перед успехом; spam → отказ без сделки" },
+    { "block": "Lead qualification", "detail": "Поле rental/sale/spam; обязательно перед успехом; spam → отказ, без сделки" },
     { "block": "Sales/Project managers", "detail": "sales_manager_id + project_manager_id в карточке и истории" },
     { "block": "Manager fix pay", "detail": "sales_fix_kzt / project_fix_kzt + margin_target_pct в денежной картине" },
     { "block": "Estimate letterhead", "detail": "Реквизиты компании в Настройках → шапка DOCX/PDF сметы" },
@@ -88,7 +90,8 @@
         { "id": "v2-10", "content": "Глобальный поиск", "status": "done" },
         { "id": "v2-11", "content": "Audit / сессии / rate limit / Аренда+Продажа", "status": "done" },
         { "id": "v2-12", "content": "Квалификация лидов + менеджеры + фиксы + шапка сметы", "status": "done" },
-        { "id": "v2-13", "content": "docs/deploy-server.md для пуска сотрудников", "status": "done" }
+        { "id": "v2-13", "content": "docs/deploy-server.md для пуска сотрудников", "status": "done" },
+        { "id": "v2-14", "content": "Субаренда ops: резерв / выдача / возврат + Сегодня", "status": "done" }
       ]
     },
     {

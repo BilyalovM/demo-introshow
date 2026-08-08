@@ -812,6 +812,17 @@
                     </thead>
                     <tbody id="deal-products-list"></tbody>
                 </table>
+
+                <div id="deal-subrental-block" style="display:none;margin-top:16px;">
+                    <div class="slider-info-card" style="margin:0;">
+                        <div class="slider-info-card-header">
+                            <span>Субаренда</span>
+                            <span class="muted" id="deal-subrental-summary" style="font-size:12px;"></span>
+                        </div>
+                        <div class="slider-info-card-body" id="deal-subrental-list" style="padding-top:8px;"></div>
+                    </div>
+                </div>
+
                 <div style="display: flex; justify-content: flex-end; margin-top: 16px; gap: 16px; font-weight: 700; font-size: 14px; flex-wrap: wrap;">
                     <div>Скидка: <span id="modal-discount-label">0%</span></div>
                     <div>Налог: <span id="modal-tax-label">16%</span></div>
@@ -1138,6 +1149,16 @@
         { id: 'returned', label: 'Вернули' },
         { id: 'closed', label: 'Закрыли' },
     ];
+    const SUBRENTAL_STEPS = [
+        { id: 'reserved', label: 'В резерв' },
+        { id: 'issued', label: 'Выдано' },
+        { id: 'returned', label: 'Вернули' },
+    ];
+    const SUBRENTAL_BADGE = {
+        reserved: { bg: '#fff7ed', color: '#c2410c', label: 'В резерве' },
+        issued: { bg: '#ecfdf5', color: '#047857', label: 'Выдано' },
+        returned: { bg: '#f1f5f9', color: '#475569', label: 'Вернули' },
+    };
 
     async function initCrm() {
         try {
@@ -1810,6 +1831,7 @@
 
             // Draw products & timeline (history + activities)
             drawProductRows();
+            renderDealSubrental();
             renderDealOpsPipeline();
             renderDealMoneyPicture();
             renderDealHub(data);
@@ -2874,6 +2896,89 @@
         });
     }
 
+    function dealSubrentalItems() {
+        return (currentDealProducts || []).filter(p => (p.warehouse_type || 'own') === 'subrental');
+    }
+
+    function renderDealSubrental() {
+        const block = document.getElementById('deal-subrental-block');
+        const list = document.getElementById('deal-subrental-list');
+        const summary = document.getElementById('deal-subrental-summary');
+        if (!block || !list) return;
+        const items = dealSubrentalItems();
+        if (!items.length) {
+            block.style.display = 'none';
+            list.innerHTML = '';
+            if (summary) summary.textContent = '';
+            return;
+        }
+        block.style.display = '';
+        const reserved = items.filter(i => (i.subrental_status || 'reserved') === 'reserved').length;
+        const issued = items.filter(i => i.subrental_status === 'issued').length;
+        const returned = items.filter(i => i.subrental_status === 'returned').length;
+        if (summary) summary.textContent = `${items.length} поз. · резерв ${reserved} · выдано ${issued} · вернули ${returned}`;
+        list.innerHTML = items.map(prod => {
+            const st = prod.subrental_status || 'reserved';
+            const badge = SUBRENTAL_BADGE[st] || SUBRENTAL_BADGE.reserved;
+            const whoBits = [];
+            if (st === 'issued' || st === 'returned') {
+                if (prod.issued_by_name || prod.issued_at) {
+                    whoBits.push(`выдал${prod.issued_by_name ? ' ' + escapeHtml(prod.issued_by_name) : ''}${prod.issued_at ? ' · ' + escapeHtml(prod.issued_at) : ''}`);
+                }
+            }
+            if (st === 'returned' && (prod.returned_by_name || prod.returned_at)) {
+                whoBits.push(`вернул${prod.returned_by_name ? ' ' + escapeHtml(prod.returned_by_name) : ''}${prod.returned_at ? ' · ' + escapeHtml(prod.returned_at) : ''}`);
+            }
+            const btns = SUBRENTAL_STEPS.map(s => {
+                const on = st === s.id;
+                return `<button type="button" class="btn btn-sm" style="${on ? 'background:var(--primary);color:#fff;border-color:var(--primary);' : ''}"
+                    onclick="setSubrentalStatus(${prod.id}, '${s.id}')">${escapeHtml(s.label)}</button>`;
+            }).join('');
+            return `
+                <div style="padding:10px 0;border-bottom:1px solid var(--border);">
+                    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+                        <div style="min-width:0;flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">
+                                ${escapeHtml(prod.name || '')}
+                                <span style="font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:999px;background:${badge.bg};color:${badge.color};margin-left:4px;">${badge.label}</span>
+                            </div>
+                            <div class="muted" style="font-size:12px;margin-top:3px;">
+                                ×${prod.quantity || 1}
+                                ${prod.supplier ? ' · ' + escapeHtml(prod.supplier) : ''}
+                            </div>
+                            ${whoBits.length ? `<div class="muted" style="font-size:11.5px;margin-top:3px;">${whoBits.join(' · ')}</div>` : ''}
+                            ${prod.subrental_note ? `<div class="muted" style="font-size:11.5px;margin-top:2px;">${escapeHtml(prod.subrental_note)}</div>` : ''}
+                        </div>
+                        <div style="display:flex;gap:5px;flex-wrap:wrap;">${btns}</div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    async function setSubrentalStatus(itemId, status) {
+        if (!activeDealId || !itemId) return;
+        const res = await fetch(`/api/deal-items/${itemId}/subrental-status`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || 'Не удалось обновить статус субаренды'); return; }
+        const prod = (currentDealProducts || []).find(p => p.id === itemId);
+        if (prod) {
+            prod.subrental_status = data.subrental_status || status;
+            prod.subrental_status_label = data.subrental_status_label || '';
+            prod.issued_at = data.issued_at || '';
+            prod.issued_by_id = data.issued_by_id || null;
+            prod.issued_by_name = data.issued_by_name || '';
+            prod.returned_at = data.returned_at || '';
+            prod.returned_by_id = data.returned_by_id || null;
+            prod.returned_by_name = data.returned_by_name || '';
+            prod.subrental_note = data.subrental_note || '';
+        }
+        renderDealSubrental();
+        renderDealHub();
+    }
+
     function renderDealOpsPipeline() {
         const box = document.getElementById('deal-ops-pipeline');
         if (!box) return;
@@ -2888,6 +2993,18 @@
 
     async function setDealOpsStatus(status) {
         if (!activeDealId) return;
+        if (status === 'departed') {
+            const stillReserved = dealSubrentalItems().filter(p => (p.subrental_status || 'reserved') === 'reserved');
+            if (stillReserved.length) {
+                const names = stillReserved.map(p => `«${p.name}» ×${p.quantity || 1}`).join(', ');
+                const ok = confirm(
+                    'Внимание: есть субаренда ещё в резерве (не выдана):\n\n' +
+                    names +
+                    '\n\nВсё равно поставить «Уехали»?'
+                );
+                if (!ok) return;
+            }
+        }
         const res = await fetch(`/api/deals/${activeDealId}/ops-status`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ops_status: status })
@@ -2898,7 +3015,6 @@
         renderDealOpsPipeline();
         renderDealHub();
     }
-
     function moneyFmt(n) {
         return (Number(n) || 0).toLocaleString('ru-RU') + ' ₸';
     }
@@ -2995,7 +3111,20 @@
                     <a class="btn btn-sm" href="/chats?deal=${activeDealId}">Чат сделки</a>
                     <button type="button" class="btn btn-sm btn-green" onclick="sendClientPack()">Клиенту</button>
                 </div>
-            </div>`;
+            </div>
+            ${(() => {
+                const subs = dealSubrentalItems();
+                if (!subs.length) return '';
+                const reserved = subs.filter(p => (p.subrental_status || 'reserved') === 'reserved').length;
+                const issued = subs.filter(p => p.subrental_status === 'issued').length;
+                return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-2);display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <div>
+                        <div class="muted" style="font-size:11px;">Субаренда</div>
+                        <div style="font-weight:700;font-size:13px;margin-top:2px;">${subs.length} поз. · выдано ${issued}${reserved ? ' · резерв ' + reserved : ''}</div>
+                    </div>
+                    <button type="button" class="btn btn-sm" onclick="switchSliderTab('products')">Открыть</button>
+                </div>`;
+            })()}`;
     }
 
     async function sendClientPack() {

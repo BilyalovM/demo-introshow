@@ -4,15 +4,19 @@
 <div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
     <div>
         <h1 style="margin:0;font-size:1.45rem;">Сегодня</h1>
-        <p class="muted" style="margin:6px 0 0;font-size:13.5px;">Назначения, техничка, задачи и непрочитанные чаты команды</p>
+        <p class="muted" style="margin:6px 0 0;font-size:13.5px;">Назначения, субаренда, задачи и непрочитанные чаты команды</p>
     </div>
     <div id="today-date-label" class="muted" style="font-size:13px;"></div>
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px;" id="today-stats">
+<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px;" id="today-stats">
     <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface);">
         <div class="muted" style="font-size:12px;">Назначения</div>
         <div id="stat-assignments" style="font-weight:800;font-size:1.4rem;margin-top:4px;">—</div>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface);">
+        <div class="muted" style="font-size:12px;">Субаренда</div>
+        <div id="stat-subrentals" style="font-weight:800;font-size:1.4rem;margin-top:4px;">—</div>
     </div>
     <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface);">
         <div class="muted" style="font-size:12px;">Мои задачи</div>
@@ -28,6 +32,10 @@
     <section>
         <h2 style="font-size:1.05rem;margin:0 0 10px;">Выезды и техничка</h2>
         <div id="today-assignments" style="display:flex;flex-direction:column;gap:10px;"></div>
+
+        <h2 style="font-size:1.05rem;margin:22px 0 10px;">Субаренда сегодня</h2>
+        <div id="today-subrentals" style="display:flex;flex-direction:column;gap:10px;"></div>
+
         <h2 style="font-size:1.05rem;margin:22px 0 10px;">Мои задачи</h2>
         <div id="today-tasks" style="display:flex;flex-direction:column;gap:8px;"></div>
     </section>
@@ -41,6 +49,13 @@
 @media (max-width: 900px) {
     #today-stats, .page-head + div + div { grid-template-columns: 1fr !important; }
 }
+.sub-badge {
+    display:inline-block; font-size:10.5px; font-weight:700;
+    padding:2px 7px; border-radius:999px;
+}
+.sub-badge-reserved { background:#fff7ed; color:#c2410c; }
+.sub-badge-issued { background:#ecfdf5; color:#047857; }
+.sub-badge-returned { background:#f1f5f9; color:#475569; }
 </style>
 {% endblock %}
 
@@ -48,6 +63,7 @@
 <script>
 (function() {
     const DAY_LABEL = { today: 'Сегодня', tomorrow: 'Завтра', soon: 'Скоро', overdue: 'Просрочено', later: 'Позже' };
+    const SUB_LABEL = { reserved: 'В резерве', issued: 'Выдано', returned: 'Вернули' };
 
     function esc(s) {
         return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -62,6 +78,8 @@
         document.getElementById('stat-assignments').textContent = data.counts.assignments;
         document.getElementById('stat-tasks').textContent = data.counts.tasks;
         document.getElementById('stat-chats').textContent = data.counts.unread_chats;
+        document.getElementById('stat-subrentals').textContent = (data.counts && data.counts.subrentals != null)
+            ? data.counts.subrentals : ((data.subrentals || []).length);
 
         const aBox = document.getElementById('today-assignments');
         if (!(data.assignments || []).length) {
@@ -88,6 +106,46 @@
                         </div>
                     </div>
                 </div>`).join('');
+        }
+
+        const sBox = document.getElementById('today-subrentals');
+        const subs = data.subrentals || [];
+        if (!subs.length) {
+            sBox.innerHTML = '<div class="muted" style="padding:12px;border:1px dashed var(--border);border-radius:10px;">Нет сделок с субарендой на сегодня и завтра.</div>';
+        } else {
+            sBox.innerHTML = subs.map(s => {
+                const c = s.counts || {};
+                const itemRows = (s.items || []).map(it => {
+                    const st = it.subrental_status || 'reserved';
+                    const who = st === 'issued' && it.issued_by_name
+                        ? ` · выдал ${esc(it.issued_by_name)}`
+                        : (st === 'returned' && it.returned_by_name ? ` · вернул ${esc(it.returned_by_name)}` : '');
+                    return `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                        <span>${esc(it.name)} <strong>×${it.quantity}</strong>${it.supplier ? ' · ' + esc(it.supplier) : ''}${who}</span>
+                        <span class="sub-badge sub-badge-${st}">${esc(it.subrental_status_label || SUB_LABEL[st] || st)}</span>
+                    </div>`;
+                }).join('');
+                return `
+                <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface);">
+                    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start;">
+                        <div style="min-width:0;flex:1;">
+                            <div style="font-weight:800;">${esc(s.deal_title)}</div>
+                            <div class="muted" style="font-size:12.5px;margin-top:3px;">
+                                ${DAY_LABEL[s.day] || s.day}
+                                ${s.setup_date ? ' · монтаж ' + esc(s.setup_date) : ''}
+                                ${s.event_date ? ' · ивент ' + esc(s.event_date) : ''}
+                                · ${esc(s.assignee_name || '—')}
+                            </div>
+                            <div style="font-size:12px;margin-top:4px;">
+                                Поставщик: <strong>${esc(s.suppliers || '—')}</strong>
+                                · резерв ${c.reserved || 0} · выдано ${c.issued || 0} · вернули ${c.returned || 0}
+                            </div>
+                            <div style="margin-top:6px;">${itemRows}</div>
+                        </div>
+                        <a class="btn btn-sm btn-primary" href="${esc(s.crm_url || ('/crm?deal=' + s.deal_id))}">Сделка</a>
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         const tBox = document.getElementById('today-tasks');

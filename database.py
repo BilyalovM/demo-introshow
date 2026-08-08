@@ -231,9 +231,18 @@ class DealItem(Base):
     quantity = Column(Integer, default=1)
     days = Column(Integer, default=1)
     price = Column(Float, nullable=True)  # цена в этой смете; null = текущая цена склада
+    # Операции субаренды (только для warehouse_type=subrental; для своего склада — null)
+    subrental_status = Column(String, nullable=True)  # reserved | issued | returned
+    issued_at = Column(DateTime, nullable=True)
+    issued_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    returned_at = Column(DateTime, nullable=True)
+    returned_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subrental_note = Column(String, nullable=True)
 
     deal = relationship("Deal", back_populates="items")
     equipment = relationship("Equipment")
+    issued_by = relationship("User", foreign_keys=[issued_by_id])
+    returned_by = relationship("User", foreign_keys=[returned_by_id])
 
 class CustomField(Base):
     __tablename__ = "custom_fields"

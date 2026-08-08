@@ -307,6 +307,13 @@ with Session(engine) as session:
         "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
         # v2: операционный пайплайн отгрузки
         "ALTER TABLE deals ADD COLUMN ops_status VARCHAR DEFAULT 'none'",
+        # v2: статусы выдачи субаренды на позициях сметы
+        "ALTER TABLE deal_items ADD COLUMN subrental_status VARCHAR",
+        "ALTER TABLE deal_items ADD COLUMN issued_at DATETIME",
+        "ALTER TABLE deal_items ADD COLUMN issued_by_id INTEGER",
+        "ALTER TABLE deal_items ADD COLUMN returned_at DATETIME",
+        "ALTER TABLE deal_items ADD COLUMN returned_by_id INTEGER",
+        "ALTER TABLE deal_items ADD COLUMN subrental_note VARCHAR",
         # Сотрудник на проекте ↔ задача «Выезд»
         "ALTER TABLE deal_staff_assignments ADD COLUMN task_id INTEGER",
         "ALTER TABLE deal_staff_assignments ADD COLUMN attachment_id INTEGER",
@@ -3218,6 +3225,88 @@ OPS_STATUSES = [
 ]
 OPS_STATUS_LABELS = {k: v for k, v in OPS_STATUSES}
 
+SUBRENTAL_STATUSES = [
+    ("reserved", "В резерве"),
+    ("issued", "Выдано"),
+    ("returned", "Вернули"),
+]
+SUBRENTAL_STATUS_LABELS = {k: v for k, v in SUBRENTAL_STATUSES}
+
+
+def _user_display_name(u: Optional[User]) -> str:
+    if not u:
+        return ""
+    return (u.full_name or u.username or "").strip()
+
+
+def _fmt_dt(dt) -> str:
+    if not dt:
+        return ""
+    try:
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(dt)[:16]
+
+
+def _serialize_deal_item_subrental(di: DealItem) -> dict:
+    status = getattr(di, "subrental_status", None) or None
+    return {
+        "subrental_status": status,
+        "subrental_status_label": SUBRENTAL_STATUS_LABELS.get(status or "", "") if status else "",
+        "issued_at": _fmt_dt(getattr(di, "issued_at", None)),
+        "issued_by_id": getattr(di, "issued_by_id", None),
+        "issued_by_name": _user_display_name(getattr(di, "issued_by", None)),
+        "returned_at": _fmt_dt(getattr(di, "returned_at", None)),
+        "returned_by_id": getattr(di, "returned_by_id", None),
+        "returned_by_name": _user_display_name(getattr(di, "returned_by", None)),
+        "subrental_note": getattr(di, "subrental_note", None) or "",
+    }
+
+
+def _apply_subrental_defaults(di: DealItem, eq: Optional[Equipment], preserved: Optional[dict] = None) -> None:
+    """Для позиций субаренды: reserved если пусто; при сохранении сметы сохраняем прошлый статус."""
+    wtype = (getattr(eq, "warehouse_type", None) or "own") if eq else "own"
+    if wtype != "subrental":
+        di.subrental_status = None
+        di.issued_at = None
+        di.issued_by_id = None
+        di.returned_at = None
+        di.returned_by_id = None
+        di.subrental_note = None
+        return
+    if preserved and preserved.get("subrental_status"):
+        di.subrental_status = preserved["subrental_status"]
+        di.issued_at = preserved.get("issued_at")
+        di.issued_by_id = preserved.get("issued_by_id")
+        di.returned_at = preserved.get("returned_at")
+        di.returned_by_id = preserved.get("returned_by_id")
+        di.subrental_note = preserved.get("subrental_note")
+    elif not getattr(di, "subrental_status", None):
+        di.subrental_status = "reserved"
+
+
+def _preserve_subrental_by_equipment(old_items: list) -> dict:
+    """equipment_id → снимок статуса субаренды (при replace-all сметы)."""
+    out = {}
+    for oi in old_items or []:
+        st = getattr(oi, "subrental_status", None)
+        if not st:
+            continue
+        # если дубли — оставляем более «продвинутый» статус
+        rank = {"reserved": 1, "issued": 2, "returned": 3}
+        prev = out.get(oi.equipment_id)
+        if prev and rank.get(prev.get("subrental_status"), 0) >= rank.get(st, 0):
+            continue
+        out[oi.equipment_id] = {
+            "subrental_status": st,
+            "issued_at": getattr(oi, "issued_at", None),
+            "issued_by_id": getattr(oi, "issued_by_id", None),
+            "returned_at": getattr(oi, "returned_at", None),
+            "returned_by_id": getattr(oi, "returned_by_id", None),
+            "subrental_note": getattr(oi, "subrental_note", None),
+        }
+    return out
+
 
 def _money_picture(deal: Deal, totals: Optional[dict] = None) -> dict:
     """Единая денежная картина сделки: выручка → затраты → маржа."""
@@ -3964,11 +4053,14 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
         try:
             items_list = json.loads(deal.items_json)
             for it in items_list:
+                eq_id = it['id']
+                eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
                 db_item = DealItem(
-                    deal_id=db_deal.id, equipment_id=it['id'],
+                    deal_id=db_deal.id, equipment_id=eq_id,
                     quantity=it['qty'], days=it['days'],
                     price=it.get('price'),
                 )
+                _apply_subrental_defaults(db_item, eq)
                 db.add(db_item)
             db.commit()
             _recalc_deal_sum(db, db_deal)
@@ -4156,7 +4248,7 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
     for i in d.items:
         price = 0 if hide else _item_price(i)
         eq = i.equipment
-        items.append({
+        row = {
             "id": i.id,
             "equipment_id": i.equipment_id,
             "quantity": i.quantity,
@@ -4169,7 +4261,9 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
             "cost_price": 0 if (hide or _user_hide_subrental_cost(user)) else float(getattr(eq, "cost_price", 0) or 0) if eq else 0,
             "supplier": getattr(eq, "supplier", None) if eq else None,
             "category": eq.category if eq else "",
-        })
+        }
+        row.update(_serialize_deal_item_subrental(i))
+        items.append(row)
 
     totals = None if hide else _estimate_totals_payload(_calc_deal(d))
     hide_margin = _user_hide_margin(user)
@@ -4332,20 +4426,29 @@ def update_deal_items(
     if auth.user_has_flag(user, "role_project") and not auth.user_has_flag(user, "role_sales") and user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Смету меняет менеджер продаж"})
 
+    old_items = db.query(DealItem).filter(DealItem.deal_id == deal_id).all()
+    preserved = _preserve_subrental_by_equipment(old_items)
+
     # Remove old items
     db.query(DealItem).filter(DealItem.deal_id == deal_id).delete()
-    
-    # Add new items
+
+    # Add new items (субаренда → reserved, статус выдачи сохраняем по equipment_id)
+    eq_ids = [i["equipment_id"] for i in (update.items or []) if i.get("equipment_id")]
+    eq_map = {
+        e.id: e for e in db.query(Equipment).filter(Equipment.id.in_(eq_ids)).all()
+    } if eq_ids else {}
     for i in update.items:
+        eq_id = i["equipment_id"]
         di = DealItem(
             deal_id=deal_id,
-            equipment_id=i["equipment_id"],
+            equipment_id=eq_id,
             quantity=i["quantity"],
             days=i["days"],
             price=i.get("price"),
         )
+        _apply_subrental_defaults(di, eq_map.get(eq_id), preserved.get(eq_id))
         db.add(di)
-        
+
     d.discount_percentage = update.discount_percentage
     d.tax_percentage = FIXED_TAX_PERCENTAGE
     audit.write_audit(
@@ -4357,7 +4460,7 @@ def update_deal_items(
     db.commit()
     db.refresh(d)
     _recalc_deal_sum(db, d)
-    
+
     return {
         "status": "success",
         "final_sum": d.final_sum,
@@ -6562,6 +6665,94 @@ def update_deal_ops_status(
     return {"status": "success", "ops_status": status, "ops_status_label": OPS_STATUS_LABELS[status]}
 
 
+class SubrentalStatusUpdate(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+@app.put("/api/deal-items/{item_id}/subrental-status")
+def update_deal_item_subrental_status(
+    item_id: int,
+    body: SubrentalStatusUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Смена статуса субаренды: reserved / issued / returned."""
+    di = db.query(DealItem).filter(DealItem.id == item_id).first()
+    if not di:
+        return JSONResponse(status_code=404, content={"error": "Позиция не найдена"})
+    eq = di.equipment
+    wtype = (getattr(eq, "warehouse_type", None) or "own") if eq else "own"
+    if wtype != "subrental":
+        return JSONResponse(status_code=400, content={"error": "Статус субаренды только для позиций внешнего склада"})
+    status = (body.status or "").strip().lower()
+    if status not in SUBRENTAL_STATUS_LABELS:
+        return JSONResponse(status_code=400, content={"error": "Статус: reserved / issued / returned"})
+
+    old = getattr(di, "subrental_status", None) or "reserved"
+    now = datetime.utcnow()
+    di.subrental_status = status
+    if body.note is not None:
+        note = (body.note or "").strip()
+        di.subrental_note = note[:500] if note else None
+
+    if status == "reserved":
+        di.issued_at = None
+        di.issued_by_id = None
+        di.returned_at = None
+        di.returned_by_id = None
+    elif status == "issued":
+        di.issued_at = getattr(di, "issued_at", None) or now
+        di.issued_by_id = user.id
+        di.returned_at = None
+        di.returned_by_id = None
+    elif status == "returned":
+        if not getattr(di, "issued_at", None):
+            di.issued_at = now
+            di.issued_by_id = di.issued_by_id or user.id
+        di.returned_at = now
+        di.returned_by_id = user.id
+
+    eq_name = eq.name if eq else f"#{di.equipment_id}"
+    who = _user_display_name(user) or "—"
+    if old != status:
+        db.add(DealHistory(
+            deal_id=di.deal_id,
+            action_text=(
+                f"Субаренда «{eq_name}»: "
+                f"{SUBRENTAL_STATUS_LABELS.get(old, old)} → {SUBRENTAL_STATUS_LABELS[status]} "
+                f"({who})"
+            ),
+        ))
+    audit.write_audit(
+        db, user_id=user.id, entity_type="deal", entity_id=di.deal_id,
+        action="subrental_status",
+        diff={
+            "deal_item_id": di.id,
+            "equipment_id": di.equipment_id,
+            "equipment_name": eq_name,
+            "from": old,
+            "to": status,
+            "note": di.subrental_note or "",
+        },
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    db.refresh(di)
+    payload = {
+        "status": "success",
+        "id": di.id,
+        "deal_id": di.deal_id,
+        "equipment_id": di.equipment_id,
+        "name": eq_name,
+        "quantity": di.quantity,
+        "supplier": getattr(eq, "supplier", None) if eq else None,
+    }
+    payload.update(_serialize_deal_item_subrental(di))
+    return payload
+
+
 @app.get("/api/deals/{deal_id}/client-pack")
 def deal_client_pack(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Ссылки клиентского пакета: смета + договор (PDF). Без ЭЦП."""
@@ -6693,16 +6884,82 @@ def api_today(db: Session = Depends(get_db), user: User = Depends(get_current_us
         })
     unread_chats.sort(key=lambda x: -x["unread"])
 
+    # Субаренда сегодня / завтра: сделки с датой монтажа/ивента и позициями subrental
+    sub_deals = (
+        db.query(Deal)
+        .filter(
+            Deal.is_archived == False,  # noqa: E712
+            ((Deal.setup_date.in_([today, tomorrow])) | (Deal.event_date.in_([today, tomorrow]))),
+        )
+        .order_by(Deal.setup_date.asc(), Deal.id.desc())
+        .limit(80)
+        .all()
+    )
+    subrentals_today = []
+    for deal in sub_deals:
+        sub_items = []
+        for di in (deal.items or []):
+            eq = di.equipment
+            if not eq or (getattr(eq, "warehouse_type", None) or "own") != "subrental":
+                continue
+            st = getattr(di, "subrental_status", None) or "reserved"
+            sub_items.append({
+                "id": di.id,
+                "name": eq.name,
+                "quantity": di.quantity,
+                "supplier": getattr(eq, "supplier", None) or "",
+                "subrental_status": st,
+                "subrental_status_label": SUBRENTAL_STATUS_LABELS.get(st, st),
+                "issued_by_name": _user_display_name(getattr(di, "issued_by", None)),
+                "issued_at": _fmt_dt(getattr(di, "issued_at", None)),
+                "returned_by_name": _user_display_name(getattr(di, "returned_by", None)),
+                "returned_at": _fmt_dt(getattr(di, "returned_at", None)),
+            })
+        if not sub_items:
+            continue
+        if deal.setup_date == today or deal.event_date == today:
+            day = "today"
+        elif deal.setup_date == tomorrow or deal.event_date == tomorrow:
+            day = "tomorrow"
+        else:
+            day = "soon"
+        assignee_name = ""
+        if deal.assignee:
+            assignee_name = _user_display_name(deal.assignee)
+        elif getattr(deal, "project_manager", None):
+            assignee_name = _user_display_name(deal.project_manager)
+        reserved_n = sum(1 for x in sub_items if x["subrental_status"] == "reserved")
+        issued_n = sum(1 for x in sub_items if x["subrental_status"] == "issued")
+        returned_n = sum(1 for x in sub_items if x["subrental_status"] == "returned")
+        subrentals_today.append({
+            "deal_id": deal.id,
+            "deal_title": deal.title,
+            "setup_date": deal.setup_date or "",
+            "event_date": deal.event_date or "",
+            "day": day,
+            "assignee_name": assignee_name or "—",
+            "ops_status": getattr(deal, "ops_status", None) or "none",
+            "ops_status_label": OPS_STATUS_LABELS.get(getattr(deal, "ops_status", None) or "none", "—"),
+            "items": sub_items,
+            "items_summary": ", ".join(f"{x['name']} ×{x['quantity']}" for x in sub_items[:6])
+                + ("…" if len(sub_items) > 6 else ""),
+            "suppliers": ", ".join(sorted({x["supplier"] for x in sub_items if x["supplier"]})) or "—",
+            "counts": {"reserved": reserved_n, "issued": issued_n, "returned": returned_n, "total": len(sub_items)},
+            "crm_url": f"/crm?deal={deal.id}",
+        })
+
     return {
         "today": today,
         "tomorrow": tomorrow,
         "assignments": assignments,
         "tasks": my_tasks,
         "unread_chats": unread_chats[:30],
+        "subrentals": subrentals_today,
         "counts": {
             "assignments": len(assignments),
             "tasks": len(my_tasks),
             "unread_chats": len(unread_chats),
+            "subrentals": len(subrentals_today),
         },
     }
 

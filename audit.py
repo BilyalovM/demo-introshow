@@ -75,6 +75,7 @@ ACTION_LABELS = {
     "pipeline_change": "воронка",
     "logout_all": "выход со всех устройств",
     "login": "вход",
+    "subrental_status": "статус субаренды",
 }
 
 ENTITY_LABELS = {
