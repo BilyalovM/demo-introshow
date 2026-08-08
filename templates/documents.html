@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Документы — Intro Show{% endblock %}
+
+{% block extra_head %}
+<style>
+.docs-toolbar {
+    display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;
+    margin-bottom:16px;
+}
+.docs-toolbar label {
+    display:flex; flex-direction:column; gap:4px;
+    font-size:12px; font-weight:700; color:var(--muted);
+}
+.docs-toolbar select, .docs-toolbar input {
+    min-width:160px; padding:0.55rem 0.7rem;
+    border:1px solid var(--border); border-radius:8px;
+    background:var(--background); color:var(--text); font-size:13.5px;
+}
+.docs-toolbar .btn-row { display:flex; gap:8px; align-items:center; }
+.doc-status {
+    display:inline-block; padding:2px 8px; border-radius:999px;
+    font-size:11px; font-weight:700; letter-spacing:.02em;
+}
+.doc-status.generated { background:#dcfce7; color:#15803d; }
+.doc-status.stored { background:#dbeafe; color:#1d4ed8; }
+.doc-status.available { background:var(--bg-2); color:var(--muted); }
+.docs-table td { vertical-align:middle; }
+.docs-actions { display:flex; gap:6px; flex-wrap:wrap; }
+@media (max-width:720px) {
+    .docs-toolbar select, .docs-toolbar input { min-width:100%; width:100%; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Документы</h1>
+<p class="page-sub">Реестр смет, договоров и техничек по сделкам. Скачивание генерирует файл, если он ещё не сохранён.</p>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="docs-toolbar">
+        <label>Сделка
+            <select id="f-deal">
+                <option value="">Все сделки</option>
+            </select>
+        </label>
+        <label>Тип
+            <select id="f-type">
+                <option value="">Все типы</option>
+            </select>
+        </label>
+        <label>С даты
+            <input type="date" id="f-from">
+        </label>
+        <label>По дату
+            <input type="date" id="f-to">
+        </label>
+        <label style="flex-direction:row;align-items:center;gap:8px;padding-bottom:8px;">
+            <input type="checkbox" id="f-available" checked>
+            <span style="font-weight:600;color:var(--text);">Показать доступные к генерации</span>
+        </label>
+        <div class="btn-row">
+            <button type="button" class="btn btn-primary" onclick="loadDocuments()">Обновить</button>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+        <h3 class="section-title" style="margin:0;">Реестр</h3>
+        <span class="muted" id="docs-count" style="font-size:13px;">—</span>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="data cards-mobile docs-table" id="docs-table">
+            <thead>
+                <tr>
+                    <th>Сделка</th>
+                    <th>Тип</th>
+                    <th>Дата</th>
+                    <th>Статус</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="docs-body">
+                <tr><td colspan="5" class="muted">Загрузка…</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const STATUS_LABEL = {
+    generated: 'Сгенерирован',
+    stored: 'Файл',
+    available: 'Доступен',
+};
+
+async function loadDealOptions() {
+    const sel = document.getElementById('f-deal');
+    try {
+        const res = await fetch('/api/deals');
+        if (!res.ok) return;
+        const data = await res.json();
+        const deals = Array.isArray(data) ? data : (data.deals || data.items || []);
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">Все сделки</option>';
+        deals.slice(0, 300).forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = `#${d.id} ${d.title || 'Без названия'}`;
+            sel.appendChild(opt);
+        });
+        if (cur) sel.value = cur;
+    } catch (e) { console.error(e); }
+}
+
+function fillTypeOptions(types) {
+    const sel = document.getElementById('f-type');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Все типы</option>';
+    (types || []).forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.key;
+        opt.textContent = t.label;
+        sel.appendChild(opt);
+    });
+    if (cur) sel.value = cur;
+}
+
+function fmtDate(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace('T', ' ');
+        return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (_) { return iso; }
+}
+
+async function loadDocuments() {
+    const dealId = document.getElementById('f-deal').value;
+    const docType = document.getElementById('f-type').value;
+    const dateFrom = document.getElementById('f-from').value;
+    const dateTo = document.getElementById('f-to').value;
+    const includeAvailable = document.getElementById('f-available').checked;
+    const params = new URLSearchParams();
+    if (dealId) params.set('deal_id', dealId);
+    if (docType) params.set('doc_type', docType);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    params.set('include_available', includeAvailable ? 'true' : 'false');
+
+    const body = document.getElementById('docs-body');
+    body.innerHTML = '<tr><td colspan="5" class="muted">Загрузка…</td></tr>';
+    try {
+        const res = await fetch('/api/documents?' + params.toString());
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка');
+        fillTypeOptions(data.doc_types || []);
+        const items = data.items || [];
+        document.getElementById('docs-count').textContent = items.length + ' записей';
+        if (!items.length) {
+            body.innerHTML = '<tr><td colspan="5" class="muted">Документов пока нет. Откройте сделку и скачайте смету/договор — они появятся здесь.</td></tr>';
+            return;
+        }
+        body.innerHTML = items.map(it => {
+            const company = it.company_name ? `<div class="muted" style="font-size:12px">${escapeHtml(it.company_name)}</div>` : '';
+            const status = it.status || 'available';
+            const url = it.download_url || '#';
+            const dealLink = it.deal_id ? `/crm?deal=${it.deal_id}` : '#';
+            return `<tr>
+                <td class="card-head">
+                    <a href="${dealLink}" style="color:inherit;text-decoration:none;font-weight:700;">${escapeHtml(it.deal_title || ('#' + it.deal_id))}</a>
+                    ${company}
+                </td>
+                <td data-label="Тип">${escapeHtml(it.doc_label || it.doc_type)}</td>
+                <td data-label="Дата">${fmtDate(it.created_at)}</td>
+                <td data-label="Статус"><span class="doc-status ${status}">${STATUS_LABEL[status] || status}</span></td>
+                <td data-label="">
+                    <div class="docs-actions">
+                        <a class="btn btn-sm btn-primary" href="${url}" target="_blank" rel="noopener">Скачать</a>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="5" style="color:#b91c1c">${escapeHtml(e.message || String(e))}</td></tr>`;
+    }
+}
+
+function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
+}
+
+document.getElementById('f-deal').addEventListener('change', loadDocuments);
+document.getElementById('f-type').addEventListener('change', loadDocuments);
+document.getElementById('f-available').addEventListener('change', loadDocuments);
+document.getElementById('f-from').addEventListener('change', loadDocuments);
+document.getElementById('f-to').addEventListener('change', loadDocuments);
+
+(async () => {
+    await loadDealOptions();
+    await loadDocuments();
+})();
+</script>
+{% endblock %}

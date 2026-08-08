@@ -124,6 +124,16 @@
 
         {% if request.state.user and request.state.user.role == 'admin' %}
         <div class="card">
+            <h3 style="margin-top:0;">Демо-данные CRM</h3>
+            <p style="margin-bottom:12px;font-size:14px;">
+                Восстанавливает недостающие тестовые сделки с префиксом <code>DEMO:</code>
+                (TechConf, Brand Activation, Almaty Concerts и др.) по воронкам Лиды / Аренда / Продажа.
+                Существующие сделки и клиенты <strong>не удаляются</strong>.
+            </p>
+            <button type="button" onclick="restoreDemoDeals()" id="btn-restore-demo">Восстановить демо-сделки</button>
+            <p id="restore-demo-msg" style="display:none;margin-top:8px;font-size:13px;"></p>
+        </div>
+        <div class="card">
             <h3 style="margin-top:0;">Сотрудники</h3>
             <p style="margin-bottom:1rem">Добавьте логин и пароль для нового сотрудника. Права и разделы можно настроить на странице управления.</p>
             <form id="quick-add-user" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
@@ -426,6 +436,29 @@
                 apply('ig_conn', s.instagram);
                 apply('onec_conn', s.onec);
             } catch (e) { console.error(e); }
+        }
+
+        async function restoreDemoDeals() {
+            const msg = document.getElementById('restore-demo-msg');
+            const btn = document.getElementById('btn-restore-demo');
+            if (!msg || !btn) return;
+            if (!confirm('Добавить недостающие DEMO-сделки? Существующие данные не будут удалены.')) return;
+            btn.disabled = true;
+            msg.style.display = 'block';
+            msg.style.color = 'var(--muted)';
+            msg.textContent = 'Восстановление…';
+            try {
+                const res = await fetch('/api/admin/restore-demo-deals', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Ошибка');
+                msg.style.color = '#16a34a';
+                msg.textContent = `Готово: создано ${data.created || 0}, уже было ${data.skipped_existing || 0}. Всего сделок: ${data.deals_total || '—'}`;
+            } catch (e) {
+                msg.style.color = '#dc2626';
+                msg.textContent = e.message || 'Ошибка';
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         const quickForm = document.getElementById('quick-add-user');

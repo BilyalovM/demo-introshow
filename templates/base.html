@@ -141,6 +141,19 @@
   </span>
  </a>
  {% endif %}
+ {% if 'documents' in sections or 'crm' in sections or 'quotes' in sections %}
+ <a href="/documents" class="nav-link {% if request.url.path.startswith('/documents') %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <path d="M8 7h8M8 12h8M8 17h5"></path>
+    <path d="M6 3h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path>
+   </svg>
+  </span>
+  <span>
+   Документы
+  </span>
+ </a>
+ {% endif %}
  {% if 'calendar' in sections or 'quotes' in sections or 'crm' in sections %}
  <a href="/calendar" class="nav-link {% if request.url.path.startswith('/calendar') %}active{% endif %}">
   <span class="nav-ico">

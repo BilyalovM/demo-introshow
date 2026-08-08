@@ -464,6 +464,22 @@ class DealAttachment(Base):
     deal = relationship("Deal", backref="attachments")
 
 
+class DealDocument(Base):
+    """Реестр сгенерированных / доступных документов по сделке (документооборот)."""
+    __tablename__ = "deal_documents"
+    id = Column(Integer, primary_key=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False, index=True)
+    # estimate_internal | estimate_client | estimate_client_priced | contract | technichka
+    # суффикс _pdf для PDF-вариантов
+    doc_type = Column(String, index=True)
+    filename = Column(String, nullable=True)
+    path = Column(String, nullable=True)  # абсолютный или /uploads/...
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_by = Column(String, nullable=True)
+
+    deal = relationship("Deal", backref="documents")
+
+
 class DealAdvance(Base):
     """Аванс сотруднику по проекту/сделке — вычитается из зарплаты."""
     __tablename__ = "deal_advances"

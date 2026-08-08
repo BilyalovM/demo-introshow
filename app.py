@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, engine
 from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -42,6 +42,7 @@ import auth
 import chatbot
 import rate_limit
 import audit
+import demo_seed
 
 # Налог в сметах всегда 16% (UI + DB + PDF/DOCX)
 FIXED_TAX_PERCENTAGE = DEFAULT_TAX_PERCENTAGE
@@ -397,6 +398,13 @@ with Session(engine) as session:
     except Exception:
         session.rollback()
 
+    # 4b5. Демо-сделки: только если CRM пустая (cold start /tmp на Vercel)
+    try:
+        demo_seed.seed_demo_deals(session, only_if_empty=True)
+    except Exception as e:
+        session.rollback()
+        print("demo_seed error:", e)
+
     # 4c. Стадии «в работе» для проверки брони оборудования:
     # если ни одна стадия не помечена, помечаем стандартные.
     try:
@@ -600,16 +608,29 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
 PUBLIC_PATH_PREFIXES = (
     "/static", "/uploads", "/login", "/api/login",
     "/api/tg/webhook", "/api/wa/webhook", "/api/ig/webhook",
-    "/tracking/", "/api/push/", "/api/1c/", "/favicon", "/docs", "/openapi.json",
+    "/tracking/", "/api/push/", "/api/1c/", "/favicon",
+    "/openapi.json",
     "/roadmap",  # публичный статус/roadmap для клиента
     "/lead", "/api/leads",  # публичный захват лидов с сайта/карт
 )
+
+# Точные публичные пути (не префиксы) — чтобы /documents не совпал с /docs
+PUBLIC_PATH_EXACT = frozenset({"/docs", "/openapi.json", "/redoc"})
+
+
+def _is_public_path(path: str) -> bool:
+    if path in PUBLIC_PATH_EXACT:
+        return True
+    # Swagger UI assets: /docs/oauth2-redirect и т.п.
+    if path.startswith("/docs/"):
+        return True
+    return any(path == p.rstrip("/") or path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
 
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if any(path == p.rstrip("/") or path.startswith(p) for p in PUBLIC_PATH_PREFIXES):
+    if _is_public_path(path):
         return await call_next(request)
 
     db = SessionLocal()
@@ -1971,6 +1992,172 @@ async def read_equipment(request: Request, user: User = Depends(get_current_user
 @app.get("/crm", response_class=HTMLResponse)
 async def read_crm(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("crm.html", {"request": request, "active_page": "crm"})
+
+
+@app.get("/documents", response_class=HTMLResponse)
+async def read_documents(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("documents.html", {"request": request, "active_page": "documents"})
+
+
+@app.post("/api/admin/restore-demo-deals")
+def api_restore_demo_deals(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Восстановить недостающие DEMO-сделки без удаления пользовательских данных."""
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Только администратор"})
+    try:
+        result = demo_seed.seed_demo_deals(db, only_if_empty=False)
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type="deal",
+        entity_id=0,
+        action="restore_demo_deals",
+        diff=result,
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return result
+
+
+@app.get("/api/documents")
+def api_list_documents(
+    deal_id: Optional[int] = None,
+    doc_type: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    include_available: bool = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Реестр документов: сохранённые DealDocument + файлы uploads +
+    (опционально) доступные к генерации типы по каждой сделке.
+    """
+    q = db.query(DealDocument).order_by(DealDocument.created_at.desc(), DealDocument.id.desc())
+    if deal_id:
+        q = q.filter(DealDocument.deal_id == deal_id)
+    if doc_type:
+        q = q.filter(DealDocument.doc_type == doc_type)
+    if date_from:
+        try:
+            q = q.filter(DealDocument.created_at >= datetime.strptime(date_from[:10], "%Y-%m-%d"))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            q = q.filter(
+                DealDocument.created_at
+                < datetime.strptime(date_to[:10], "%Y-%m-%d") + timedelta(days=1)
+            )
+        except ValueError:
+            pass
+
+    deals_cache = {}
+    items = []
+    seen_keys = set()
+
+    for row in q.limit(500).all():
+        deal = deals_cache.get(row.deal_id)
+        if deal is None:
+            deal = db.query(Deal).filter(Deal.id == row.deal_id).first()
+            deals_cache[row.deal_id] = deal
+        key = (row.deal_id, row.doc_type, row.filename or "")
+        seen_keys.add((row.deal_id, row.doc_type))
+        items.append({
+            "id": row.id,
+            "deal_id": row.deal_id,
+            "deal_title": deal.title if deal else f"#{row.deal_id}",
+            "company_name": deal.company.name if deal and deal.company else None,
+            "doc_type": row.doc_type,
+            "doc_label": DOC_TYPE_LABELS.get(row.doc_type, row.doc_type),
+            "filename": row.filename,
+            "path": row.path,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "created_by": row.created_by,
+            "download_url": row.path if (row.path and str(row.path).startswith("/uploads/"))
+            else _download_url_for_doc(row.deal_id, row.doc_type),
+            "source": "registry",
+            "status": "generated",
+        })
+
+    # Файлы технички из uploads (если ещё не в реестре)
+    for up in _scan_uploads_technichka(db):
+        if deal_id and up["deal_id"] != deal_id:
+            continue
+        if doc_type and up["doc_type"] != doc_type:
+            continue
+        key = (up["deal_id"], up["doc_type"])
+        if key in seen_keys:
+            continue
+        if date_from and up.get("created_at") and up["created_at"][:10] < date_from[:10]:
+            continue
+        if date_to and up.get("created_at") and up["created_at"][:10] > date_to[:10]:
+            continue
+        seen_keys.add(key)
+        items.append(up)
+
+    # Доступные к генерации (виртуальные) — по сделкам с позициями / всем активным
+    if include_available:
+        deals_q = db.query(Deal).filter(Deal.is_archived == False)  # noqa: E712
+        if deal_id:
+            deals_q = deals_q.filter(Deal.id == deal_id)
+        deals_q = deals_q.order_by(Deal.id.desc()).limit(80)
+        virtual_types = [
+            "estimate_internal",
+            "estimate_internal_pdf",
+            "estimate_client",
+            "estimate_client_pdf",
+            "estimate_client_priced",
+            "estimate_client_priced_pdf",
+            "contract",
+            "contract_pdf",
+            "technichka",
+        ]
+        for deal in deals_q.all():
+            if doc_type and doc_type not in virtual_types:
+                break
+            for vt in virtual_types:
+                if doc_type and vt != doc_type:
+                    continue
+                if (deal.id, vt) in seen_keys:
+                    continue
+                # договор только если есть компания
+                if vt.startswith("contract") and not deal.company_id:
+                    continue
+                items.append({
+                    "id": None,
+                    "deal_id": deal.id,
+                    "deal_title": deal.title,
+                    "company_name": deal.company.name if deal.company else None,
+                    "doc_type": vt,
+                    "doc_label": DOC_TYPE_LABELS.get(vt, vt),
+                    "filename": None,
+                    "path": None,
+                    "created_at": None,
+                    "created_by": None,
+                    "download_url": _download_url_for_doc(deal.id, vt),
+                    "source": "available",
+                    "status": "available",
+                })
+
+    # Сортировка: сначала generated/stored с датой, потом available
+    def _sort_key(it):
+        status_rank = 0 if it["status"] in ("generated", "stored") else 1
+        return (status_rank, it.get("created_at") or "", -(it.get("deal_id") or 0))
+
+    items.sort(key=_sort_key)
+    return {
+        "items": items[:800],
+        "doc_types": [{"key": k, "label": v} for k, v in DOC_TYPE_LABELS.items()],
+        "count": len(items),
+    }
 
 @app.get("/tracking/{deal_id}", response_class=HTMLResponse)
 def read_tracking(request: Request, deal_id: int, db: Session = Depends(get_db)):
@@ -3799,7 +3986,129 @@ def _build_technichka_context(deal: Deal, assignee_name: str = "", db: Session =
     }
 
 
-def _save_technichka_file(deal: Deal, assignee_name: str = "") -> tuple:
+DOC_TYPE_LABELS = {
+    "estimate_internal": "Смета внутренняя (Word)",
+    "estimate_internal_pdf": "Смета внутренняя (PDF)",
+    "estimate_client": "Смета клиенту без цен (Word)",
+    "estimate_client_pdf": "Смета клиенту без цен (PDF)",
+    "estimate_client_priced": "Смета клиенту с ценами (Word)",
+    "estimate_client_priced_pdf": "Смета клиенту с ценами (PDF)",
+    "contract": "Договор (Word)",
+    "contract_pdf": "Договор (PDF)",
+    "technichka": "Техничка (Word)",
+    "technichka_pdf": "Техничка (PDF)",
+}
+
+
+def _estimate_doc_type(mode_norm: str, as_pdf: bool = False) -> str:
+    base = {
+        "internal": "estimate_internal",
+        "client": "estimate_client",
+        "client_priced": "estimate_client_priced",
+    }.get(mode_norm, "estimate_internal")
+    return f"{base}_pdf" if as_pdf else base
+
+
+def _register_deal_document(
+    db: Session,
+    deal_id: int,
+    doc_type: str,
+    filename: str = None,
+    path: str = None,
+    created_by: str = None,
+) -> DealDocument:
+    """Записать факт генерации/наличия документа (обновляет последнюю запись того же типа)."""
+    row = (
+        db.query(DealDocument)
+        .filter(DealDocument.deal_id == deal_id, DealDocument.doc_type == doc_type)
+        .order_by(DealDocument.id.desc())
+        .first()
+    )
+    if row:
+        row.filename = filename or row.filename
+        row.path = path or row.path
+        row.created_at = datetime.utcnow()
+        if created_by:
+            row.created_by = created_by
+    else:
+        row = DealDocument(
+            deal_id=deal_id,
+            doc_type=doc_type,
+            filename=filename,
+            path=path,
+            created_by=created_by,
+        )
+        db.add(row)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    return row
+
+
+def _download_url_for_doc(deal_id: int, doc_type: str) -> str:
+    if doc_type == "contract":
+        return f"/api/deals/{deal_id}/contract"
+    if doc_type == "contract_pdf":
+        return f"/api/deals/{deal_id}/contract.pdf"
+    if doc_type in ("technichka", "technichka_pdf"):
+        return f"/api/deals/{deal_id}/technichka"
+    mode_map = {
+        "estimate_internal": ("internal", False),
+        "estimate_internal_pdf": ("internal", True),
+        "estimate_client": ("client", False),
+        "estimate_client_pdf": ("client", True),
+        "estimate_client_priced": ("client_priced", False),
+        "estimate_client_priced_pdf": ("client_priced", True),
+    }
+    mode, as_pdf = mode_map.get(doc_type, ("internal", False))
+    if as_pdf:
+        return f"/api/deals/{deal_id}/estimate.pdf?mode={mode}"
+    return f"/api/deals/{deal_id}/estimate?mode={mode}"
+
+
+def _scan_uploads_technichka(db: Session) -> list:
+    """Найти technichka_deal{ID}_* в uploads и вернуть записи для реестра."""
+    rows = []
+    try:
+        names = os.listdir(UPLOADS_DIR)
+    except OSError:
+        return rows
+    deal_ids = {d.id: d for d in db.query(Deal).all()}
+    for fname in names:
+        m = re.match(r"technichka_deal(\d+)_", fname, re.I)
+        if not m:
+            continue
+        deal_id = int(m.group(1))
+        deal = deal_ids.get(deal_id)
+        if not deal:
+            continue
+        is_pdf = fname.lower().endswith(".pdf")
+        doc_type = "technichka_pdf" if is_pdf else "technichka"
+        abs_path = os.path.join(UPLOADS_DIR, fname)
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(abs_path))
+        except OSError:
+            mtime = None
+        rows.append({
+            "id": None,
+            "deal_id": deal_id,
+            "deal_title": deal.title,
+            "company_name": deal.company.name if deal.company else None,
+            "doc_type": doc_type,
+            "doc_label": DOC_TYPE_LABELS.get(doc_type, doc_type),
+            "filename": fname,
+            "path": f"/uploads/{fname}",
+            "created_at": mtime.isoformat() if mtime else None,
+            "created_by": None,
+            "download_url": f"/uploads/{fname}",
+            "source": "uploads",
+            "status": "stored",
+        })
+    return rows
+
+
+def _save_technichka_file(deal: Deal, assignee_name: str = "", db: Session = None, created_by: str = None) -> tuple:
     """Генерирует PDF технички, сохраняет в uploads. Returns (url, filename, abs_path)."""
     from document_generator import generate_technichka_pdf
     import uuid
@@ -3807,7 +4116,13 @@ def _save_technichka_file(deal: Deal, assignee_name: str = "") -> tuple:
     fname = f"technichka_deal{deal.id}_{uuid.uuid4().hex[:8]}.pdf"
     abs_path = os.path.join(UPLOADS_DIR, fname)
     generate_technichka_pdf(_build_technichka_context(deal, assignee_name), abs_path)
-    return f"/uploads/{fname}", fname, abs_path
+    url = f"/uploads/{fname}"
+    if db is not None:
+        _register_deal_document(
+            db, deal.id, "technichka_pdf",
+            filename=fname, path=url, created_by=created_by or assignee_name,
+        )
+    return url, fname, abs_path
 
 
 def assign_staff_to_deal(
@@ -3828,7 +4143,9 @@ def assign_staff_to_deal(
         return existing
 
     emp_name = emp.full_name or emp.username
-    url, fname, _ = _save_technichka_file(deal, emp_name)
+    url, fname, _ = _save_technichka_file(
+        deal, emp_name, db=db, created_by=created_by,
+    )
     att = DealAttachment(
         deal_id=deal.id,
         kind="file",
@@ -5072,6 +5389,10 @@ def download_technichka(deal_id: int, background_tasks: BackgroundTasks, db: Ses
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
     generate_technichka_docx(_build_technichka_context(d, who, db=db), temp_path)
+    _register_deal_document(
+        db, d.id, "technichka",
+        filename=f"Technichka_{d.id}.docx", created_by=who,
+    )
 
     def cleanup_file(path: str):
         try:
@@ -6187,7 +6508,11 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
     os.close(fd)
     
     generate_contract(context, template_path, temp_path)
-    
+    _register_deal_document(
+        db, d.id, "contract",
+        filename=f"Contract_{d.id}_{comp.name}.docx",
+    )
+
     def cleanup_file(path: str):
         try: os.remove(path)
         except: pass
@@ -6258,6 +6583,7 @@ def download_deal_estimate(
         fname = f"Smeta_client_s_cenami_CRM-{d.id}.docx"
     else:
         fname = f"Smeta_vnutr_CRM-{d.id}.docx"
+    _register_deal_document(db, d.id, _estimate_doc_type(mode_norm, False), filename=fname)
     return FileResponse(
         temp_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -6345,6 +6671,7 @@ def download_deal_estimate_pdf(
         fname = f"Smeta_client_s_cenami_CRM-{d.id}.pdf"
     else:
         fname = f"Smeta_vnutr_CRM-{d.id}.pdf"
+    _register_deal_document(db, d.id, _estimate_doc_type(mode_norm, True), filename=fname)
     return FileResponse(temp_path, media_type="application/pdf", filename=fname)
 
 
@@ -6400,6 +6727,10 @@ def download_deal_contract_pdf(
     fd, temp_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     generate_contract_pdf(context, temp_path)
+    _register_deal_document(
+        db, d.id, "contract_pdf",
+        filename=f"Contract_{d.id}_{comp.name}.pdf",
+    )
 
     def cleanup_file(path: str):
         try:

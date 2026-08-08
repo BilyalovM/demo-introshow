@@ -28,6 +28,7 @@ SECTIONS = {
     "chats": "Внутренние чаты",
     "crm": "CRM",
     "quotes": "Сметы и договоры",
+    "documents": "Документы",
     "calendar": "Календарь",
     "equipment": "Склад",
     "companies": "Клиенты",
@@ -55,6 +56,8 @@ PATH_SECTIONS = {
     "/chats": "chats",
     "/crm": "crm",
     "/quotes": "quotes",
+    "/documents": "documents",
+    "/api/documents": "documents",
     "/calendar": "calendar",
     "/equipment": "equipment",
     "/companies": "companies",
@@ -208,6 +211,9 @@ def user_can_access(user, section: str) -> bool:
         return True
     # Календарь доступен всем, у кого есть CRM или сметы (даже без отдельной галочки)
     if section == "calendar" and ("crm" in section_perms or "quotes" in section_perms):
+        return True
+    # Документооборот — тем, у кого CRM или сметы
+    if section == "documents" and ("crm" in section_perms or "quotes" in section_perms):
         return True
     # «Сегодня» — операционный экран для CRM / задач / дашборда
     if section == "today" and any(s in section_perms for s in ("dashboard", "crm", "tasks", "calendar")):
