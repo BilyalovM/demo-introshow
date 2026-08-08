@@ -3762,15 +3762,40 @@ def _estimate_header_fields(deal: Deal) -> dict:
     }
 
 
-def _build_technichka_context(deal: Deal, assignee_name: str = "") -> dict:
+def _build_technichka_context(deal: Deal, assignee_name: str = "", db: Session = None) -> dict:
+    """Контекст технички: только оборудование (без FIXED_CATEGORIES логистики/персонала)."""
     result = _calc_deal(deal)
     header = _estimate_header_fields(deal)
+    items = [
+        i for i in (result.get("items") or [])
+        if not _is_fixed_category(i.get("category"))
+    ]
+    letterhead = {}
+    if db is not None:
+        letterhead = _get_company_letterhead(db)
+    else:
+        try:
+            with Session(engine) as s:
+                letterhead = _get_company_letterhead(s)
+        except Exception:
+            letterhead = {}
+    logo_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "static", "img", "introshow_logo.png",
+    )
     return {
         "number": f"TECH-{deal.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
         **header,
         "assignee_name": assignee_name or "",
-        "items": result["items"],
+        "items": items,
+        "our_company_name": letterhead.get("company_name") or "Intro Show",
+        "our_company_phone": letterhead.get("company_phone") or "",
+        "our_company_email": letterhead.get("company_email") or "",
+        "our_company_address": letterhead.get("company_address") or "",
+        "our_company_bin": letterhead.get("company_bin") or "",
+        "logo_path": logo_path if os.path.isfile(logo_path) else None,
+        "manager_phone": letterhead.get("company_phone") or "",
     }
 
 
@@ -5046,7 +5071,7 @@ def download_technichka(deal_id: int, background_tasks: BackgroundTasks, db: Ses
     who = user.full_name or user.username
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
-    generate_technichka_docx(_build_technichka_context(d, who), temp_path)
+    generate_technichka_docx(_build_technichka_context(d, who, db=db), temp_path)
 
     def cleanup_file(path: str):
         try:
@@ -6255,6 +6280,10 @@ def _build_estimate_context(d: Deal, mode_norm: str, db: Session = None) -> dict
                 letterhead = _get_company_letterhead(s)
         except Exception:
             letterhead = {}
+    logo_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "static", "img", "introshow_logo.png",
+    )
     return {
         "number": f"CRM-{d.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
@@ -6265,6 +6294,8 @@ def _build_estimate_context(d: Deal, mode_norm: str, db: Session = None) -> dict
         "our_company_email": letterhead.get("company_email") or "",
         "our_company_address": letterhead.get("company_address") or "",
         "our_company_bin": letterhead.get("company_bin") or "",
+        "logo_path": logo_path if os.path.isfile(logo_path) else None,
+        "manager_phone": letterhead.get("company_phone") or "",
         "items": result["items"],
         "equipment_base": result.get("equipment_base", 0),
         "equipment_total": result["equipment_total"],
@@ -6332,9 +6363,16 @@ def download_deal_contract_pdf(
         return JSONResponse(status_code=400, content={"error": "No company linked"})
 
     result = _calc_deal(d, exclude_subrental=True)
+    header = _estimate_header_fields(d)
+    letterhead = _get_company_letterhead(db)
+    logo_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "static", "img", "introshow_logo.png",
+    )
     context = {
         "contract_number": f"CRM-{d.id}",
         "contract_date": datetime.today().strftime("%d.%m.%Y"),
+        **header,
         "company_name": comp.name,
         "director_name": comp.director_name,
         "iin_bin": comp.bin,
@@ -6342,6 +6380,13 @@ def download_deal_contract_pdf(
         "event_name": d.title,
         "event_date": d.event_date,
         "event_address": d.event_address,
+        "our_company_name": letterhead.get("company_name") or "Intro Show",
+        "our_company_phone": letterhead.get("company_phone") or "",
+        "our_company_email": letterhead.get("company_email") or "",
+        "our_company_address": letterhead.get("company_address") or "",
+        "our_company_bin": letterhead.get("company_bin") or "",
+        "logo_path": logo_path if os.path.isfile(logo_path) else None,
+        "manager_phone": letterhead.get("company_phone") or "",
         "items": result["items"],
         "equipment_total": result["equipment_total"],
         "fixed_total": result["fixed_total"],

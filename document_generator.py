@@ -61,12 +61,55 @@ def _client_display_name(name: Any) -> str:
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
-# Палитра Excel-шаблона «Новый шаблон сметы.xlsx»
-COLOR_CORAL = "F78561"       # заголовки секций / итоги
-COLOR_GRAY = "A6A6A6"        # строки ИТОГО, колонка кол-ва
+# Палитра КП IntroShow / Excel «Новый шаблон сметы.xlsx»
+COLOR_CORAL = "F68560"       # оранжевые заголовки секций / итоги (как в КП)
+COLOR_GRAY = "A5A5A5"        # строки ИТОГО, колонка кол-ва
 COLOR_WHITE = "FFFFFF"
-RGB_CORAL = (247, 133, 97)
-RGB_GRAY = (166, 166, 166)
+RGB_CORAL = (246, 133, 96)
+RGB_GRAY = (165, 165, 165)
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_LOGO = os.path.join(_BASE_DIR, "static", "img", "introshow_logo.png")
+_FALLBACK_LOGO = os.path.join(_BASE_DIR, "static", "img", "logo.jpg")
+
+# Категории логистики/персонала/расходников — не попадают в техничку
+_FIXED_CATEGORY_NAMES = {
+    "Логистика",
+    "Персонал",
+    "Расходники",
+    "Логистика, Тех персонал",
+    "Логистика/Тех персонал/Расходники",
+}
+
+
+def _is_fixed_category_name(category: Any) -> bool:
+    cat = (category or "").strip()
+    if not cat:
+        return False
+    if cat in _FIXED_CATEGORY_NAMES:
+        return True
+    low = cat.lower()
+    return any(k in low for k in ("логистика", "персонал", "расходник"))
+
+
+def filter_technichka_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Техничка = только оборудование склада/площадки, без логистики и персонала."""
+    return [i for i in (items or []) if not _is_fixed_category_name(i.get("category"))]
+
+
+def _resolve_logo_path(context: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    candidates = []
+    if context:
+        candidates.append(context.get("logo_path"))
+    candidates.extend((
+        os.environ.get("INTROSHOW_LOGO_PATH"),
+        _DEFAULT_LOGO,
+        _FALLBACK_LOGO,
+    ))
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 
 def resolve_photo_path(photo_url: str) -> str:
@@ -288,56 +331,7 @@ def _group_items(items: List[Dict[str, Any]]) -> "OrderedDict[str, List[Dict[str
     return grouped
 
 
-def _add_letterhead(doc: Document, context: Dict[str, Any]) -> None:
-    """Блок реквизитов компании (из Настроек) над названием сметы."""
-    name = (context.get("our_company_name") or "").strip()
-    phone = (context.get("our_company_phone") or "").strip()
-    email = (context.get("our_company_email") or "").strip()
-    address = (context.get("our_company_address") or "").strip()
-    bin_code = (context.get("our_company_bin") or "").strip()
-    if not any((name, phone, email, address, bin_code)):
-        return
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    if name:
-        run = p.add_run(name)
-        _set_run_font(run, bold=True, size=12)
-    lines = []
-    if address:
-        lines.append(address)
-    contact_bits = [b for b in (phone, email) if b]
-    if contact_bits:
-        lines.append(" · ".join(contact_bits))
-    if bin_code:
-        lines.append(f"БИН {bin_code}")
-    for line in lines:
-        lp = doc.add_paragraph()
-        lp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        lr = lp.add_run(line)
-        _set_run_font(lr, size=9)
-    doc.add_paragraph("")
-
-
-def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = False) -> None:
-    """Шапка как в Excel: проект, контакт, менеджер, город, дни, выезд/возврат."""
-    meta_pairs = []
-    project = context.get("project_name") or context.get("event_name")
-    if project:
-        meta_pairs.append(("Наименование проекта", project))
-    if context.get("company_name"):
-        meta_pairs.append(("Заказчик", context["company_name"]))
-    if context.get("contact_name"):
-        meta_pairs.append(("Контактное лицо проекта", context["contact_name"]))
-    if context.get("sales_manager_name"):
-        meta_pairs.append(("Менеджер продаж", context["sales_manager_name"]))
-    if context.get("manager_name") or context.get("project_manager_name"):
-        meta_pairs.append(("Менеджер проекта", context.get("project_manager_name") or context.get("manager_name")))
-    city = context.get("city") or ""
-    address = context.get("event_address") or ""
-    loc = " / ".join([p for p in (city, address) if p])
-    if loc:
-        meta_pairs.append(("Город / локация", loc))
-
+def _shifts_label(context: Dict[str, Any]) -> str:
     shifts_label = context.get("shifts_label")
     if shifts_label is None and context.get("shifts") is not None:
         s = context["shifts"]
@@ -346,26 +340,231 @@ def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = Fals
             shifts_label = str(int(sf)) if sf == int(sf) else str(sf)
         except (TypeError, ValueError):
             shifts_label = str(s)
+    return str(shifts_label) if shifts_label not in (None, "") else ""
+
+
+def _event_dates_label(context: Dict[str, Any]) -> str:
+    """Дата проведения — как в КП IntroShow (не складские выезд/возврат)."""
+    explicit = (context.get("event_dates_label") or "").strip()
+    if explicit:
+        return explicit
+    event_date = (context.get("event_date") or context.get("return_date") or "").strip()
+    setup = (context.get("setup_date") or context.get("departure_date") or "").strip()
+    if setup and event_date and setup != event_date:
+        return f"{setup} — {event_date}"
+    return event_date or setup or (context.get("rent_period") or "").strip()
+
+
+def _meta_pairs(
+    context: Dict[str, Any],
+    *,
+    with_assignee: bool = False,
+    for_warehouse: bool = False,
+    include_customer: bool = False,
+) -> List[Tuple[str, str]]:
+    """Поля шапки как в КП IntroShow: логотип слева, таблица справа."""
+    meta_pairs: List[Tuple[str, str]] = []
+    project = context.get("project_name") or context.get("event_name")
+    if project:
+        meta_pairs.append(("Наименование проекта", str(project)))
+    if include_customer and context.get("company_name"):
+        meta_pairs.append(("Клиент", str(context["company_name"])))
+    if context.get("contact_name"):
+        meta_pairs.append(("Контактное лицо проекта", str(context["contact_name"])))
+
+    mgr = (
+        context.get("project_manager_name")
+        or context.get("manager_name")
+        or context.get("sales_manager_name")
+        or ""
+    ).strip()
+    phone = (
+        context.get("manager_phone")
+        or context.get("our_company_phone")
+        or ""
+    ).strip()
+    mgr_val = " ".join(x for x in (mgr, phone) if x).strip()
+    if mgr_val:
+        meta_pairs.append(("менеджер проекта/телефон", mgr_val))
+
+    city = (context.get("city") or "").strip()
+    address = (context.get("event_address") or "").strip()
+    loc = " / ".join(p for p in (city, address) if p)
+    if loc:
+        meta_pairs.append(("Город\\Локация", loc))
+
+    event_dates = _event_dates_label(context)
+    if event_dates:
+        meta_pairs.append(("Дата проведения мероприятия", event_dates))
+
+    shifts_label = _shifts_label(context)
     if shifts_label:
         meta_pairs.append(("Количество дней работы (смен)", shifts_label))
 
-    depart = context.get("departure_date") or ""
-    ret = context.get("return_date") or ""
-    if depart or ret:
-        meta_pairs.append(("Выезд оборудования со склада", depart or "—"))
-        meta_pairs.append(("Возврат оборудования на склад", ret or "—"))
-    elif context.get("rent_period"):
-        meta_pairs.append(("Период аренды", context["rent_period"]))
+    if for_warehouse:
+        depart = (context.get("departure_date") or "").strip()
+        ret = (context.get("return_date") or "").strip()
+        if depart or ret:
+            meta_pairs.append(("Выезд оборудования со склада", depart or "—"))
+            meta_pairs.append(("Возврат оборудования на склад", ret or "—"))
 
     if with_assignee and context.get("assignee_name"):
-        meta_pairs.append(("Ответственный на объекте", context["assignee_name"]))
+        meta_pairs.append(("Ответственный на объекте", str(context["assignee_name"])))
+    return meta_pairs
 
-    for label, value in meta_pairs:
+
+def _add_letterhead(doc: Document, context: Dict[str, Any]) -> None:
+    """Совместимость: делегирует в KP-шапку (логотип + мета-таблица)."""
+    _add_kp_header(doc, context, with_assignee=False, for_warehouse=False, include_customer=False)
+
+
+def _add_meta(doc: Document, context: Dict[str, Any], with_assignee: bool = False) -> None:
+    """Совместимость: мета уже в KP-шапке; если вызывают отдельно — plain-список."""
+    for label, value in _meta_pairs(context, with_assignee=with_assignee):
         p = doc.add_paragraph()
         r1 = p.add_run(f"{label}: ")
-        _set_run_font(r1, bold=False, size=11)
+        _set_run_font(r1, bold=False, size=10)
         r2 = p.add_run(str(value))
-        _set_run_font(r2, bold=True, size=11)
+        _set_run_font(r2, bold=True, size=10)
+
+
+def _add_kp_header(
+    doc: Document,
+    context: Dict[str, Any],
+    *,
+    with_assignee: bool = False,
+    for_warehouse: bool = False,
+    include_customer: bool = False,
+) -> None:
+    """Шапка КП IntroShow: логотип слева, мета-таблица справа."""
+    logo = _resolve_logo_path(context)
+    pairs = _meta_pairs(
+        context,
+        with_assignee=with_assignee,
+        for_warehouse=for_warehouse,
+        include_customer=include_customer,
+    )
+
+    outer = doc.add_table(rows=1, cols=2)
+    left, right = outer.rows[0].cells
+
+    # --- left: logo + short company line ---
+    for el in list(left._tc.findall(qn("w:p"))):
+        left._tc.remove(el)
+    p_logo = OxmlElement("w:p")
+    left._tc.append(p_logo)
+    para_logo = Paragraph(p_logo, left)
+    if logo:
+        run = para_logo.add_run()
+        try:
+            run.add_picture(logo, width=Cm(4.2))
+        except Exception:
+            logo = None
+    if not logo:
+        name = (context.get("our_company_name") or "Intro Show").strip()
+        run = para_logo.add_run(name)
+        _set_run_font(run, bold=True, size=14)
+
+    company_bits = []
+    phone = (context.get("our_company_phone") or "").strip()
+    email = (context.get("our_company_email") or "").strip()
+    if phone:
+        company_bits.append(phone)
+    if email:
+        company_bits.append(email)
+    if company_bits:
+        p_c = left.add_paragraph()
+        r = p_c.add_run(" · ".join(company_bits))
+        _set_run_font(r, size=8)
+
+    # --- right: 2-col meta table (вложенная через XML — у Cell нет add_table) ---
+    for el in list(right._tc.findall(qn("w:p"))):
+        right._tc.remove(el)
+    if pairs:
+        meta = doc.add_table(rows=len(pairs), cols=2)
+        meta.style = "Table Grid"
+        for i, (label, value) in enumerate(pairs):
+            cells = meta.rows[i].cells
+            _set_cell_text(cells[0], label, bold=False, size=8, align="left")
+            _set_cell_text(cells[1], value, bold=True, size=8, align="left")
+            _shade_cell(cells[0], "F2F2F2")
+        _set_table_col_widths(meta, [5.2, 6.3])
+        meta_tbl = meta._tbl
+        meta_tbl.getparent().remove(meta_tbl)
+        right._tc.append(meta_tbl)
+    else:
+        right.add_paragraph("")
+
+    _set_table_col_widths(outer, [5.0, 12.0])
+    # убрать рамку внешней таблицы
+    tbl = outer._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    for old in tblPr.findall(qn("w:tblBorders")):
+        tblPr.remove(old)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "nil")
+        el.set(qn("w:sz"), "0")
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), "auto")
+        borders.append(el)
+    tblPr.append(borders)
+    doc.add_paragraph("")
+
+
+def _add_company_footer(doc: Document, context: Dict[str, Any]) -> None:
+    """Реквизиты компании внизу (как в КП IntroShow)."""
+    name = (context.get("our_company_name") or "").strip()
+    phone = (context.get("our_company_phone") or "").strip()
+    address = (context.get("our_company_address") or "").strip()
+    email = (context.get("our_company_email") or "").strip()
+    bin_code = (context.get("our_company_bin") or "").strip()
+    if not any((name, phone, address, email, bin_code)):
+        return
+    doc.add_paragraph("")
+    lines = []
+    if name:
+        lines.append(name)
+    if address:
+        lines.append(address)
+    if phone:
+        lines.append(f"тел. {phone}")
+    if email:
+        lines.append(email)
+    if bin_code:
+        lines.append(f"БИН {bin_code}")
+    for line in lines:
+        p = doc.add_paragraph()
+        r = p.add_run(line)
+        _set_run_font(r, size=9)
+
+
+def _add_client_notes_and_signatures(doc: Document) -> None:
+    """Примечания и строки утверждения — как в клиентских КП."""
+    doc.add_paragraph("")
+    notes = [
+        "Примечание: 1. Клиенту необходимо произвести 100% предоплату по данному "
+        "коммерческому предложению до начала работ Компании по проекту.",
+        "Примечание: 2. Расходные материалы не входят в стоимость оборудования, "
+        "если не указано иное в смете.",
+    ]
+    for text in notes:
+        p = doc.add_paragraph()
+        r = p.add_run(text)
+        _set_run_font(r, size=8)
+    doc.add_paragraph("")
+    for label in (
+        "Смету утвердил со стороны Исполнителя: _______________________________",
+        "Смету утвердил со стороны Заказчика: _________________________________",
+        "Дата утверждения сметы: ____________________",
+    ):
+        p = doc.add_paragraph()
+        r = p.add_run(label)
+        _set_run_font(r, size=9)
 
 
 def _add_estimate_table(
@@ -569,22 +768,30 @@ def _add_totals_block(doc: Document, context: Dict[str, Any], mode: str) -> None
 
 
 def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
-    """Техничка для склада/персонала: позиции и количества без цен."""
+    """Техничка для склада: оборудование без цен; логистика/персонал исключены."""
     doc = Document()
     _apply_estimate_page(doc)
+    _add_kp_header(
+        doc,
+        context,
+        with_assignee=True,
+        for_warehouse=True,
+        include_customer=False,
+    )
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = title.add_run(f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}")
-    _set_run_font(run, bold=True, size=16)
+    _set_run_font(run, bold=True, size=14)
 
-    _add_meta(doc, context, with_assignee=True)
-
-    items = context.get("items", [])
+    items = filter_technichka_items(context.get("items", []))
     _add_estimate_table(doc, items, with_prices=False)
 
     note = doc.add_paragraph()
-    nr = note.add_run("Цены скрыты. Документ для склада и выездного персонала.")
+    nr = note.add_run(
+        "Цены скрыты. Только оборудование для склада/площадки — "
+        "без логистики и технического персонала."
+    )
     nr.italic = True
     _set_run_font(nr, size=9)
 
@@ -613,7 +820,13 @@ def generate_estimate_docx(
 
     doc = Document()
     _apply_estimate_page(doc)
-    _add_letterhead(doc, context)
+    _add_kp_header(
+        doc,
+        context,
+        with_assignee=False,
+        for_warehouse=(mode == "internal"),
+        include_customer=(mode == "internal"),
+    )
 
     if mode == "client":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')} (без цен за ед.)"
@@ -625,9 +838,7 @@ def generate_estimate_docx(
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = title.add_run(title_text)
-    _set_run_font(run, bold=True, size=16)
-
-    _add_meta(doc, context)
+    _set_run_font(run, bold=True, size=14)
 
     all_items = list(context.get("items", []) or [])
     if hide_sub:
@@ -660,6 +871,12 @@ def generate_estimate_docx(
 
     doc.add_paragraph("")
     _add_totals_block(doc, context, mode)
+
+    if is_client:
+        _add_client_notes_and_signatures(doc)
+        _add_company_footer(doc, context)
+    elif mode == "internal":
+        _add_company_footer(doc, context)
 
     doc.save(output_path)
     return output_path
@@ -816,45 +1033,89 @@ def _pdf_letterhead_lines(context: Dict[str, Any]) -> List[str]:
     return lines
 
 
-def _pdf_meta_lines(context: Dict[str, Any], with_assignee: bool = False) -> List[str]:
-    lines = []
-    project = context.get("project_name") or context.get("event_name")
-    if project:
-        lines.append(f"Наименование проекта: {project}")
-    if context.get("company_name"):
-        lines.append(f"Заказчик: {context['company_name']}")
-    if context.get("contact_name"):
-        lines.append(f"Контактное лицо проекта: {context['contact_name']}")
-    if context.get("sales_manager_name"):
-        lines.append(f"Менеджер продаж: {context['sales_manager_name']}")
-    pm = context.get("project_manager_name") or context.get("manager_name")
-    if pm:
-        lines.append(f"Менеджер проекта: {pm}")
-    city = context.get("city") or ""
-    address = context.get("event_address") or ""
-    loc = " / ".join([p for p in (city, address) if p])
-    if loc:
-        lines.append(f"Город / локация: {loc}")
-    shifts_label = context.get("shifts_label")
-    if shifts_label is None and context.get("shifts") is not None:
-        s = context["shifts"]
+def _pdf_meta_lines(
+    context: Dict[str, Any],
+    with_assignee: bool = False,
+    *,
+    for_warehouse: bool = False,
+    include_customer: bool = False,
+) -> List[str]:
+    return [
+        f"{label}: {value}"
+        for label, value in _meta_pairs(
+            context,
+            with_assignee=with_assignee,
+            for_warehouse=for_warehouse,
+            include_customer=include_customer,
+        )
+    ]
+
+
+def _pdf_add_kp_header(
+    pdf: "_EstimatePDF",
+    context: Dict[str, Any],
+    *,
+    with_assignee: bool = False,
+    for_warehouse: bool = False,
+    include_customer: bool = False,
+) -> None:
+    """PDF-шапка: логотип слева, мета-таблица справа (как КП IntroShow)."""
+    logo = _resolve_logo_path(context)
+    pairs = _meta_pairs(
+        context,
+        with_assignee=with_assignee,
+        for_warehouse=for_warehouse,
+        include_customer=include_customer,
+    )
+    usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
+    logo_w = 42.0
+    gap = 4.0
+    meta_w = usable - logo_w - gap
+    label_w = meta_w * 0.48
+    value_w = meta_w - label_w
+    x0 = pdf.pdf.l_margin
+    y0 = pdf.pdf.get_y()
+
+    logo_h = 0.0
+    if logo:
         try:
-            sf = float(s)
-            shifts_label = str(int(sf)) if sf == int(sf) else str(sf)
-        except (TypeError, ValueError):
-            shifts_label = str(s)
-    if shifts_label:
-        lines.append(f"Количество дней работы (смен): {shifts_label}")
-    depart = context.get("departure_date") or ""
-    ret = context.get("return_date") or ""
-    if depart or ret:
-        lines.append(f"Выезд оборудования со склада: {depart or '—'}")
-        lines.append(f"Возврат оборудования на склад: {ret or '—'}")
-    elif context.get("rent_period"):
-        lines.append(f"Период аренды: {context['rent_period']}")
-    if with_assignee and context.get("assignee_name"):
-        lines.append(f"Ответственный на объекте: {context['assignee_name']}")
-    return lines
+            pdf.pdf.image(logo, x=x0, y=y0, w=logo_w)
+            logo_h = 14.0
+        except Exception:
+            logo = None
+    if not logo:
+        pdf.pdf.set_xy(x0, y0)
+        pdf.pdf.set_font("DejaVu", "B", 12)
+        name = (context.get("our_company_name") or "Intro Show").strip()
+        pdf.pdf.multi_cell(logo_w, 6, name)
+        logo_h = max(logo_h, pdf.pdf.get_y() - y0)
+
+    phone = (context.get("our_company_phone") or "").strip()
+    email = (context.get("our_company_email") or "").strip()
+    contact = " · ".join(x for x in (phone, email) if x)
+    if contact:
+        pdf.pdf.set_xy(x0, y0 + logo_h + 1)
+        pdf.pdf.set_font("DejaVu", "", 7)
+        pdf.pdf.multi_cell(logo_w, 3.5, contact[:80])
+        logo_h = pdf.pdf.get_y() - y0
+
+    meta_h = 0.0
+    if pairs:
+        pdf.pdf.set_font("DejaVu", size=8)
+        y = y0
+        for label, value in pairs:
+            pdf.pdf.set_xy(x0 + logo_w + gap, y)
+            pdf.pdf.set_fill_color(242, 242, 242)
+            pdf.pdf.set_font("DejaVu", "", 7)
+            pdf.pdf.cell(label_w, 5, str(label)[:40], border=1, fill=True, align="L")
+            pdf.pdf.set_font("DejaVu", "B", 7)
+            pdf.pdf.cell(value_w, 5, str(value)[:55], border=1, fill=False, align="L")
+            y += 5
+        meta_h = y - y0
+
+    pdf.pdf.set_y(y0 + max(logo_h, meta_h) + 3)
+    pdf.pdf.set_font("DejaVu", size=10)
+    pdf._reset_x()
 
 
 # PDF: единая ширина колонки «Сумма» (мм) — совпадает с правым краем блока итогов
@@ -1021,12 +1282,13 @@ def generate_estimate_pdf(
     show_unit_price = mode != "client"
 
     pdf = _EstimatePDF()
-    lh_lines = _pdf_letterhead_lines(context)
-    company_title = (context.get("our_company_name") or "").strip()
-    for i, lh in enumerate(lh_lines):
-        pdf.line(lh, bold=(i == 0 and lh == company_title))
-    if lh_lines:
-        pdf.pdf.ln(1)
+    _pdf_add_kp_header(
+        pdf,
+        context,
+        with_assignee=False,
+        for_warehouse=(mode == "internal"),
+        include_customer=(mode == "internal"),
+    )
     if mode == "client":
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')} (без цен за ед.)"
     elif mode == "client_priced":
@@ -1034,10 +1296,7 @@ def generate_estimate_pdf(
     else:
         title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
     pdf.title(title_text)
-
-    for line in _pdf_meta_lines(context):
-        pdf.line(line)
-    pdf.pdf.ln(2)
+    pdf.pdf.ln(1)
 
     all_items = list(context.get("items", []) or [])
     hide_sub = is_client or bool(context.get("hide_subrental_section"))
@@ -1147,21 +1406,50 @@ def generate_estimate_pdf(
                 pdf._reset_x()
             pdf.pdf.set_font("DejaVu", size=10)
 
+    if is_client:
+        pdf.pdf.ln(3)
+        pdf.pdf.set_font("DejaVu", size=7)
+        for note in (
+            "Примечание: 1. Клиенту необходимо произвести 100% предоплату по данному "
+            "коммерческому предложению до начала работ Компании по проекту.",
+            "Примечание: 2. Расходные материалы не входят в стоимость оборудования, "
+            "если не указано иное в смете.",
+        ):
+            pdf.line(note)
+        pdf.pdf.ln(2)
+        pdf.pdf.set_font("DejaVu", size=9)
+        pdf.line("Смету утвердил со стороны Исполнителя: _______________________________")
+        pdf.line("Смету утвердил со стороны Заказчика: _________________________________")
+        pdf.line("Дата утверждения сметы: ____________________")
+        for lh in _pdf_letterhead_lines(context):
+            pdf.line(lh)
+    else:
+        for lh in _pdf_letterhead_lines(context):
+            pdf.line(lh)
+
     pdf.save(output_path)
     return output_path
 
 
 def generate_technichka_pdf(context: Dict[str, Any], output_path: str) -> str:
-    """PDF-техничка в той же палитре (если понадобится)."""
+    """PDF-техничка: только оборудование, без логистики/персонала."""
     pdf = _EstimatePDF()
+    _pdf_add_kp_header(
+        pdf,
+        context,
+        with_assignee=True,
+        for_warehouse=True,
+        include_customer=False,
+    )
     pdf.title(f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}")
-    for line in _pdf_meta_lines(context, with_assignee=True):
-        pdf.line(line)
-    pdf.pdf.ln(2)
-    items = list(context.get("items", []) or [])
+    pdf.pdf.ln(1)
+    items = filter_technichka_items(list(context.get("items", []) or []))
     _pdf_draw_sectioned_table(pdf, items, with_prices=False)
     pdf.pdf.ln(2)
-    pdf.line("Цены скрыты. Документ для склада и выездного персонала.")
+    pdf.line(
+        "Цены скрыты. Только оборудование для склада/площадки — "
+        "без логистики и технического персонала."
+    )
     pdf.save(output_path)
     return output_path
 
@@ -1169,6 +1457,13 @@ def generate_technichka_pdf(context: Dict[str, Any], output_path: str) -> str:
 def generate_contract_pdf(context: Dict[str, Any], output_path: str) -> str:
     """Упрощённый PDF договора: реквизиты + спецификация (как приложение к Word-шаблону)."""
     pdf = _EstimatePDF()
+    _pdf_add_kp_header(
+        pdf,
+        context,
+        with_assignee=False,
+        for_warehouse=False,
+        include_customer=True,
+    )
     pdf.title(
         f"ДОГОВОР № {context.get('contract_number', '')} от {context.get('contract_date', '')}"
     )
