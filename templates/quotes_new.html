@@ -2,6 +2,64 @@
 
 {% block title %}Смета / договор - Intro Show{% endblock %}
 
+{% block extra_head %}
+<style>
+/* Смета: страница должна скроллиться целиком — «Позиции сметы» всегда достижимы.
+   Каталог — отдельная область прокрутки. Правая колонка (итоги) остаётся sticky. */
+body:has(.quote-layout),
+html:has(.quote-layout) {
+    overflow-x: clip;
+    overflow-y: auto !important;
+    height: auto !important;
+    max-height: none !important;
+}
+body:has(.quote-layout) .app,
+body:has(.quote-layout) .content,
+body:has(.quote-layout) .main {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0;
+    overflow-x: clip;
+    overflow-y: visible !important;
+}
+#catalogContainer {
+    max-height: min(380px, 38vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 1025px) {
+    .quote-main {
+        max-height: none !important;
+        overflow: visible !important;
+    }
+    .quote-side {
+        position: sticky;
+        top: 20px;
+        align-self: start;
+        max-height: calc(100dvh - 88px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-right: 4px;
+    }
+}
+@media (max-width: 1024px) {
+    .quote-layout { grid-template-columns: 1fr !important; }
+    .quote-side {
+        position: static !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+}
+@media (max-width: 768px) {
+    #catalogContainer { max-height: min(320px, 42vh); }
+    /* Глобальный .card { overflow:hidden } на мобиле режет внутренний скролл каталога */
+    .quote-layout .card { overflow: visible; }
+    .quote-layout #catalogContainer { overflow-y: auto; }
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="toolbar" style="margin-bottom:6px">
     <h1 class="page-title" style="margin:0" id="pageTitle">Новая смета / договор</h1>
@@ -274,34 +332,8 @@
     color: var(--text);
     font-family: inherit;
 }
-/* Каталог прокручивается внутри своей карточки, а не растягивает страницу */
-#catalogContainer {
-    max-height: 46vh;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-}
-
-/* Десктоп: левая часть (параметры/каталог/позиции) и правая (клиент/итоги)
-   прокручиваются независимо друг от друга */
-@media (min-width: 1025px) {
-    .quote-main,
-    .quote-side {
-        max-height: calc(100vh - 150px);
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding-right: 4px;
-    }
-}
-
-@media (max-width: 1024px) {
-    .quote-layout { grid-template-columns: 1fr !important; }
-    .quote-side { position: static !important; max-height: none; overflow: visible; }
-}
-
 /* Мобильный: позиции сметы — карточками, без горизонтального сжатия */
 @media (max-width: 768px) {
-    #catalogContainer { max-height: 52vh; }
     table.cart-table, table.cart-table tbody { display: block; width: 100%; }
     table.cart-table tr {
         display: grid;
