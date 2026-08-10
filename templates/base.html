@@ -4,13 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
     <title>{% block title %}Intro Show CRM{% endblock %}</title>
-    <meta name="theme-color" content="#2563eb" />
+    <meta name="theme-color" content="#e25a3c" />
     <link rel="manifest" href="/static/manifest.json" />
     <link rel="icon" type="image/png" href="/static/img/icon-192.png" />
     <link rel="apple-touch-icon" href="/static/img/icon-192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="IntroShow" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', path='css/dashboard.css') }}" />
     <script>
         (function() {
@@ -24,13 +27,10 @@
     <div class="app">
         <aside class="sidebar">
  <div class="brand">
-  <div class="brand-logo" style="background: transparent;"><img src="{{ url_for('static', path='img/logo.jpg') }}" alt="Intro Show" style="height: 32px; width: auto; border-radius: 4px;" /></div>
-  <div class="brand-name">
-   Intro Show
-   <span>
-    Studio
-   </span>
-  </div>
+  <a href="/" class="brand-logo" aria-label="Intro Show">
+   <img class="brand-img" src="{{ url_for('static', path='img/introshow_logo.png') }}" alt="Intro Show" />
+  </a>
+  <div class="brand-name">CRM <span>·</span> Алматы</div>
  </div>
  {% set sections = request.state.user_sections or [] %}
  <div class="nav-section">
@@ -273,10 +273,7 @@
         <div class="content">
             <header class="topbar">
  <a class="mobile-brand" href="/">
-  <span class="brand-logo" style="background: transparent; display: grid; place-items: center; height: 100%;"><img src="{{ url_for('static', path='img/logo.jpg') }}" alt="Intro Show" style="height: 24px; width: auto;" /></span>
-  <span class="brand-name" style="font-weight:800">
-   Intro Show
-  </span>
+  <span class="brand-logo"><img class="brand-img" src="{{ url_for('static', path='img/introshow_logo.png') }}" alt="Intro Show" style="height:28px;max-width:140px;" /></span>
  </a>
  <div class="search" style="position:relative;">
   <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="18">
@@ -336,7 +333,7 @@
  {% set cu = request.state.user %}
  {% set cu_name = (cu.full_name or cu.username) if cu else 'Гость' %}
  <div class="desktop-only" style="display:flex;align-items:center;gap:10px;padding-left:6px">
-  <div class="avatar" style="background:linear-gradient(135deg,#3b82f6,#2563eb)">
+  <div class="avatar" style="background:var(--brand-red)">
    {{ cu_name[:2]|upper }}
    <span class="online">
    </span>

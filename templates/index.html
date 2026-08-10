@@ -4,8 +4,8 @@
 
 {% block content %}
 {% set uname = (user.full_name or user.username) if user else 'коллега' %}
-<h1 class="page-title">Здравствуйте, {{ uname }} 👋</h1>
-<p class="page-sub">Ключевые показатели вашего бизнеса в реальном времени.</p>
+<h1 class="page-title">Здравствуйте, {{ uname }}</h1>
+<p class="page-sub">Операционные показатели на сегодня.</p>
 
 <div class="grid cols-5" style="margin-bottom:22px">
     <div class="kpi">

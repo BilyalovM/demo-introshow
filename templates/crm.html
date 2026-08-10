@@ -1356,10 +1356,10 @@
                 card.addEventListener('click', () => openDealSlider(deal.id));
 
                 const chIcon = { whatsapp: '🟢', telegram: '🔵', instagram: '🟣', site: '🌐', maps: '📍', onec: '🧮' }[deal.chat_channel || deal.source] || '';
-                const overdueBadge = deal.has_overdue_activity ? '<span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700;">!</span>' : '';
+                const overdueBadge = deal.has_overdue_activity ? '<span style="background:var(--danger);color:#fff;border-radius:7px;padding:1px 7px;font-size:10px;font-weight:700;">!</span>' : '';
                 const assignee = deal.assignee_name ? `<span style="font-size:11px;color:var(--muted);">👤 ${escapeHtml(deal.assignee_name)}</span>` : '';
                 const qualBadge = deal.qualification_label
-                    ? `<span style="font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:999px;background:${deal.qualification==='spam'?'#fef2f2':deal.qualification==='sale'?'#eff6ff':'#f0fdf4'};color:${deal.qualification==='spam'?'#b91c1c':deal.qualification==='sale'?'#1d4ed8':'#15803d'};">${escapeHtml(deal.qualification_label)}</span>`
+                    ? `<span style="font-size:10.5px;font-weight:650;padding:2px 6px;border-radius:7px;background:${deal.qualification==='spam'?'#fde8e8':deal.qualification==='sale'?'#fdeee8':'#e6f5ee'};color:${deal.qualification==='spam'?'#b91c1c':deal.qualification==='sale'?'#c9442a':'#15803d'};">${escapeHtml(deal.qualification_label)}</span>`
                     : '';
                 card.innerHTML = `
                     <div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start;">
@@ -2551,7 +2551,7 @@
             return `
             <div style="border:1px solid var(--border);border-radius:10px;padding:12px;">
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                    <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary);">${kindLabel}</span>
+                    <span style="font-size:11px;font-weight:650;padding:2px 8px;border-radius:7px;background:var(--primary-soft);color:var(--primary);">${kindLabel}</span>
                     <input type="text" value="${escapeHtml(p.name)}" id="pipe-name-${p.id}" style="flex:1;min-width:140px;">
                     <select id="pipe-kind-${p.id}" style="padding:6px 8px;">
                         <option value="lead" ${p.kind === 'lead' ? 'selected' : ''}>Лиды</option>
@@ -2881,7 +2881,7 @@
             const days = prod.days || 1;
             const total = price * qty * days;
             const subBadge = (prod.warehouse_type || 'own') === 'subrental'
-                ? ' <span style="font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:999px;background:#fff7ed;color:#c2410c;">субаренда</span>'
+                ? ' <span style="font-size:10.5px;font-weight:650;padding:2px 6px;border-radius:7px;background:var(--accent-soft);color:#c2410c;">субаренда</span>'
                 : '';
 
             const tr = document.createElement('tr');
@@ -2940,7 +2940,7 @@
                         <div style="min-width:0;flex:1;">
                             <div style="font-weight:700;font-size:13.5px;">
                                 ${escapeHtml(prod.name || '')}
-                                <span style="font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:999px;background:${badge.bg};color:${badge.color};margin-left:4px;">${badge.label}</span>
+                                <span style="font-size:10.5px;font-weight:650;padding:2px 6px;border-radius:7px;background:${badge.bg};color:${badge.color};margin-left:4px;">${badge.label}</span>
                             </div>
                             <div class="muted" style="font-size:12px;margin-top:3px;">
                                 ×${prod.quantity || 1}

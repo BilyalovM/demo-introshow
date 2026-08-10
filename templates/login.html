@@ -4,96 +4,113 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Вход — Intro Show CRM</title>
-    <meta name="theme-color" content="#0f172a">
+    <meta name="theme-color" content="#e25a3c">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="icon" type="image/png" href="/static/img/icon-192.png">
     <link rel="apple-touch-icon" href="/static/img/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Outfit:wght@600;700&display=swap" rel="stylesheet">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: "DM Sans", sans-serif;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #0f172a;
+            background: #f4f3f1;
             background-image:
-                radial-gradient(900px 500px at 85% -10%, rgba(124, 58, 237, 0.25), transparent 60%),
-                radial-gradient(800px 500px at -10% 110%, rgba(37, 99, 235, 0.25), transparent 55%);
-            color: #f8fafc;
+                radial-gradient(900px 500px at 90% -10%, rgba(247, 133, 97, 0.18), transparent 58%),
+                radial-gradient(700px 420px at -5% 100%, rgba(210, 35, 42, 0.08), transparent 55%),
+                repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(51, 54, 63, 0.02) 2px, rgba(51, 54, 63, 0.02) 3px);
+            color: #33363f;
             padding: 24px;
         }
         .card {
             width: 100%;
-            max-width: 420px;
-            background: rgba(255, 255, 255, 0.06);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 24px;
-            padding: 40px 36px;
-            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+            max-width: 400px;
+            background: #fff;
+            border: 1px solid #e2ddd6;
+            border-radius: 14px;
+            padding: 36px 32px;
+            box-shadow: 0 10px 28px rgba(51, 54, 63, 0.08);
+            animation: modalIn 0.22s ease;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: none; }
         }
         .logo {
-            width: 52px; height: 52px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, #2563eb, #7c3aed);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 22px; font-weight: 800;
-            margin: 0 auto 20px;
-            box-shadow: 0 12px 32px rgba(37, 99, 235, 0.4);
+            display: flex;
+            justify-content: center;
+            margin: 0 auto 22px;
         }
-        h1 { font-size: 24px; font-weight: 700; text-align: center; letter-spacing: -0.02em; }
-        .subtitle { text-align: center; color: #94a3b8; font-size: 14px; margin: 6px 0 28px; }
-        label { display: block; font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 7px; }
+        .logo img {
+            height: 48px;
+            width: auto;
+            max-width: 220px;
+            object-fit: contain;
+        }
+        h1 {
+            font-family: "Outfit", "DM Sans", sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            text-align: center;
+            letter-spacing: -0.02em;
+        }
+        .subtitle { text-align: center; color: #8b909a; font-size: 14px; margin: 6px 0 26px; }
+        label { display: block; font-size: 13px; font-weight: 600; color: #5c616c; margin-bottom: 7px; }
         input {
             width: 100%;
-            padding: 12px 14px;
-            background: rgba(15, 23, 42, 0.55);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 12px;
-            color: #f8fafc;
+            padding: 11px 13px;
+            background: #faf9f7;
+            border: 1px solid #e2ddd6;
+            border-radius: 9px;
+            color: #33363f;
             font-size: 14.5px;
+            font-family: inherit;
             outline: none;
             transition: border-color 0.15s, box-shadow 0.15s;
         }
-        input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25); }
-        .field { margin-bottom: 18px; }
+        input:focus { border-color: #e25a3c; box-shadow: 0 0 0 3px rgba(226, 90, 60, 0.18); }
+        .field { margin-bottom: 16px; }
         .error {
             display: none;
-            background: rgba(239, 68, 68, 0.12);
-            border: 1px solid rgba(239, 68, 68, 0.35);
-            color: #fca5a5;
+            background: #fde8e8;
+            border: 1px solid rgba(210, 35, 42, 0.28);
+            color: #b91c1c;
             font-size: 13.5px;
             padding: 10px 14px;
-            border-radius: 10px;
+            border-radius: 9px;
             margin-bottom: 16px;
         }
         .error.show { display: block; }
         button {
             width: 100%;
-            padding: 13px;
+            padding: 12px;
             border: none;
-            border-radius: 12px;
-            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            border-radius: 9px;
+            background: #e25a3c;
             color: #fff;
             font-size: 15px;
             font-weight: 600;
             font-family: inherit;
             cursor: pointer;
-            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.35);
-            transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+            transition: background 0.15s, transform 0.15s;
         }
-        button:hover { transform: translateY(-1px); box-shadow: 0 16px 36px rgba(37, 99, 235, 0.45); }
-        button:disabled { opacity: 0.6; cursor: wait; transform: none; }
-        .footer { text-align: center; color: #64748b; font-size: 12.5px; margin-top: 24px; }
+        button:hover { background: #c9442a; }
+        button:disabled { opacity: 0.6; cursor: wait; }
+        .footer { text-align: center; color: #8b909a; font-size: 12.5px; margin-top: 22px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <div class="logo">IS</div>
-        <h1>Добро пожаловать</h1>
-        <p class="subtitle">Войдите в CRM Intro Show</p>
+        <div class="logo">
+            <img src="/static/img/introshow_logo.png" alt="Intro Show">
+        </div>
+        <h1>Вход в CRM</h1>
+        <p class="subtitle">Intro Show — аренда звука, света и сцены</p>
 
         <form id="login-form">
             <div class="field">
@@ -107,7 +124,7 @@
             <div id="error-message" class="error"></div>
             <button type="submit" id="submit-btn">Войти</button>
         </form>
-        <p class="footer">Intro Show — аренда звука, света и сцены</p>
+        <p class="footer">Алматы</p>
     </div>
 
     <script>
