@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, engine
 from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -891,6 +891,305 @@ async def logout_all(request: Request, db: Session = Depends(get_db), user: User
     return response
 
 
+# -- Рабочий день (учёт смен + геолокация) --
+
+def _almaty_now() -> datetime:
+    """Локальное время Алматы (UTC+5) без внешних зависимостей."""
+    return datetime.utcnow() + timedelta(hours=5)
+
+
+def _almaty_day_start_utc(days_ago: int = 0) -> datetime:
+    """Начало календарного дня Алматы в UTC (для фильтра started_at)."""
+    local = _almaty_now() - timedelta(days=days_ago)
+    local_midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_midnight - timedelta(hours=5)
+
+
+def _session_duration_seconds(sess: WorkSession, now: Optional[datetime] = None) -> int:
+    start = sess.started_at
+    if not start:
+        return 0
+    end = sess.ended_at or now or datetime.utcnow()
+    return max(0, int((end - start).total_seconds()))
+
+
+def _work_session_to_dict(sess: WorkSession, user_name: Optional[str] = None) -> dict:
+    now = datetime.utcnow()
+    open_sess = sess.ended_at is None
+    return {
+        "id": sess.id,
+        "user_id": sess.user_id,
+        "user_name": user_name,
+        "started_at": sess.started_at.isoformat() + "Z" if sess.started_at else None,
+        "ended_at": sess.ended_at.isoformat() + "Z" if sess.ended_at else None,
+        "is_open": open_sess,
+        "elapsed_seconds": _session_duration_seconds(sess, now),
+        "start_lat": sess.start_lat,
+        "start_lng": sess.start_lng,
+        "start_accuracy": sess.start_accuracy,
+        "start_geo_denied": bool(sess.start_geo_denied),
+        "end_lat": sess.end_lat,
+        "end_lng": sess.end_lng,
+        "end_accuracy": sess.end_accuracy,
+        "end_geo_denied": bool(sess.end_geo_denied),
+        "start_label": sess.start_label,
+        "note": sess.note,
+    }
+
+
+def _parse_geo_payload(data: Optional[dict]) -> dict:
+    data = data or {}
+    def _f(key):
+        v = data.get(key)
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    geo_denied = bool(data.get("geo_denied"))
+    lat, lng, acc = _f("lat"), _f("lng"), _f("accuracy")
+    if lat is None or lng is None:
+        if data.get("lat") is not None or data.get("lng") is not None:
+            geo_denied = True
+        lat = lng = acc = None
+    return {"lat": lat, "lng": lng, "accuracy": acc, "geo_denied": geo_denied}
+
+
+async def _read_json_body(request: Request) -> dict:
+    try:
+        raw = await request.json()
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+@app.get("/api/workday/current")
+def workday_current(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    sess = (
+        db.query(WorkSession)
+        .filter(WorkSession.user_id == user.id, WorkSession.ended_at.is_(None))
+        .order_by(WorkSession.started_at.desc())
+        .first()
+    )
+    if not sess:
+        return {
+            "is_working": False,
+            "session": None,
+            "elapsed_seconds": 0,
+        }
+    payload = _work_session_to_dict(sess, user.full_name or user.username)
+    return {
+        "is_working": True,
+        "session": payload,
+        "elapsed_seconds": payload["elapsed_seconds"],
+    }
+
+
+@app.post("/api/workday/start")
+async def workday_start(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    open_sess = (
+        db.query(WorkSession)
+        .filter(WorkSession.user_id == user.id, WorkSession.ended_at.is_(None))
+        .first()
+    )
+    if open_sess:
+        payload = _work_session_to_dict(open_sess, user.full_name or user.username)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Рабочий день уже начат",
+                "is_working": True,
+                "session": payload,
+                "elapsed_seconds": payload["elapsed_seconds"],
+            },
+        )
+
+    geo = _parse_geo_payload(await _read_json_body(request))
+    sess = WorkSession(
+        user_id=user.id,
+        started_at=datetime.utcnow(),
+        start_lat=geo["lat"],
+        start_lng=geo["lng"],
+        start_accuracy=geo["accuracy"],
+        start_geo_denied=geo["geo_denied"] or (geo["lat"] is None),
+    )
+    db.add(sess)
+    db.flush()
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type="work_session",
+        entity_id=sess.id,
+        action="workday_start",
+        diff={
+            "lat": geo["lat"],
+            "lng": geo["lng"],
+            "accuracy": geo["accuracy"],
+            "geo_denied": sess.start_geo_denied,
+        },
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    db.refresh(sess)
+    payload = _work_session_to_dict(sess, user.full_name or user.username)
+    return {
+        "status": "ok",
+        "is_working": True,
+        "session": payload,
+        "elapsed_seconds": payload["elapsed_seconds"],
+    }
+
+
+@app.post("/api/workday/end")
+async def workday_end(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    sess = (
+        db.query(WorkSession)
+        .filter(WorkSession.user_id == user.id, WorkSession.ended_at.is_(None))
+        .order_by(WorkSession.started_at.desc())
+        .first()
+    )
+    if not sess:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "Нет открытого рабочего дня", "is_working": False, "session": None},
+        )
+
+    geo = _parse_geo_payload(await _read_json_body(request))
+    sess.ended_at = datetime.utcnow()
+    sess.end_lat = geo["lat"]
+    sess.end_lng = geo["lng"]
+    sess.end_accuracy = geo["accuracy"]
+    sess.end_geo_denied = geo["geo_denied"] or (geo["lat"] is None)
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type="work_session",
+        entity_id=sess.id,
+        action="workday_end",
+        diff={
+            "lat": geo["lat"],
+            "lng": geo["lng"],
+            "accuracy": geo["accuracy"],
+            "geo_denied": sess.end_geo_denied,
+            "duration_seconds": _session_duration_seconds(sess),
+        },
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    db.refresh(sess)
+    payload = _work_session_to_dict(sess, user.full_name or user.username)
+    return {
+        "status": "ok",
+        "is_working": False,
+        "session": payload,
+        "elapsed_seconds": payload["elapsed_seconds"],
+    }
+
+
+def _workday_history_impl(db: Session, user: User, from_date=None, to_date=None, filter_user_id=None):
+    is_admin = user.role == "admin"
+    q = db.query(WorkSession)
+    if is_admin:
+        if filter_user_id:
+            q = q.filter(WorkSession.user_id == filter_user_id)
+    else:
+        q = q.filter(WorkSession.user_id == user.id)
+
+    def _parse_day(s: Optional[str], end: bool = False) -> Optional[datetime]:
+        if not s:
+            return None
+        try:
+            d = datetime.strptime(s[:10], "%Y-%m-%d")
+            utc = d - timedelta(hours=5)  # день Алматы → UTC
+            if end:
+                utc = utc + timedelta(days=1)
+            return utc
+        except ValueError:
+            return None
+
+    start_utc = _parse_day(from_date)
+    end_utc = _parse_day(to_date, end=True)
+    if start_utc:
+        q = q.filter(WorkSession.started_at >= start_utc)
+    if end_utc:
+        q = q.filter(WorkSession.started_at < end_utc)
+
+    sessions = q.order_by(WorkSession.started_at.desc()).limit(500).all()
+    users_map = {u.id: (u.full_name or u.username) for u in db.query(User).all()}
+    now = datetime.utcnow()
+    today_start = _almaty_day_start_utc(0)
+    week_start = _almaty_day_start_utc(_almaty_now().weekday())  # Monday=0
+
+    summary_q = db.query(WorkSession)
+    if is_admin:
+        if filter_user_id:
+            summary_q = summary_q.filter(WorkSession.user_id == filter_user_id)
+    else:
+        summary_q = summary_q.filter(WorkSession.user_id == user.id)
+    week_sessions = summary_q.filter(
+        or_(
+            WorkSession.started_at >= week_start,
+            WorkSession.ended_at.is_(None),
+        )
+    ).all()
+
+    by_user = {}
+    for s in week_sessions:
+        row = by_user.setdefault(s.user_id, {
+            "user_id": s.user_id,
+            "name": users_map.get(s.user_id, f"#{s.user_id}"),
+            "today_seconds": 0,
+            "week_seconds": 0,
+            "is_working": False,
+        })
+        dur = _session_duration_seconds(s, now)
+        if s.started_at and s.started_at >= week_start:
+            row["week_seconds"] += dur
+        elif s.ended_at is None and s.started_at and s.started_at < week_start:
+            row["week_seconds"] += max(0, int((now - week_start).total_seconds()))
+        if s.started_at and s.started_at >= today_start:
+            row["today_seconds"] += dur
+        elif s.ended_at is None and s.started_at and s.started_at < today_start:
+            row["today_seconds"] += max(0, int((now - today_start).total_seconds()))
+        if s.ended_at is None:
+            row["is_working"] = True
+
+    return {
+        "sessions": [_work_session_to_dict(s, users_map.get(s.user_id)) for s in sessions],
+        "summary": sorted(by_user.values(), key=lambda x: (-x["today_seconds"], x["name"])),
+        "is_admin": is_admin,
+    }
+
+
+@app.get("/api/workday/history")
+def workday_history(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """История смен: ?from=&to=&user_id=. Админ — все; обычный — только свои."""
+    uid_raw = request.query_params.get("user_id")
+    try:
+        filter_uid = int(uid_raw) if uid_raw else None
+    except ValueError:
+        filter_uid = None
+    return _workday_history_impl(
+        db, user,
+        from_date=request.query_params.get("from"),
+        to_date=request.query_params.get("to"),
+        filter_user_id=filter_uid,
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_dashboard(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     deals = db.query(Deal).all()
@@ -1246,6 +1545,10 @@ async def read_analytics(request: Request, db: Session = Depends(get_db), user: 
         loss_reasons[reason] = loss_reasons.get(reason, 0) + 1
     loss_reason_rows = sorted(loss_reasons.items(), key=lambda x: -x[1])[:8]
 
+    week_start_local = (_almaty_now() - timedelta(days=_almaty_now().weekday())).strftime("%Y-%m-%d")
+    today_local = _almaty_now().strftime("%Y-%m-%d")
+    workday_data = _workday_history_impl(db, user, from_date=week_start_local, to_date=today_local)
+
     return templates.TemplateResponse("analytics.html", {
         "request": request,
         "active_page": "analytics",
@@ -1262,6 +1565,11 @@ async def read_analytics(request: Request, db: Session = Depends(get_db), user: 
         "by_manager_rows": by_manager_rows,
         "by_source_rows": by_source_rows,
         "loss_reason_rows": loss_reason_rows,
+        "workday_summary": workday_data.get("summary") or [],
+        "workday_sessions": (workday_data.get("sessions") or [])[:40],
+        "workday_is_admin": workday_data.get("is_admin"),
+        "workday_from": week_start_local,
+        "workday_to": today_local,
     })
 
 

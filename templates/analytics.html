@@ -137,4 +137,116 @@
         </tbody>
     </table>
 </div>
+
+{% macro fmt_hours(sec) -%}
+{%- set h = (sec // 3600) -%}
+{%- set m = ((sec % 3600) // 60) -%}
+{{ h }} ч {{ '%02d'|format(m) }} м
+{%- endmacro %}
+
+<div class="card" style="margin-top:22px" id="work-time">
+    <h3 class="section-title" style="margin-bottom:6px">Рабочее время</h3>
+    <p class="muted" style="font-size:13px;margin:0 0 16px">
+        Учёт смен из меню профиля.
+        {% if workday_is_admin %}Показаны все сотрудники.{% else %}Показаны только ваши смены.{% endif %}
+        Геолокация сохраняется, если браузер разрешил доступ.
+    </p>
+
+    {% if workday_summary %}
+    <table class="data cards-mobile" style="margin-bottom:18px">
+        <thead>
+            <tr>
+                <th>Сотрудник</th>
+                <th class="num">Сегодня</th>
+                <th class="num">Неделя</th>
+                <th>Статус</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in workday_summary %}
+            <tr>
+                <td class="card-head"><strong>{{ row.name }}</strong></td>
+                <td class="num" data-label="Сегодня">{{ fmt_hours(row.today_seconds) }}</td>
+                <td class="num" data-label="Неделя">{{ fmt_hours(row.week_seconds) }}</td>
+                <td data-label="Статус">
+                    {% if row.is_working %}
+                    <span class="badge green">В работе</span>
+                    {% else %}
+                    <span class="badge">Не работает</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="muted" style="font-size:13px;margin-bottom:16px">Пока нет смен — начните рабочий день в меню профиля (аватар справа сверху).</div>
+    {% endif %}
+
+    <h3 class="section-title" style="margin:8px 0 12px;font-size:15px">Смены{% if workday_from %} · с {{ workday_from }}{% endif %}</h3>
+    {% if workday_sessions %}
+    <table class="data cards-mobile">
+        <thead>
+            <tr>
+                {% if workday_is_admin %}<th>Сотрудник</th>{% endif %}
+                <th>Начало</th>
+                <th>Конец</th>
+                <th class="num">Длительность</th>
+                <th>Гео</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in workday_sessions %}
+            <tr>
+                {% if workday_is_admin %}
+                <td class="card-head"><strong>{{ s.user_name or ('#' ~ s.user_id) }}</strong></td>
+                {% endif %}
+                <td data-label="Начало" class="workday-dt" data-iso="{{ s.started_at or '' }}">{{ s.started_at or '—' }}</td>
+                <td data-label="Конец" class="workday-dt" data-iso="{{ s.ended_at or '' }}">{% if s.is_open %}<span class="badge green">Открыта</span>{% else %}{{ s.ended_at or '—' }}{% endif %}</td>
+                <td class="num" data-label="Длительность">{{ fmt_hours(s.elapsed_seconds) }}</td>
+                <td data-label="Гео" style="font-size:12.5px">
+                    {% if s.start_lat is not none and s.start_lng is not none %}
+                    <a href="https://maps.google.com/?q={{ s.start_lat }},{{ s.start_lng }}" target="_blank" rel="noopener">старт {{ '%.4f'|format(s.start_lat) }}, {{ '%.4f'|format(s.start_lng) }}</a>
+                    {% elif s.start_geo_denied %}
+                    <span class="muted">старт: гео отказано</span>
+                    {% else %}
+                    <span class="muted">старт: —</span>
+                    {% endif %}
+                    {% if s.ended_at %}
+                    <br>
+                    {% if s.end_lat is not none and s.end_lng is not none %}
+                    <a href="https://maps.google.com/?q={{ s.end_lat }},{{ s.end_lng }}" target="_blank" rel="noopener">финиш {{ '%.4f'|format(s.end_lat) }}, {{ '%.4f'|format(s.end_lng) }}</a>
+                    {% elif s.end_geo_denied %}
+                    <span class="muted">финиш: гео отказано</span>
+                    {% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="muted" style="font-size:13px">Список смен пуст.</div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    function fmtLocal(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString('ru-RU', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+        });
+    }
+    document.querySelectorAll('.workday-dt[data-iso]').forEach(el => {
+        if (el.querySelector('.badge')) return;
+        el.textContent = fmtLocal(el.dataset.iso);
+    });
+})();
+</script>
 {% endblock %}

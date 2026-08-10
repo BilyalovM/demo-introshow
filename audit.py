@@ -76,6 +76,8 @@ ACTION_LABELS = {
     "logout_all": "выход со всех устройств",
     "login": "вход",
     "subrental_status": "статус субаренды",
+    "workday_start": "начало рабочего дня",
+    "workday_end": "завершение рабочего дня",
 }
 
 ENTITY_LABELS = {
@@ -85,4 +87,5 @@ ENTITY_LABELS = {
     "pipeline_routing": "Маршрутизация",
     "pipeline": "Воронка",
     "session": "Сессия",
+    "work_session": "Рабочий день",
 }

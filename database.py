@@ -650,6 +650,27 @@ class AuditLog(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
+class WorkSession(Base):
+    """Рабочий день сотрудника: старт/финиш + опциональная геолокация кнопки."""
+    __tablename__ = "work_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    ended_at = Column(DateTime, nullable=True, index=True)  # null = открытая смена
+    start_lat = Column(Float, nullable=True)
+    start_lng = Column(Float, nullable=True)
+    start_accuracy = Column(Float, nullable=True)
+    start_geo_denied = Column(Boolean, default=False)
+    end_lat = Column(Float, nullable=True)
+    end_lng = Column(Float, nullable=True)
+    end_accuracy = Column(Float, nullable=True)
+    end_geo_denied = Column(Boolean, default=False)
+    start_label = Column(String, nullable=True)  # опциональная заметка / город (MVP: null)
+    note = Column(String, nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
 class AppSetting(Base):
     """Простые настройки приложения (шапка сметы / реквизиты компании)."""
     __tablename__ = "app_settings"

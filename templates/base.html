@@ -332,19 +332,42 @@
  </div>
  {% set cu = request.state.user %}
  {% set cu_name = (cu.full_name or cu.username) if cu else 'Гость' %}
- <div class="desktop-only" style="display:flex;align-items:center;gap:10px;padding-left:6px">
-  <div class="avatar" style="background:var(--brand-red)">
-   {{ cu_name[:2]|upper }}
-   <span class="online">
-   </span>
-  </div>
-  <div style="line-height:1.2">
-   <div style="font-weight:700;font-size:13.5px">
-    {{ cu_name }}
+ {% set cu_role = 'Администратор' if cu and cu.role == 'admin' else ('Менеджер' if cu and cu.role == 'manager' else 'Сотрудник') %}
+ <div class="profile-menu" id="profile-menu">
+  <button type="button" class="profile-chip" id="profile-chip-btn" aria-haspopup="true" aria-expanded="false" aria-controls="profile-panel" title="Профиль и рабочий день">
+   <div class="avatar" style="background:var(--brand-red)">
+    {{ cu_name[:2]|upper }}
+    <span class="workday-dot off" id="workday-status-dot" title="Не работаю"></span>
    </div>
-   <div class="muted" style="font-size:12px">
-    {% if cu and cu.role == 'admin' %}Администратор{% elif cu and cu.role == 'manager' %}Менеджер{% else %}Сотрудник{% endif %}
+   <div class="profile-chip-text">
+    <div class="profile-chip-name">{{ cu_name }}</div>
+    <div class="muted profile-chip-role">{{ cu_role }}</div>
    </div>
+  </button>
+  <div class="profile-panel" id="profile-panel" hidden role="menu" aria-label="Меню профиля">
+   <div class="profile-panel-head">
+    <div class="avatar lg" style="background:var(--brand-red)">{{ cu_name[:2]|upper }}</div>
+    <div>
+     <div class="profile-panel-name">{{ cu_name }}</div>
+     <div class="muted" style="font-size:12.5px">{{ cu_role }}</div>
+    </div>
+   </div>
+   <div class="profile-workday" id="profile-workday">
+    <div class="profile-workday-status">
+     <span class="workday-dot off" id="workday-panel-dot"></span>
+     <div>
+      <div class="profile-workday-label" id="workday-status-label">Не работаю</div>
+      <div class="profile-workday-timer" id="workday-timer">00:00:00</div>
+     </div>
+    </div>
+    <button type="button" class="btn btn-accent profile-workday-btn" id="workday-toggle-btn">Начать рабочий день</button>
+    <div class="muted profile-workday-hint" id="workday-hint">Браузер может запросить доступ к геолокации — так фиксируется место старта/финиша.</div>
+   </div>
+   <div class="profile-panel-links">
+    {% if 'settings' in sections %}<a class="profile-panel-link" href="/settings" role="menuitem">Настройки</a>{% endif %}
+    {% if 'analytics' in sections %}<a class="profile-panel-link" href="/analytics" role="menuitem">Аналитика · рабочее время</a>{% endif %}
+   </div>
+   <button type="button" class="profile-logout" id="profile-logout-btn" role="menuitem">Выйти</button>
   </div>
  </div>
 </header>
@@ -459,10 +482,172 @@
 {% block extra_scripts %}{% endblock %}
 <script>
     async function doLogout(e) {
-        e.preventDefault();
+        if (e) e.preventDefault();
         try { await fetch('/api/logout', { method: 'POST' }); } catch (err) {}
         window.location.href = '/login';
     }
+
+    /* —— Профиль + рабочий день (Bitrix-like) —— */
+    (function () {
+        const menu = document.getElementById('profile-menu');
+        const chip = document.getElementById('profile-chip-btn');
+        const panel = document.getElementById('profile-panel');
+        const toggleBtn = document.getElementById('workday-toggle-btn');
+        const logoutBtn = document.getElementById('profile-logout-btn');
+        if (!menu || !chip || !panel) return;
+
+        let isWorking = false;
+        let elapsedBase = 0;
+        let fetchedAt = 0;
+        let tickTimer = null;
+        let busy = false;
+
+        function pad2(n) { return String(n).padStart(2, '0'); }
+        function formatElapsed(sec) {
+            sec = Math.max(0, Math.floor(sec || 0));
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+        }
+        function currentElapsed() {
+            if (!isWorking) return elapsedBase;
+            return elapsedBase + Math.floor((Date.now() - fetchedAt) / 1000);
+        }
+        function setDots(working) {
+            document.querySelectorAll('#workday-status-dot, #workday-panel-dot').forEach(el => {
+                el.classList.toggle('on', working);
+                el.classList.toggle('off', !working);
+                el.title = working ? 'Работаю' : 'Не работаю';
+            });
+        }
+        function renderWorkday() {
+            const label = document.getElementById('workday-status-label');
+            const timer = document.getElementById('workday-timer');
+            const hint = document.getElementById('workday-hint');
+            if (label) label.textContent = isWorking ? 'Работаю' : 'Не работаю';
+            if (timer) timer.textContent = formatElapsed(currentElapsed());
+            if (toggleBtn) {
+                toggleBtn.textContent = isWorking ? 'Завершить рабочий день' : 'Начать рабочий день';
+                toggleBtn.classList.toggle('btn-accent', !isWorking);
+                toggleBtn.classList.toggle('btn-danger-soft', isWorking);
+                toggleBtn.disabled = busy;
+            }
+            setDots(isWorking);
+            if (hint && !hint.dataset.locked) {
+                hint.textContent = 'Браузер может запросить доступ к геолокации — так фиксируется место старта/финиша.';
+            }
+        }
+        function startTick() {
+            if (tickTimer) clearInterval(tickTimer);
+            tickTimer = setInterval(renderWorkday, 1000);
+        }
+        async function refreshWorkday() {
+            try {
+                const res = await fetch('/api/workday/current');
+                if (!res.ok) return;
+                const data = await res.json();
+                isWorking = !!data.is_working;
+                elapsedBase = data.elapsed_seconds || 0;
+                fetchedAt = Date.now();
+                renderWorkday();
+            } catch (err) {}
+        }
+        function getGeo(timeoutMs) {
+            return new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve({ geo_denied: true });
+                    return;
+                }
+                let done = false;
+                const finish = (payload) => {
+                    if (done) return;
+                    done = true;
+                    resolve(payload);
+                };
+                const timer = setTimeout(() => finish({ geo_denied: true }), timeoutMs || 8000);
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        clearTimeout(timer);
+                        finish({
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy,
+                            geo_denied: false,
+                        });
+                    },
+                    () => {
+                        clearTimeout(timer);
+                        finish({ geo_denied: true });
+                    },
+                    { enableHighAccuracy: false, timeout: timeoutMs || 8000, maximumAge: 60000 }
+                );
+            });
+        }
+        async function toggleWorkday() {
+            if (busy) return;
+            busy = true;
+            renderWorkday();
+            const hint = document.getElementById('workday-hint');
+            if (hint) {
+                hint.dataset.locked = '1';
+                hint.textContent = 'Определяем геолокацию…';
+            }
+            const geo = await getGeo(8000);
+            if (hint) {
+                hint.textContent = geo.geo_denied
+                    ? 'Геолокация недоступна — смена будет без координат.'
+                    : 'Геолокация получена, сохраняем…';
+            }
+            const url = isWorking ? '/api/workday/end' : '/api/workday/start';
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(geo),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok || res.status === 409) {
+                    isWorking = !!data.is_working;
+                    elapsedBase = data.elapsed_seconds || 0;
+                    fetchedAt = Date.now();
+                } else if (hint) {
+                    hint.textContent = data.detail || 'Не удалось сохранить. Попробуйте ещё раз.';
+                }
+            } catch (err) {
+                if (hint) hint.textContent = 'Ошибка сети. Попробуйте ещё раз.';
+            }
+            busy = false;
+            if (hint) setTimeout(() => { delete hint.dataset.locked; renderWorkday(); }, 2500);
+            renderWorkday();
+        }
+
+        function openPanel(open) {
+            const show = open !== undefined ? open : panel.hidden;
+            panel.hidden = !show;
+            chip.setAttribute('aria-expanded', show ? 'true' : 'false');
+            menu.classList.toggle('open', show);
+            if (show) refreshWorkday();
+        }
+        chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openPanel();
+        });
+        if (toggleBtn) toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleWorkday();
+        });
+        if (logoutBtn) logoutBtn.addEventListener('click', doLogout);
+        document.addEventListener('click', (e) => {
+            if (!menu.contains(e.target)) openPanel(false);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') openPanel(false);
+        });
+
+        refreshWorkday();
+        startTick();
+    })();
 
     // PWA: регистрация сервис-воркера (офлайн-кэш + push-уведомления)
     if ('serviceWorker' in navigator) {
