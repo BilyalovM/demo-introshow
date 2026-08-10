@@ -30,7 +30,7 @@
   <a href="/" class="brand-logo" aria-label="Intro Show">
    <img class="brand-img" src="{{ url_for('static', path='img/introshow_logo.png') }}" alt="Intro Show" />
   </a>
-  <div class="brand-name">CRM <span>·</span> Алматы</div>
+  <div class="brand-name">CRM <span>·</span> {{ request.state.current_city_name or 'Алматы' }}</div>
  </div>
  {% set sections = request.state.user_sections or [] %}
  <div class="nav-section">
@@ -287,6 +287,16 @@
  </div>
  <div class="topbar-spacer">
  </div>
+ {% set city_list = request.state.cities or [] %}
+ {% if city_list and (request.state.can_switch_city or (request.state.user and request.state.user.role in ('admin', 'manager'))) %}
+ <div class="city-switcher" title="Город CRM">
+  <select id="city-switcher-select" aria-label="Город" onchange="switchCrmCity(this.value)">
+   {% for c in city_list %}
+   <option value="{{ c.id }}" {% if request.state.current_city and c.id == request.state.current_city.id %}selected{% endif %}>{{ c.name }}</option>
+   {% endfor %}
+  </select>
+ </div>
+ {% endif %}
   <button aria-label="Поиск" class="icon-btn mobile-only">
    <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="18">
     <circle cx="11" cy="11" r="7">
@@ -481,6 +491,25 @@
 
 {% block extra_scripts %}{% endblock %}
 <script>
+    async function switchCrmCity(cityId) {
+        if (!cityId) return;
+        try {
+            const res = await fetch('/api/cities/switch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ city_id: parseInt(cityId, 10) }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(err.error || 'Не удалось переключить город');
+                return;
+            }
+            window.location.reload();
+        } catch (e) {
+            alert('Не удалось переключить город');
+        }
+    }
+
     async function doLogout(e) {
         if (e) e.preventDefault();
         try { await fetch('/api/logout', { method: 'POST' }); } catch (err) {}

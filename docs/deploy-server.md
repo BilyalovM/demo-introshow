@@ -164,3 +164,7 @@ chmod +x scripts/backup.sh
 ## Vercel demo
 
 `vercel --prod` остаётся для демо-континуитета. Данные там **не постоянны**. Боевая работа сотрудников — только на VPS с Postgres.
+
+## Города (multi-city)
+
+См. [multi-city.md](./multi-city.md). На VPS после деплоя таблицы/колонки создаются при старте (`cities`, `deals.city_id`, `users.city_id`, `work_sessions.start_place/end_place`). Алматы сидируется автоматически; Астану/Шымкент можно включить в **Настройки → Города CRM**.

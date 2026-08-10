@@ -488,6 +488,12 @@
                     <option value="me">Мои</option>
                 </select>
             </label>
+            <label class="field" style="margin:0; min-width:130px;">
+                <span style="font-size:11px;">Город</span>
+                <select id="crm-filter-city" onchange="loadDeals().then(renderCrm)">
+                    <option value="">Текущий</option>
+                </select>
+            </label>
             <label class="field" style="margin:0; min-width:140px;">
                 <span style="font-size:11px;">Источник</span>
                 <select id="crm-filter-source" onchange="loadDeals().then(renderCrm)">
@@ -739,10 +745,16 @@
                                 </label>
                             </div>
 
-                            <label class="field">
-                                <span>Адрес площадки</span>
-                                <input type="text" id="edit-deal-address">
-                            </label>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                <label class="field">
+                                    <span>Город</span>
+                                    <select id="edit-deal-city"></select>
+                                </label>
+                                <label class="field">
+                                    <span>Адрес площадки</span>
+                                    <input type="text" id="edit-deal-address">
+                                </label>
+                            </div>
 
                             <div class="field">
                                 <span>Отгрузка / исполнение</span>
@@ -1200,6 +1212,7 @@
             });
             if (assigneeKeep) filterAssignee.value = assigneeKeep;
 
+            await loadCrmCities();
             await loadStagesForPipeline(currentPipelineId);
             fillSelectors();
             await loadDeals();
@@ -1230,6 +1243,30 @@
         dealLoadTimer = setTimeout(() => loadDeals().then(renderCrm), 280);
     }
 
+    let crmCitiesCache = [];
+
+    async function loadCrmCities() {
+        try {
+            const res = await fetch('/api/cities?scope=deal');
+            const data = await res.json();
+            crmCitiesCache = data.cities || [];
+            const filter = document.getElementById('crm-filter-city');
+            if (filter) {
+                const keep = filter.value;
+                let html = '<option value="">Текущий</option>';
+                if (data.can_switch) html += '<option value="0">Все города</option>';
+                html += crmCitiesCache.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                filter.innerHTML = html;
+                if (keep) filter.value = keep;
+            }
+            const editSel = document.getElementById('edit-deal-city');
+            if (editSel) {
+                editSel.innerHTML = '<option value="">— город —</option>' +
+                    crmCitiesCache.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            }
+        } catch (e) { console.error(e); }
+    }
+
     async function loadDeals() {
         const params = new URLSearchParams();
         params.set('pipeline_id', currentPipelineId);
@@ -1239,12 +1276,14 @@
         const from = document.getElementById('crm-filter-from')?.value;
         const to = document.getElementById('crm-filter-to')?.value;
         const overdue = document.getElementById('crm-filter-overdue')?.checked;
+        const cityFilter = document.getElementById('crm-filter-city')?.value;
         if (q) params.set('q', q);
         if (assignee) params.set('assignee', assignee);
         if (source) params.set('source', source);
         if (from) params.set('rent_from', from);
         if (to) params.set('rent_to', to);
         if (overdue) params.set('overdue_only', 'true');
+        if (cityFilter !== '' && cityFilter != null) params.set('city_id', cityFilter);
         const dealsRes = await fetch('/api/deals?' + params.toString());
         crmDeals = await dealsRes.json();
     }
@@ -1721,6 +1760,8 @@
             document.getElementById('edit-deal-setup-date').value = data.setup_date || '';
             document.getElementById('edit-deal-event-date').value = data.event_date || '';
             document.getElementById('edit-deal-address').value = data.event_address || '';
+            const citySel = document.getElementById('edit-deal-city');
+            if (citySel) citySel.value = data.city_id || '';
             document.getElementById('edit-deal-comment').value = data.comment || '';
             document.getElementById('edit-deal-assignee').value = data.assignee_id || '';
             document.getElementById('edit-deal-source').value = data.source || 'manual';
@@ -2228,6 +2269,7 @@
                 event_date: eventDate,
                 setup_date: document.getElementById('edit-deal-setup-date').value || null,
                 event_address: document.getElementById('edit-deal-address').value || null,
+                city_id: parseInt(document.getElementById('edit-deal-city')?.value) || null,
                 comment: document.getElementById('edit-deal-comment').value || null
             };
 
@@ -2267,6 +2309,7 @@
             event_date: eventDateEl ? eventDateEl.value : '',
             setup_date: document.getElementById('edit-deal-setup-date').value || null,
             event_address: document.getElementById('edit-deal-address').value || null,
+            city_id: parseInt(document.getElementById('edit-deal-city')?.value) || null,
             comment: document.getElementById('edit-deal-comment').value || null,
             company_id: parseInt(document.getElementById('edit-deal-company').value) || null,
             contact_id: parseInt(document.getElementById('edit-deal-contact').value) || null,

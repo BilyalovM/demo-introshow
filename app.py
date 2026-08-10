@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine
 from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -331,12 +331,56 @@ with Session(engine) as session:
         "ALTER TABLE deals ADD COLUMN sales_fix_kzt FLOAT DEFAULT 0",
         "ALTER TABLE deals ADD COLUMN project_fix_kzt FLOAT DEFAULT 0",
         "ALTER TABLE deals ADD COLUMN margin_target_pct FLOAT DEFAULT 10",
+        # Multi-city foundation
+        "ALTER TABLE users ADD COLUMN city_id INTEGER",
+        "ALTER TABLE deals ADD COLUMN city_id INTEGER",
+        "ALTER TABLE work_sessions ADD COLUMN city_id INTEGER",
+        "ALTER TABLE work_sessions ADD COLUMN start_place VARCHAR",
+        "ALTER TABLE work_sessions ADD COLUMN end_place VARCHAR",
     ]:
         try:
             session.execute(text(ddl))
             session.commit()
         except Exception:
             session.rollback()
+
+    # Города: Алматы (default), Астана/Шымкент наготове
+    try:
+        seed_cities = [
+            ("Алматы", "almaty", True, "Asia/Almaty", 10),
+            ("Астана", "astana", False, "Asia/Almaty", 20),
+            ("Шымкент", "shymkent", False, "Asia/Almaty", 30),
+        ]
+        for name, slug, active, tz, order in seed_cities:
+            row = session.query(City).filter(City.slug == slug).first()
+            if not row:
+                session.add(City(
+                    name=name, slug=slug, is_active=active,
+                    timezone=tz, sort_order=order,
+                ))
+        session.commit()
+        almaty = session.query(City).filter(City.slug == "almaty").first()
+        if almaty:
+            session.execute(
+                text("UPDATE deals SET city_id = :cid WHERE city_id IS NULL"),
+                {"cid": almaty.id},
+            )
+            # Подтянуть текстовый city из справочника, если пусто
+            session.execute(
+                text(
+                    "UPDATE deals SET city = :cname "
+                    "WHERE (city IS NULL OR TRIM(city) = '') AND city_id = :cid"
+                ),
+                {"cname": almaty.name, "cid": almaty.id},
+            )
+            # Активный город организации по умолчанию
+            active_setting = session.query(AppSetting).filter(AppSetting.key == "active_city_id").first()
+            if not active_setting:
+                session.add(AppSetting(key="active_city_id", value=str(almaty.id)))
+            session.commit()
+    except Exception as e:
+        session.rollback()
+        print("cities seed error:", e)
 
     # Seed реквизитов компании для шапки сметы (если ещё пусто)
     try:
@@ -515,6 +559,7 @@ class DealCreate(BaseModel):
     event_date: str
     event_address: Optional[str] = None
     city: Optional[str] = None
+    city_id: Optional[int] = None
     shifts: Optional[float] = 1.0
     discount_percentage: float = 0.0
     tax_percentage: float = FIXED_TAX_PERCENTAGE
@@ -652,6 +697,13 @@ async def auth_middleware(request: Request, call_next):
         request.state.user_sections = [
             key for key in auth.SECTIONS if auth.user_can_access(user, key)
         ]
+        try:
+            _attach_city_context(request, db, user)
+        except Exception:
+            request.state.cities = []
+            request.state.current_city = None
+            request.state.current_city_name = "Алматы"
+            request.state.can_switch_city = False
     finally:
         db.close()
 
@@ -752,6 +804,7 @@ def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str]
     title = " ".join(title_bits)
 
     assignee_id = route_assignee or _default_assignee_id(db)
+    default_city = _default_city(db)
     deal = Deal(
         title=title[:200],
         company_id=company.id,
@@ -761,6 +814,8 @@ def _ingest_lead(db: Session, payload: PublicLeadIn, force_source: Optional[str]
         setup_date=event_date,
         event_date=event_date,
         event_address=event_address,
+        city=default_city.name if default_city else "Алматы",
+        city_id=default_city.id if default_city else None,
         comment=message or None,
         source=source,
         assignee_id=assignee_id,
@@ -905,6 +960,145 @@ def _almaty_day_start_utc(days_ago: int = 0) -> datetime:
     return local_midnight - timedelta(hours=5)
 
 
+# --- Multi-city helpers -------------------------------------------------
+ACTIVE_CITY_COOKIE = "active_city_id"
+_geocode_cache: Dict[str, Optional[str]] = {}
+
+
+def _city_to_dict(c: City) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "slug": c.slug,
+        "is_active": bool(c.is_active),
+        "timezone": c.timezone,
+        "sort_order": int(c.sort_order or 0),
+    }
+
+
+def _default_city(db: Session) -> Optional[City]:
+    return (
+        db.query(City)
+        .filter(City.slug == "almaty")
+        .first()
+        or db.query(City).filter(City.is_active == True).order_by(City.sort_order, City.id).first()  # noqa: E712
+        or db.query(City).order_by(City.sort_order, City.id).first()
+    )
+
+
+def _cities_for_user(db: Session, user: Optional[User], include_inactive: bool = False) -> List[City]:
+    q = db.query(City).order_by(City.sort_order, City.id)
+    if user and user.role == "admin" and include_inactive:
+        return q.all()
+    rows = q.filter(City.is_active == True).all()  # noqa: E712
+    if not user:
+        return rows
+    if user.role in ("admin", "manager"):
+        return rows
+    home_id = getattr(user, "city_id", None)
+    if home_id:
+        home = next((c for c in rows if c.id == home_id), None)
+        if home:
+            return [home]
+        # домашний город неактивен — всё равно отдадим его
+        home_row = db.query(City).filter(City.id == home_id).first()
+        return [home_row] if home_row else rows
+    return rows
+
+
+def _resolve_active_city(db: Session, user: Optional[User], request: Optional[Request] = None) -> Optional[City]:
+    allowed = _cities_for_user(db, user, include_inactive=False)
+    allowed_ids = {c.id for c in allowed}
+    cookie_id = None
+    if request is not None:
+        raw = request.cookies.get(ACTIVE_CITY_COOKIE)
+        if raw and str(raw).isdigit():
+            cookie_id = int(raw)
+    if cookie_id and cookie_id in allowed_ids:
+        return next(c for c in allowed if c.id == cookie_id)
+    if user and getattr(user, "city_id", None) and user.city_id in allowed_ids:
+        return next(c for c in allowed if c.id == user.city_id)
+    setting = db.query(AppSetting).filter(AppSetting.key == "active_city_id").first()
+    if setting and setting.value and str(setting.value).isdigit():
+        sid = int(setting.value)
+        if sid in allowed_ids:
+            return next(c for c in allowed if c.id == sid)
+    if allowed:
+        return allowed[0]
+    return _default_city(db)
+
+
+def _attach_city_context(request: Request, db: Session, user: Optional[User]):
+    cities = _cities_for_user(db, user, include_inactive=False)
+    current = _resolve_active_city(db, user, request)
+    request.state.cities = cities
+    request.state.current_city = current
+    request.state.current_city_name = current.name if current else "Алматы"
+    request.state.can_switch_city = len(cities) > 1
+
+
+def _apply_deal_city_filter(query, city_id: Optional[int]):
+    if not city_id:
+        return query
+    return query.filter((Deal.city_id == city_id) | (Deal.city_id.is_(None)))
+
+
+def _sync_deal_city_text(db: Session, deal: Deal):
+    """Держим текстовое Deal.city синхронным с City.name для документов."""
+    if not getattr(deal, "city_id", None):
+        return
+    city = db.query(City).filter(City.id == deal.city_id).first()
+    if city:
+        deal.city = city.name
+
+
+def _reverse_geocode(lat: Optional[float], lng: Optional[float]) -> Optional[str]:
+    """Nominatim reverse geocode → короткая метка. Fail soft → None."""
+    if lat is None or lng is None:
+        return None
+    key = f"{float(lat):.4f},{float(lng):.4f}"
+    if key in _geocode_cache:
+        return _geocode_cache[key]
+    label = None
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "lat": lat,
+                "lon": lng,
+                "format": "jsonv2",
+                "accept-language": "ru",
+                "zoom": 16,
+            },
+            headers={
+                "User-Agent": "IntroShowCRM/1.0 (rental; contact: show.intro@yandex.kz)",
+            },
+            timeout=3.5,
+        )
+        if resp.ok:
+            data = resp.json() or {}
+            addr = data.get("address") or {}
+            road = addr.get("road") or addr.get("pedestrian") or addr.get("residential")
+            suburb = addr.get("suburb") or addr.get("neighbourhood") or addr.get("quarter")
+            city = (
+                addr.get("city")
+                or addr.get("town")
+                or addr.get("village")
+                or addr.get("municipality")
+                or addr.get("state")
+            )
+            parts = [p for p in (city, suburb or road) if p]
+            if not parts and data.get("display_name"):
+                parts = [str(data["display_name"]).split(",")[0].strip()]
+            label = ", ".join(parts) if parts else None
+            if label and len(label) > 80:
+                label = label[:77] + "…"
+    except Exception:
+        label = None
+    _geocode_cache[key] = label
+    return label
+
+
 def _session_duration_seconds(sess: WorkSession, now: Optional[datetime] = None) -> int:
     start = sess.started_at
     if not start:
@@ -920,6 +1114,7 @@ def _work_session_to_dict(sess: WorkSession, user_name: Optional[str] = None) ->
         "id": sess.id,
         "user_id": sess.user_id,
         "user_name": user_name,
+        "city_id": getattr(sess, "city_id", None),
         "started_at": sess.started_at.isoformat() + "Z" if sess.started_at else None,
         "ended_at": sess.ended_at.isoformat() + "Z" if sess.ended_at else None,
         "is_open": open_sess,
@@ -928,10 +1123,12 @@ def _work_session_to_dict(sess: WorkSession, user_name: Optional[str] = None) ->
         "start_lng": sess.start_lng,
         "start_accuracy": sess.start_accuracy,
         "start_geo_denied": bool(sess.start_geo_denied),
+        "start_place": getattr(sess, "start_place", None) or sess.start_label,
         "end_lat": sess.end_lat,
         "end_lng": sess.end_lng,
         "end_accuracy": sess.end_accuracy,
         "end_geo_denied": bool(sess.end_geo_denied),
+        "end_place": getattr(sess, "end_place", None),
         "start_label": sess.start_label,
         "note": sess.note,
     }
@@ -1010,13 +1207,17 @@ async def workday_start(
         )
 
     geo = _parse_geo_payload(await _read_json_body(request))
+    place = _reverse_geocode(geo["lat"], geo["lng"]) if geo["lat"] is not None else None
+    active_city = _resolve_active_city(db, user, request)
     sess = WorkSession(
         user_id=user.id,
+        city_id=active_city.id if active_city else getattr(user, "city_id", None),
         started_at=datetime.utcnow(),
         start_lat=geo["lat"],
         start_lng=geo["lng"],
         start_accuracy=geo["accuracy"],
         start_geo_denied=geo["geo_denied"] or (geo["lat"] is None),
+        start_place=place,
     )
     db.add(sess)
     db.flush()
@@ -1031,6 +1232,8 @@ async def workday_start(
             "lng": geo["lng"],
             "accuracy": geo["accuracy"],
             "geo_denied": sess.start_geo_denied,
+            "start_place": place,
+            "city_id": sess.city_id,
         },
         ip=audit.request_ip(request),
     )
@@ -1064,11 +1267,13 @@ async def workday_end(
         )
 
     geo = _parse_geo_payload(await _read_json_body(request))
+    place = _reverse_geocode(geo["lat"], geo["lng"]) if geo["lat"] is not None else None
     sess.ended_at = datetime.utcnow()
     sess.end_lat = geo["lat"]
     sess.end_lng = geo["lng"]
     sess.end_accuracy = geo["accuracy"]
     sess.end_geo_denied = geo["geo_denied"] or (geo["lat"] is None)
+    sess.end_place = place
     audit.write_audit(
         db,
         user_id=user.id,
@@ -1080,6 +1285,7 @@ async def workday_end(
             "lng": geo["lng"],
             "accuracy": geo["accuracy"],
             "geo_denied": sess.end_geo_denied,
+            "end_place": place,
             "duration_seconds": _session_duration_seconds(sess),
         },
         ip=audit.request_ip(request),
@@ -1095,7 +1301,7 @@ async def workday_end(
     }
 
 
-def _workday_history_impl(db: Session, user: User, from_date=None, to_date=None, filter_user_id=None):
+def _workday_history_impl(db: Session, user: User, from_date=None, to_date=None, filter_user_id=None, city_id=None):
     is_admin = user.role == "admin"
     q = db.query(WorkSession)
     if is_admin:
@@ -1103,6 +1309,8 @@ def _workday_history_impl(db: Session, user: User, from_date=None, to_date=None,
             q = q.filter(WorkSession.user_id == filter_user_id)
     else:
         q = q.filter(WorkSession.user_id == user.id)
+    if city_id:
+        q = q.filter((WorkSession.city_id == city_id) | (WorkSession.city_id.is_(None)))
 
     def _parse_day(s: Optional[str], end: bool = False) -> Optional[datetime]:
         if not s:
@@ -1176,23 +1384,37 @@ def workday_history(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """История смен: ?from=&to=&user_id=. Админ — все; обычный — только свои."""
+    """История смен: ?from=&to=&user_id=&city_id=. Админ — все; обычный — только свои."""
     uid_raw = request.query_params.get("user_id")
     try:
         filter_uid = int(uid_raw) if uid_raw else None
     except ValueError:
         filter_uid = None
+    city_raw = request.query_params.get("city_id")
+    try:
+        filter_city = int(city_raw) if city_raw not in (None, "") else None
+    except ValueError:
+        filter_city = None
+    if filter_city is None:
+        active = _resolve_active_city(db, user, request)
+        filter_city = active.id if active else None
+    if filter_city == 0:
+        filter_city = None
     return _workday_history_impl(
         db, user,
         from_date=request.query_params.get("from"),
         to_date=request.query_params.get("to"),
         filter_user_id=filter_uid,
+        city_id=filter_city,
     )
 
 
 @app.get("/", response_class=HTMLResponse)
 async def read_dashboard(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    deals = db.query(Deal).all()
+    active = _resolve_active_city(db, user, request)
+    deals_q = db.query(Deal)
+    deals_q = _apply_deal_city_filter(deals_q, active.id if active else None)
+    deals = deals_q.all()
     stages = {s.id: s for s in db.query(Stage).all()}
 
     def stage_name(d):
@@ -1463,7 +1685,10 @@ async def read_tasks(request: Request, user: User = Depends(get_current_user)):
 
 @app.get("/analytics", response_class=HTMLResponse)
 async def read_analytics(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    deals = db.query(Deal).all()
+    active_city = _resolve_active_city(db, user, request)
+    deals_q = db.query(Deal)
+    deals_q = _apply_deal_city_filter(deals_q, active_city.id if active_city else None)
+    deals = deals_q.all()
     stages = {s.id: s for s in db.query(Stage).all()}
 
     def stage_name(d):
@@ -1547,7 +1772,12 @@ async def read_analytics(request: Request, db: Session = Depends(get_db), user: 
 
     week_start_local = (_almaty_now() - timedelta(days=_almaty_now().weekday())).strftime("%Y-%m-%d")
     today_local = _almaty_now().strftime("%Y-%m-%d")
-    workday_data = _workday_history_impl(db, user, from_date=week_start_local, to_date=today_local)
+    workday_data = _workday_history_impl(
+        db, user,
+        from_date=week_start_local,
+        to_date=today_local,
+        city_id=active_city.id if active_city else None,
+    )
 
     return templates.TemplateResponse("analytics.html", {
         "request": request,
@@ -2147,6 +2377,8 @@ def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_us
         "full_name": u.full_name,
         "role": u.role,
         "permissions": u.permissions,
+        "city_id": getattr(u, "city_id", None),
+        "city_name": (u.home_city.name if getattr(u, "home_city", None) else None),
     } for u in users]
 
 @app.get("/api/users/names")
@@ -2165,12 +2397,14 @@ class UserCreate(BaseModel):
     role: str = "user"
     full_name: Optional[str] = None
     permissions: Optional[List[str]] = None
+    city_id: Optional[int] = None
 
 class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     full_name: Optional[str] = None
     permissions: Optional[List[str]] = None
+    city_id: Optional[int] = None
 
 @app.post("/api/users")
 def create_user(
@@ -2194,6 +2428,7 @@ def create_user(
         role=u.role,
         full_name=u.full_name,
         permissions=u.permissions,
+        city_id=u.city_id,
     )
     db.add(new_user)
     db.commit()
@@ -2253,6 +2488,13 @@ def update_user(
         if target.permissions != u.permissions:
             diff["permissions"] = {"from": target.permissions, "to": u.permissions}
         target.permissions = u.permissions
+    if "city_id" in u.dict(exclude_unset=True):
+        new_cid = u.city_id
+        if new_cid is not None and not db.query(City).filter(City.id == new_cid).first():
+            return JSONResponse(status_code=400, content={"error": "Город не найден"})
+        if target.city_id != new_cid:
+            diff["city_id"] = {"from": target.city_id, "to": new_cid}
+        target.city_id = new_cid
     if diff:
         audit.write_audit(
             db, user_id=current_user.id, entity_type="user", entity_id=target.id,
@@ -2477,6 +2719,179 @@ def read_tracking(request: Request, deal_id: int, db: Session = Depends(get_db))
 # -----------------
 # API ROUTES
 # -----------------
+
+# -- Cities (multi-city foundation) --
+class CityCreate(BaseModel):
+    name: str
+    slug: Optional[str] = None
+    is_active: Optional[bool] = True
+    timezone: Optional[str] = "Asia/Almaty"
+    sort_order: Optional[int] = 100
+
+
+class CityUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    is_active: Optional[bool] = None
+    timezone: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class CitySwitchIn(BaseModel):
+    city_id: int
+
+
+def _slugify_city(name: str) -> str:
+    raw = (name or "").strip().lower()
+    table = str.maketrans({
+        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+        "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+        "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+        "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+        "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+        " ": "-", "_": "-",
+    })
+    s = raw.translate(table)
+    s = re.sub(r"[^a-z0-9\-]+", "", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or "city"
+
+
+@app.get("/api/cities")
+def api_list_cities(
+    request: Request,
+    all: Optional[bool] = False,
+    scope: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """scope=deal|all_active — все активные города (карточка сделки / смета).
+    all=1 — admin: включая неактивные (настройки).
+    иначе — города, доступные пользователю для переключателя."""
+    include_inactive = bool(all) and user.role == "admin"
+    if include_inactive:
+        cities = db.query(City).order_by(City.sort_order, City.id).all()
+    elif scope in ("deal", "all_active"):
+        cities = db.query(City).filter(City.is_active == True).order_by(City.sort_order, City.id).all()  # noqa: E712
+    else:
+        cities = _cities_for_user(db, user, include_inactive=False)
+    current = _resolve_active_city(db, user, request)
+    switch_cities = _cities_for_user(db, user, include_inactive=False)
+    return {
+        "cities": [_city_to_dict(c) for c in cities],
+        "current_city_id": current.id if current else None,
+        "current_city_name": current.name if current else "Алматы",
+        "can_switch": len(switch_cities) > 1 or user.role in ("admin", "manager"),
+    }
+
+
+@app.post("/api/cities")
+def api_create_city(
+    payload: CityCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Только администратор"})
+    name = (payload.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Укажите название города"})
+    slug = (payload.slug or "").strip().lower() or _slugify_city(name)
+    if db.query(City).filter(City.slug == slug).first():
+        return JSONResponse(status_code=400, content={"error": "Город с таким slug уже есть"})
+    city = City(
+        name=name,
+        slug=slug,
+        is_active=True if payload.is_active is None else bool(payload.is_active),
+        timezone=(payload.timezone or "Asia/Almaty").strip() or "Asia/Almaty",
+        sort_order=int(payload.sort_order if payload.sort_order is not None else 100),
+    )
+    db.add(city)
+    db.commit()
+    db.refresh(city)
+    audit.write_audit(
+        db, user_id=user.id, entity_type="city", entity_id=city.id,
+        action="create", diff=_city_to_dict(city), ip=audit.request_ip(request), commit=True,
+    )
+    return _city_to_dict(city)
+
+
+@app.put("/api/cities/{city_id}")
+def api_update_city(
+    city_id: int,
+    payload: CityUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Только администратор"})
+    city = db.query(City).filter(City.id == city_id).first()
+    if not city:
+        return JSONResponse(status_code=404, content={"error": "Город не найден"})
+    data = payload.dict(exclude_unset=True)
+    if "name" in data:
+        data["name"] = (data["name"] or "").strip()
+        if not data["name"]:
+            return JSONResponse(status_code=400, content={"error": "Пустое название"})
+    if "slug" in data and data["slug"]:
+        data["slug"] = str(data["slug"]).strip().lower()
+        clash = db.query(City).filter(City.slug == data["slug"], City.id != city_id).first()
+        if clash:
+            return JSONResponse(status_code=400, content={"error": "Slug занят"})
+    changed = {}
+    for k, v in data.items():
+        old = getattr(city, k, None)
+        if old != v:
+            changed[k] = {"from": old, "to": v}
+        setattr(city, k, v)
+    if changed:
+        audit.write_audit(
+            db, user_id=user.id, entity_type="city", entity_id=city.id,
+            action="update", diff=changed, ip=audit.request_ip(request),
+        )
+    db.commit()
+    db.refresh(city)
+    return _city_to_dict(city)
+
+
+@app.post("/api/cities/switch")
+def api_switch_city(
+    payload: CitySwitchIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    allowed = _cities_for_user(db, user, include_inactive=False)
+    if user.role == "admin":
+        allowed = db.query(City).filter(City.is_active == True).order_by(City.sort_order, City.id).all()  # noqa: E712
+    city = next((c for c in allowed if c.id == payload.city_id), None)
+    if not city:
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к этому городу"})
+    # Для admin — запоминаем как настройку организации
+    if user.role == "admin":
+        row = db.query(AppSetting).filter(AppSetting.key == "active_city_id").first()
+        if row:
+            row.value = str(city.id)
+        else:
+            db.add(AppSetting(key="active_city_id", value=str(city.id)))
+        db.commit()
+    resp = JSONResponse(content={
+        "status": "ok",
+        "current_city_id": city.id,
+        "current_city_name": city.name,
+    })
+    resp.set_cookie(
+        ACTIVE_CITY_COOKIE,
+        str(city.id),
+        max_age=60 * 60 * 24 * 180,
+        httponly=False,
+        samesite="lax",
+        secure=bool(IS_VERCEL) or request.url.scheme == "https",
+    )
+    return resp
+
 
 # -- Folders --
 @app.get("/api/folders")
@@ -4016,6 +4431,7 @@ def _convert_lead_to_deal(
         event_date=lead.event_date or "",
         event_address=lead.event_address,
         city=lead.city,
+        city_id=getattr(lead, "city_id", None) or (_default_city(db).id if _default_city(db) else None),
         shifts=lead.shifts or 1.0,
         discount_percentage=lead.discount_percentage or 0.0,
         tax_percentage=FIXED_TAX_PERCENTAGE,
@@ -4558,6 +4974,11 @@ def _serialize_deal_card(d: Deal, db: Session) -> dict:
     if d.assignee_id and d.assignee:
         assignee_name = d.assignee.full_name or d.assignee.username
     qual = _normalize_qualification(getattr(d, "qualification", None))
+    city_name = ""
+    if getattr(d, "workspace_city", None):
+        city_name = d.workspace_city.name or ""
+    elif getattr(d, "city", None):
+        city_name = d.city or ""
     return {
         "id": d.id,
         "title": d.title,
@@ -4581,6 +5002,8 @@ def _serialize_deal_card(d: Deal, db: Session) -> dict:
         "qualification_label": QUALIFICATION_LABELS.get(qual or "", ""),
         "is_qualified": bool(d.is_qualified) or qual in ("rental", "sale"),
         "is_archived": bool(d.is_archived),
+        "city_id": getattr(d, "city_id", None),
+        "city_name": city_name,
         "has_overdue_activity": _deal_has_overdue_activity(db, d.id),
     }
 
@@ -4596,6 +5019,7 @@ def get_deals(
     rent_to: Optional[str] = None,
     overdue_only: Optional[bool] = False,
     include_archived: Optional[bool] = False,
+    city_id: Optional[int] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -4624,6 +5048,16 @@ def get_deals(
         query = query.filter(Deal.setup_date >= rent_from)
     if rent_to:
         query = query.filter(Deal.event_date <= rent_to)
+
+    active = _resolve_active_city(db, user, request)
+    filter_city = city_id if city_id is not None else (active.id if active else None)
+    # city_id=0 → все города (только admin/manager)
+    if city_id == 0:
+        if user.role in ("admin", "manager"):
+            filter_city = None
+        else:
+            filter_city = active.id if active else None
+    query = _apply_deal_city_filter(query, filter_city)
 
     deals = query.order_by(Deal.id.desc()).all()
     result = []
@@ -4663,6 +5097,15 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
     sales_mgr = deal.sales_manager_id or assignee_id
     project_mgr = deal.project_manager_id
 
+    active_city = _resolve_active_city(db, user, request)
+    deal_city_id = deal.city_id or (active_city.id if active_city else None)
+    if deal_city_id and not db.query(City).filter(City.id == deal_city_id).first():
+        deal_city_id = active_city.id if active_city else None
+    city_text = (deal.city or "").strip() or None
+    if deal_city_id and not city_text:
+        c_row = db.query(City).filter(City.id == deal_city_id).first()
+        city_text = c_row.name if c_row else None
+
     db_deal = Deal(
         title=deal.title,
         company_id=deal.company_id,
@@ -4674,7 +5117,8 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
         setup_date=deal.setup_date,
         event_date=deal.event_date,
         event_address=deal.event_address,
-        city=(deal.city or "").strip() or None,
+        city=city_text,
+        city_id=deal_city_id,
         shifts=float(deal.shifts) if deal.shifts is not None else 1.0,
         discount_percentage=deal.discount_percentage,
         tax_percentage=FIXED_TAX_PERCENTAGE,
@@ -4990,6 +5434,10 @@ def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = De
         "event_date": d.event_date,
         "event_address": d.event_address,
         "city": getattr(d, "city", None) or "",
+        "city_id": getattr(d, "city_id", None),
+        "city_name": (
+            d.workspace_city.name if getattr(d, "workspace_city", None) else (getattr(d, "city", None) or "")
+        ),
         "shifts": float(getattr(d, "shifts", None) or 1),
         "discount_percentage": 0 if hide else d.discount_percentage,
         "tax_percentage": 0 if hide else _deal_tax(d),
@@ -5123,6 +5571,7 @@ class DealUpdate(BaseModel):
     setup_date: Optional[str] = None
     event_address: Optional[str] = None
     city: Optional[str] = None
+    city_id: Optional[int] = None
     shifts: Optional[float] = None
     comment: Optional[str] = None
     company_id: Optional[int] = None
@@ -5190,6 +5639,12 @@ def update_deal(
         if old != value:
             changed[field] = {"from": old, "to": value}
         setattr(d, field, value)
+
+    if "city_id" in data:
+        _sync_deal_city_text(db, d)
+        if "city" not in changed and d.city:
+            # city text обновлён из справочника
+            pass
 
     hist_bits = []
     if "qualification" in changed:
@@ -5937,6 +6392,7 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
 
     prev_deal = linked[0] if linked else None
     assignee_id = route_assignee or _default_assignee_id(db)
+    default_city = _default_city(db)
     deal = Deal(
         title=f"Заявка из {label} — {sender_name or chat_id}",
         company_id=company.id,
@@ -5944,6 +6400,8 @@ def ensure_deal_for_chat(db: Session, channel: str, chat_id: str, sender_name: s
         pipeline_id=pipeline.id if pipeline else 1,
         stage=first_stage.id if first_stage else 1,
         event_date="",
+        city=default_city.name if default_city else "Алматы",
+        city_id=default_city.id if default_city else None,
         chat_channel=channel,
         chat_id=chat_id,
         prev_deal_id=prev_deal.id if prev_deal else None,
@@ -7470,11 +7928,12 @@ def deal_client_pack(deal_id: int, db: Session = Depends(get_db), user: User = D
 
 
 @app.get("/api/today")
-def api_today(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def api_today(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Сводка «Сегодня»: назначения/техничка, задачи, непрочитанные чаты."""
     today = datetime.utcnow().strftime("%Y-%m-%d")
     tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
     uname = user.full_name or user.username
+    active_city = _resolve_active_city(db, user, request)
 
     staff_rows = (
         db.query(DealStaffAssignment)
@@ -7487,6 +7946,8 @@ def api_today(db: Session = Depends(get_db), user: User = Depends(get_current_us
     for s in staff_rows:
         deal = s.deal
         if not deal or deal.is_archived:
+            continue
+        if active_city and getattr(deal, "city_id", None) not in (None, active_city.id):
             continue
         date_key = deal.setup_date or deal.event_date or ""
         day = "today" if date_key == today else ("tomorrow" if date_key == tomorrow else None)

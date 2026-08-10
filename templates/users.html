@@ -110,6 +110,12 @@
                         <option value="admin">Администратор (полный доступ)</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label>Домашний город</label>
+                    <select id="u-city">
+                        <option value="">— не задан (все активные) —</option>
+                    </select>
+                </div>
             </div>
 
             <div id="perm-section" style="margin-top: 1rem;">
@@ -133,6 +139,7 @@
                 <tr>
                     <th>Логин</th>
                     <th>Имя</th>
+                    <th>Город</th>
                     <th>Роль</th>
                     <th>Доступ</th>
                     <th style="width:140px">Действия</th>
@@ -180,6 +187,19 @@
         }
     }
 
+    async function loadCityOptions() {
+        const sel = document.getElementById('u-city');
+        if (!sel) return;
+        try {
+            const res = await fetch('/api/cities?scope=deal');
+            const data = await res.json();
+            const keep = sel.value;
+            sel.innerHTML = '<option value="">— не задан (все активные) —</option>' +
+                (data.cities || []).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+            if (keep) sel.value = keep;
+        } catch (e) {}
+    }
+
     function onRoleChange() {
         const role = document.getElementById('u-role').value;
         document.getElementById('perm-section').style.display = role === 'admin' ? 'none' : 'block';
@@ -203,6 +223,7 @@
             tr.innerHTML = `
                 <td style="font-weight:600">${escapeHtml(u.username)}</td>
                 <td>${escapeHtml(u.full_name || '—')}</td>
+                <td>${escapeHtml(u.city_name || '—')}</td>
                 <td><span class="role-badge ${u.role}">${roleNames[u.role] || u.role}</span></td>
                 <td class="muted" style="font-size:12px; max-width:280px;">${escapeHtml(permsSummary(u))}</td>
                 <td>
@@ -224,6 +245,7 @@
         document.getElementById('u-password').value = '';
         document.getElementById('pass-hint').innerText = '(оставьте пустым, чтобы не менять)';
         document.getElementById('u-role').value = u.role;
+        document.getElementById('u-city').value = u.city_id || '';
         onRoleChange();
         document.querySelectorAll('.perm-cb').forEach(cb => {
             cb.checked = !!(u.permissions && u.permissions.includes(cb.value));
@@ -261,12 +283,14 @@
         const permissions = role === 'admin' ? [] :
             Array.from(document.querySelectorAll('.perm-cb:checked')).map(cb => cb.value);
 
+        const cityRaw = document.getElementById('u-city').value;
         const payload = {
             username: document.getElementById('u-username').value.trim(),
             full_name: document.getElementById('u-fullname').value.trim(),
             password: document.getElementById('u-password').value,
             role: role,
             permissions: permissions,
+            city_id: cityRaw ? parseInt(cityRaw, 10) : null,
         };
 
         const errEl = document.getElementById('create-error');
@@ -304,6 +328,7 @@
 
     window.onload = async () => {
         await loadSections();
+        await loadCityOptions();
         onRoleChange();
         loadUsers();
     };

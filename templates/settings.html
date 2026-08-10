@@ -69,6 +69,21 @@
             <p id="logout-all-msg" style="display:none;margin-top:8px;font-size:13px;"></p>
         </div>
 
+        {% if request.state.user and request.state.user.role == 'admin' %}
+        <div class="card" id="cities-settings-card">
+            <h3 style="margin-top:0;">Города CRM</h3>
+            <p style="font-size:14px;margin-bottom:12px;">Лёгкий multi-city: одна БД, общий каталог. Сделки, аналитика и смены фильтруются по активному городу. Переключатель — в верхней панели.</p>
+            <div id="cities-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+            <form id="city-add-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+                <label style="font-size:13px;font-weight:600;">Новый город
+                    <input id="city-new-name" required placeholder="например: Караганда" style="display:block;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);min-width:200px;">
+                </label>
+                <button type="submit">Добавить</button>
+                <p id="cities-msg" style="display:none;margin:0;font-size:13px;"></p>
+            </form>
+        </div>
+        {% endif %}
+
         <div class="card">
             <h3 style="margin-top:0;">Шапка сметы / реквизиты компании</h3>
             <p style="font-size:14px;margin-bottom:12px;">Эти данные попадают в шапку клиентской и внутренней сметы (DOCX/PDF).</p>
@@ -678,12 +693,96 @@
             });
         }
 
+        async function loadCitiesAdmin() {
+            const list = document.getElementById('cities-list');
+            if (!list) return;
+            try {
+                const res = await fetch('/api/cities?all=1');
+                const data = await res.json();
+                const cities = data.cities || [];
+                list.innerHTML = cities.map(c => `
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;">
+                        <input data-city-id="${c.id}" class="city-name-input" value="${(c.name || '').replace(/"/g, '&quot;')}" style="flex:1;min-width:140px;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--background);color:var(--text);">
+                        <label style="font-size:12.5px;display:flex;align-items:center;gap:4px;">
+                            <input type="checkbox" class="city-active-cb" data-city-id="${c.id}" ${c.is_active ? 'checked' : ''}> активен
+                        </label>
+                        <span class="muted" style="font-size:12px;">${c.slug}</span>
+                        <button type="button" onclick="saveCityRow(${c.id})">Сохранить</button>
+                    </div>
+                `).join('') || '<div class="muted">Городов пока нет</div>';
+            } catch (e) {
+                list.innerHTML = '<div class="muted">Не удалось загрузить города</div>';
+            }
+        }
+
+        async function saveCityRow(id) {
+            const nameEl = document.querySelector(`.city-name-input[data-city-id="${id}"]`);
+            const activeEl = document.querySelector(`.city-active-cb[data-city-id="${id}"]`);
+            const msg = document.getElementById('cities-msg');
+            try {
+                const res = await fetch(`/api/cities/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: (nameEl && nameEl.value || '').trim(),
+                        is_active: !!(activeEl && activeEl.checked),
+                    }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (msg) {
+                    msg.style.display = 'block';
+                    msg.style.color = res.ok ? '#16a34a' : '#dc2626';
+                    msg.textContent = res.ok ? 'Сохранено' : (data.error || 'Ошибка');
+                }
+                if (res.ok) loadCitiesAdmin();
+            } catch (e) {
+                if (msg) {
+                    msg.style.display = 'block';
+                    msg.style.color = '#dc2626';
+                    msg.textContent = 'Ошибка соединения';
+                }
+            }
+        }
+
+        const cityAddForm = document.getElementById('city-add-form');
+        if (cityAddForm) {
+            cityAddForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const name = document.getElementById('city-new-name').value.trim();
+                const msg = document.getElementById('cities-msg');
+                try {
+                    const res = await fetch('/api/cities', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, is_active: true }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (msg) {
+                        msg.style.display = 'block';
+                        msg.style.color = res.ok ? '#16a34a' : '#dc2626';
+                        msg.textContent = res.ok ? 'Город добавлен' : (data.error || 'Ошибка');
+                    }
+                    if (res.ok) {
+                        document.getElementById('city-new-name').value = '';
+                        loadCitiesAdmin();
+                    }
+                } catch (err) {
+                    if (msg) {
+                        msg.style.display = 'block';
+                        msg.style.color = '#dc2626';
+                        msg.textContent = 'Ошибка соединения';
+                    }
+                }
+            });
+        }
+
         window.onload = () => {
             checkStatus();
             loadIntegrationStatus();
             loadSettingsRouting();
             loadCompanyLetterhead();
             loadAuditLog();
+            loadCitiesAdmin();
             initWaHookHint();
             const filt = document.getElementById('audit-entity-filter');
             if (filt) filt.addEventListener('change', loadAuditLog);

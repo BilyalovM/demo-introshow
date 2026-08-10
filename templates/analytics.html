@@ -206,18 +206,20 @@
                 <td class="num" data-label="Длительность">{{ fmt_hours(s.elapsed_seconds) }}</td>
                 <td data-label="Гео" style="font-size:12.5px">
                     {% if s.start_lat is not none and s.start_lng is not none %}
-                    <a href="https://maps.google.com/?q={{ s.start_lat }},{{ s.start_lng }}" target="_blank" rel="noopener">старт {{ '%.4f'|format(s.start_lat) }}, {{ '%.4f'|format(s.start_lng) }}</a>
+                    <a href="https://www.google.com/maps?q={{ s.start_lat }},{{ s.start_lng }}" target="_blank" rel="noopener" title="{{ '%.5f'|format(s.start_lat) }}, {{ '%.5f'|format(s.start_lng) }}">старт: {{ s.start_place or ('%.4f'|format(s.start_lat) ~ ', ' ~ '%.4f'|format(s.start_lng)) }}</a>
                     {% elif s.start_geo_denied %}
-                    <span class="muted">старт: гео отказано</span>
+                    <span class="muted">старт: отказано</span>
                     {% else %}
-                    <span class="muted">старт: —</span>
+                    <span class="muted">старт: гео нет</span>
                     {% endif %}
                     {% if s.ended_at %}
                     <br>
                     {% if s.end_lat is not none and s.end_lng is not none %}
-                    <a href="https://maps.google.com/?q={{ s.end_lat }},{{ s.end_lng }}" target="_blank" rel="noopener">финиш {{ '%.4f'|format(s.end_lat) }}, {{ '%.4f'|format(s.end_lng) }}</a>
+                    <a href="https://www.google.com/maps?q={{ s.end_lat }},{{ s.end_lng }}" target="_blank" rel="noopener" title="{{ '%.5f'|format(s.end_lat) }}, {{ '%.5f'|format(s.end_lng) }}">финиш: {{ s.end_place or ('%.4f'|format(s.end_lat) ~ ', ' ~ '%.4f'|format(s.end_lng)) }}</a>
                     {% elif s.end_geo_denied %}
-                    <span class="muted">финиш: гео отказано</span>
+                    <span class="muted">финиш: отказано</span>
+                    {% else %}
+                    <span class="muted">финиш: гео нет</span>
                     {% endif %}
                     {% endif %}
                 </td>

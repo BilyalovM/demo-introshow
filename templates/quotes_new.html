@@ -6,38 +6,45 @@
 <style>
 /* Смета: один скролл страницы (document). Без внутренних скроллеров
    в колонках и каталоге — правая колонка тянется по контенту. */
-body:has(.quote-layout),
-html:has(.quote-layout) {
-    overflow-x: clip;
+html:has(.quote-layout),
+body:has(.quote-layout) {
+    overflow-x: clip !important;
     overflow-y: auto !important;
     height: auto !important;
     max-height: none !important;
 }
 body:has(.quote-layout) .app,
 body:has(.quote-layout) .content,
-body:has(.quote-layout) .main {
+body:has(.quote-layout) .main,
+body:has(.quote-layout) .quote-layout,
+body:has(.quote-layout) .quote-main,
+body:has(.quote-layout) .quote-side,
+body:has(.quote-layout) .quote-layout .card {
     height: auto !important;
     max-height: none !important;
-    min-height: 0;
-    overflow-x: clip;
+    min-height: 0 !important;
+    overflow-x: clip !important;
     overflow-y: visible !important;
 }
-#catalogContainer {
-    max-height: none;
-    overflow: visible;
+body:has(.quote-layout) .sidebar {
+    /* сайдбар sticky; не создаём второй скролл-контейнер контента */
+    overscroll-behavior: contain;
+}
+#catalogContainer,
+#cartContainer {
+    max-height: none !important;
+    overflow: visible !important;
 }
 .quote-main,
 .quote-side {
     position: static !important;
-    max-height: none !important;
-    overflow: visible !important;
     align-self: start;
 }
 @media (max-width: 1024px) {
     .quote-layout { grid-template-columns: 1fr !important; }
 }
 @media (max-width: 768px) {
-    .quote-layout .card { overflow: visible; }
+    .quote-layout .card { overflow: visible !important; }
 }
 </style>
 {% endblock %}
@@ -59,7 +66,10 @@ body:has(.quote-layout) .main {
                 <label class="field"><span>Наименование проекта</span><input id="qTitle" placeholder="Презентация / концерт / …"/></label>
             </div>
             <div class="grid cols-2">
-                <label class="field"><span>Город</span><input id="qCity" placeholder="Алматы"/></label>
+                <label class="field"><span>Город</span>
+                    <select id="qCityId"><option value="">— город —</option></select>
+                    <input id="qCity" type="hidden" value=""/>
+                </label>
                 <label class="field"><span>Адрес / площадка</span><input id="qAddress" placeholder="Площадка, улица…"/></label>
             </div>
             <div class="grid cols-3">
@@ -494,6 +504,27 @@ function onShiftsChange() {
     applyShiftsToCart(shifts, { silent: true });
 }
 
+async function loadCitiesForQuote(selectedId) {
+    const sel = document.getElementById('qCityId');
+    if (!sel) return;
+    try {
+        const res = await fetch('/api/cities?scope=deal');
+        const data = await res.json();
+        const cities = data.cities || [];
+        const currentId = selectedId || data.current_city_id || '';
+        sel.innerHTML = '<option value="">— город —</option>' + cities.map(c =>
+            `<option value="${c.id}">${c.name}</option>`
+        ).join('');
+        if (currentId) sel.value = String(currentId);
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById('qCity').value = opt && opt.value ? opt.textContent : '';
+        sel.onchange = () => {
+            const o = sel.options[sel.selectedIndex];
+            document.getElementById('qCity').value = o && o.value ? o.textContent : '';
+        };
+    } catch (e) { console.error(e); }
+}
+
 async function loadAll() {
     try {
         const [resEq, resFold, resComp, resUsers] = await Promise.all([
@@ -518,7 +549,11 @@ async function loadAll() {
 
         renderCatalog();
         await loadEstimateTemplates();
-        if (QUOTE_ID) await loadQuote();
+        if (QUOTE_ID) {
+            await loadQuote();
+        } else {
+            await loadCitiesForQuote(null);
+        }
     } catch (e) {
         console.error('Ошибка загрузки данных:', e);
     }
@@ -600,6 +635,7 @@ async function loadQuote() {
     const deal = await res.json();
     document.getElementById('pageTitle').textContent = 'Смета №CRM-' + deal.id;
     document.getElementById('qTitle').value = deal.title || '';
+    await loadCitiesForQuote(deal.city_id || null);
     document.getElementById('qCity').value = deal.city || '';
     document.getElementById('qAddress').value = deal.event_address || '';
     document.getElementById('rentStart').value = deal.setup_date || '';
@@ -1072,10 +1108,13 @@ function quoteHeaderPayload() {
     const companyId = parseInt(document.getElementById('companySelect').value) || null;
     const contactId = parseInt(document.getElementById('contactSelect').value) || null;
     const assigneeId = parseInt(document.getElementById('assigneeSelect').value) || null;
-    const city = (document.getElementById('qCity').value || '').trim();
+    const cityId = parseInt(document.getElementById('qCityId').value) || null;
+    const citySel = document.getElementById('qCityId');
+    const cityOpt = citySel && citySel.options[citySel.selectedIndex];
+    const city = (cityOpt && cityOpt.value ? cityOpt.textContent : (document.getElementById('qCity').value || '')).trim();
     const address = document.getElementById('qAddress').value || '';
     const shifts = parseFloat(document.getElementById('qShifts').value) || 1;
-    return { title, start, end, companyId, contactId, assigneeId, city, address, shifts };
+    return { title, start, end, companyId, contactId, assigneeId, city, cityId, address, shifts };
 }
 
 async function saveQuote(silent) {
@@ -1100,6 +1139,7 @@ async function saveQuote(silent) {
                     event_date: h.end,
                     event_address: h.address,
                     city: h.city || null,
+                    city_id: h.cityId || null,
                     shifts: h.shifts,
                     company_id: h.companyId,
                     contact_id: h.contactId,
@@ -1137,6 +1177,7 @@ async function saveQuote(silent) {
                     event_date: h.end,
                     event_address: h.address,
                     city: h.city || null,
+                    city_id: h.cityId || null,
                     shifts: h.shifts,
                     discount_percentage: discount,
                     tax_percentage: tax,

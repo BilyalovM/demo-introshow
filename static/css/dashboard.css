@@ -194,16 +194,23 @@ h4 {
 .brand {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 4px 8px 16px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
 }
 .brand-logo {
   width: auto;
   height: auto;
   min-height: 0;
   border-radius: 0;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
   color: var(--text);
   background: transparent;
   box-shadow: none;
@@ -215,6 +222,7 @@ h4 {
   height: 36px;
   width: auto;
   max-width: 168px;
+  margin: 0 auto;
   object-fit: contain;
 }
 .brand-name {
@@ -225,6 +233,35 @@ h4 {
   text-transform: uppercase;
   color: var(--muted);
   line-height: 1.2;
+  text-align: center;
+  width: 100%;
+}
+.city-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+}
+.city-switcher select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 7px 28px 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b909a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  max-width: 140px;
+}
+.city-switcher select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
 }
 .brand-name span {
   color: var(--accent);

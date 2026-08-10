@@ -13,7 +13,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from database import Company, Contact, Deal, DealItem, Equipment, Pipeline, Stage
+from database import City, Company, Contact, Deal, DealItem, Equipment, Pipeline, Stage
 
 DEMO_PREFIX = "DEMO: "
 
@@ -388,11 +388,15 @@ def seed_demo_deals(db: Session, *, only_if_empty: bool = False) -> dict:
     created = 0
     skipped = 0
     created_titles = []
+    almaty = db.query(City).filter(City.slug == "almaty").first()
 
     for spec in demos:
         title = spec["title"]
         exists = db.query(Deal).filter(Deal.title == title).first()
         if exists:
+            # дотянуть city_id у старых демо-сделок
+            if almaty and getattr(exists, "city_id", None) is None:
+                exists.city_id = almaty.id
             skipped += 1
             continue
         pipe = spec["pipeline"]
@@ -409,7 +413,8 @@ def seed_demo_deals(db: Session, *, only_if_empty: bool = False) -> dict:
             setup_date=spec["setup"],
             event_date=spec["event"],
             event_address=spec["address"],
-            city=spec.get("city"),
+            city=spec.get("city") or (almaty.name if almaty else "Алматы"),
+            city_id=almaty.id if almaty else None,
             shifts=float(spec.get("shifts") or 1),
             discount_percentage=0.0,
             tax_percentage=16.0,

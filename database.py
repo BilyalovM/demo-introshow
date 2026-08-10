@@ -46,6 +46,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+class City(Base):
+    """Город / workspace-локация (лёгкий multi-city: одна БД, фильтр сделок)."""
+    __tablename__ = "cities"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    slug = Column(String, unique=True, index=True, nullable=False)
+    is_active = Column(Boolean, default=True)
+    timezone = Column(String, nullable=True)  # например Asia/Almaty
+    sort_order = Column(Integer, default=0)
+
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -58,6 +69,10 @@ class User(Base):
     permissions = Column(JSON, nullable=True)
     # Инкремент инвалидирует все cookie-сессии (logout-all). См. auth.create_session_token.
     session_version = Column(Integer, default=0)
+    # Домашний город сотрудника (фильтр CRM / сегодня, если задан)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
+
+    home_city = relationship("City", foreign_keys=[city_id])
 
 class Folder(Base):
     __tablename__ = "folders"
@@ -183,7 +198,8 @@ class Deal(Base):
     setup_date = Column(String) # Выезд оборудования / монтаж
     event_date = Column(String) # Возврат оборудования / мероприятие
     event_address = Column(String) # Адрес площадки
-    city = Column(String, nullable=True)  # Город проекта (шапка сметы)
+    city = Column(String, nullable=True)  # Город проекта (шапка сметы, текст)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True, index=True)
     shifts = Column(Float, default=1.0)  # Смены / кол-во дней в шапке
     discount_percentage = Column(Float, default=0.0)
     tax_percentage = Column(Float, default=16.0)  # НДС/налог всегда 16%
@@ -217,6 +233,7 @@ class Deal(Base):
     assignee = relationship("User", foreign_keys=[assignee_id])
     sales_manager = relationship("User", foreign_keys=[sales_manager_id])
     project_manager = relationship("User", foreign_keys=[project_manager_id])
+    workspace_city = relationship("City", foreign_keys=[city_id])
     pipeline = relationship("Pipeline", back_populates="deals")
     stage_obj = relationship("Stage", back_populates="deals")
     items = relationship("DealItem", back_populates="deal")
@@ -655,20 +672,24 @@ class WorkSession(Base):
     __tablename__ = "work_sessions"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True, index=True)
     started_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     ended_at = Column(DateTime, nullable=True, index=True)  # null = открытая смена
     start_lat = Column(Float, nullable=True)
     start_lng = Column(Float, nullable=True)
     start_accuracy = Column(Float, nullable=True)
     start_geo_denied = Column(Boolean, default=False)
+    start_place = Column(String, nullable=True)  # человекочитаемый адрес (reverse geocode)
     end_lat = Column(Float, nullable=True)
     end_lng = Column(Float, nullable=True)
     end_accuracy = Column(Float, nullable=True)
     end_geo_denied = Column(Boolean, default=False)
-    start_label = Column(String, nullable=True)  # опциональная заметка / город (MVP: null)
+    end_place = Column(String, nullable=True)
+    start_label = Column(String, nullable=True)  # опциональная заметка / город (legacy)
     note = Column(String, nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
+    city = relationship("City", foreign_keys=[city_id])
 
 
 class AppSetting(Base):
