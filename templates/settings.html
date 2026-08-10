@@ -43,6 +43,17 @@
     <div class="container">
         <h2>Настройки системы</h2>
 
+        {% if request.state.user and request.state.user.role == 'admin' %}
+        <div class="card" id="db-health-card">
+            <h3 style="margin-top:0;">Проверка БД</h3>
+            <p style="margin-bottom:12px;font-size:14px;">Счётчики сущностей, путь к базе и предупреждение, если на Vercel крутится эфемерный SQLite.</p>
+            <div id="db-health-banner" style="display:none;margin-bottom:12px;padding:12px 14px;border-radius:10px;font-size:13.5px;line-height:1.45;"></div>
+            <div id="db-health-stats" style="font-size:14px;line-height:1.7;margin-bottom:12px;color:var(--text-light);">Нажмите «Проверить».</div>
+            <button type="button" onclick="loadDbHealth()">Проверить</button>
+            <a href="/trash" style="margin-left:10px;font-size:14px;color:var(--primary);">Открыть корзину →</a>
+        </div>
+        {% endif %}
+
         {% if request.state.user and request.state.user.role in ('admin', 'manager') %}
         <div class="card" id="audit-log-card">
             <h3 style="margin-top:0;">Журнал аудита</h3>
@@ -451,6 +462,38 @@
                 apply('ig_conn', s.instagram);
                 apply('onec_conn', s.onec);
             } catch (e) { console.error(e); }
+        }
+
+        async function loadDbHealth() {
+            const stats = document.getElementById('db-health-stats');
+            const banner = document.getElementById('db-health-banner');
+            if (!stats) return;
+            stats.textContent = 'Проверка…';
+            try {
+                const res = await fetch('/api/admin/db-health');
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Ошибка');
+                const c = data.counts || {};
+                stats.innerHTML = [
+                    `<div><strong>Backend:</strong> ${data.backend || '—'}${data.on_vercel ? ' · Vercel' : ''}</div>`,
+                    `<div><strong>Путь / URL:</strong> <code style="word-break:break-all;">${data.db_path || '—'}</code></div>`,
+                    `<div><strong>Сделки:</strong> ${c.deals ?? '—'} (в корзине: ${c.deals_in_trash ?? 0})</div>`,
+                    `<div><strong>Задачи:</strong> ${c.tasks ?? '—'} (в корзине: ${c.tasks_in_trash ?? 0})</div>`,
+                    `<div><strong>Work sessions:</strong> ${c.work_sessions ?? '—'}</div>`,
+                    `<div><strong>Компании:</strong> ${c.companies ?? '—'}</div>`,
+                ].join('');
+                if (data.warning_ru && banner) {
+                    banner.style.display = 'block';
+                    banner.style.background = data.ephemeral_warning ? '#fef2f2' : '#fff7ed';
+                    banner.style.border = data.ephemeral_warning ? '1px solid #fecaca' : '1px solid #fed7aa';
+                    banner.style.color = data.ephemeral_warning ? '#991b1b' : '#9a3412';
+                    banner.textContent = data.warning_ru;
+                } else if (banner) {
+                    banner.style.display = 'none';
+                }
+            } catch (e) {
+                stats.textContent = e.message || 'Ошибка проверки';
+            }
         }
 
         async function restoreDemoDeals() {

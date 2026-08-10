@@ -11,13 +11,27 @@ DEFAULT_DB_PATH = os.path.join(BASE_DIR, "rental_app.db")
 
 
 def get_database_url() -> str:
+    """
+    Production requires Postgres via DATABASE_URL.
+    SQLite is for local/demo only. On Vercel, /tmp SQLite is ephemeral —
+    cold starts lose data. Never replace an existing runtime DB with the
+    packaged seed (that wiped user WorkSessions/deals/tasks).
+    """
     configured_url = os.environ.get("DATABASE_URL")
     if configured_url:
         return configured_url
 
+    # Writable durable path on VPS / volume (not available on Vercel serverless)
+    explicit = os.environ.get("RENTAL_DB_PATH") or os.environ.get("SQLITE_PATH")
+    if explicit:
+        parent = os.path.dirname(explicit)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        return f"sqlite:///{explicit}"
+
     if os.environ.get("VERCEL"):
-        # Vercel /tmp is ephemeral. Seed once per instance — never overwrite a
-        # runtime DB that already has writes (mtime refresh wiped demo data).
+        # Copy packaged DB only when /tmp has no DB yet. Never overwrite
+        # an instance DB that already received writes.
         db_path = os.path.join(tempfile.gettempdir(), "rental_app.db")
         if os.path.exists(DEFAULT_DB_PATH) and not os.path.exists(db_path):
             shutil.copyfile(DEFAULT_DB_PATH, db_path)
@@ -45,6 +59,26 @@ engine = _make_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+
+def database_backend_info() -> dict:
+    """Diagnostics for admin «Проверка БД»."""
+    url = DATABASE_URL or ""
+    is_postgres = url.startswith("postgres")
+    is_sqlite = url.startswith("sqlite")
+    sqlite_path = None
+    if is_sqlite and ":///" in url:
+        sqlite_path = url.split(":///", 1)[1]
+    on_vercel = bool(os.environ.get("VERCEL"))
+    return {
+        "backend": "postgres" if is_postgres else ("sqlite" if is_sqlite else "other"),
+        "is_postgres": is_postgres,
+        "is_sqlite": is_sqlite,
+        "on_vercel": on_vercel,
+        "sqlite_path": sqlite_path,
+        "ephemeral_warning": bool(on_vercel and is_sqlite),
+        "database_url_set": bool(os.environ.get("DATABASE_URL")),
+    }
 
 class City(Base):
     """Город / workspace-локация (лёгкий multi-city: одна БД, фильтр сделок)."""
@@ -126,9 +160,12 @@ class Company(Base):
     bik = Column(String)
     telegram_chat_id = Column(String, nullable=True)
     instagram = Column(String, nullable=True)  # username в Instagram для перехода в Direct
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     deals = relationship("Deal", back_populates="company")
     contacts = relationship("Contact", back_populates="company")
+    deleted_by = relationship("User", foreign_keys=[deleted_by_id])
 
 
 class Contact(Base):
@@ -227,12 +264,16 @@ class Deal(Base):
     # Операционный пайплайн после успеха: none / packed / departed / on_site / returned / closed
     ops_status = Column(String, default="none")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Soft-delete → «Корзина»
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     company = relationship("Company", back_populates="deals")
     contact = relationship("Contact", foreign_keys=[contact_id])
     assignee = relationship("User", foreign_keys=[assignee_id])
     sales_manager = relationship("User", foreign_keys=[sales_manager_id])
     project_manager = relationship("User", foreign_keys=[project_manager_id])
+    deleted_by = relationship("User", foreign_keys=[deleted_by_id])
     workspace_city = relationship("City", foreign_keys=[city_id])
     pipeline = relationship("Pipeline", back_populates="deals")
     stage_obj = relationship("Stage", back_populates="deals")
@@ -358,9 +399,12 @@ class Task(Base):
     tags = Column(String, nullable=True)        # теги через запятую
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     deal = relationship("Deal", backref="tasks")
     creator = relationship("User", foreign_keys=[creator_id])
+    deleted_by = relationship("User", foreign_keys=[deleted_by_id])
     comments = relationship("TaskComment", back_populates="task", cascade="all, delete-orphan",
                             order_by="TaskComment.created_at")
     assignees = relationship("TaskAssignee", back_populates="task", cascade="all, delete-orphan")
@@ -493,8 +537,11 @@ class DealDocument(Base):
     path = Column(String, nullable=True)  # абсолютный или /uploads/...
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     created_by = Column(String, nullable=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     deal = relationship("Deal", backref="documents")
+    deleted_by = relationship("User", foreign_keys=[deleted_by_id])
 
 
 class DealAdvance(Base):

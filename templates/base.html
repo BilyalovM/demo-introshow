@@ -241,6 +241,19 @@
   </span>
  </a>
  {% endif %}
+ {% if request.state.user and request.state.user.role in ('admin', 'manager') %}
+ <a href="/trash" class="nav-link {% if request.url.path.startswith('/trash') %}active{% endif %}">
+  <span class="nav-ico">
+   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24">
+    <path d="M3 6h18"></path>
+    <path d="M8 6V4h8v2"></path>
+    <path d="M19 6l-1 14H6L5 6"></path>
+    <path d="M10 11v6M14 11v6"></path>
+   </svg>
+  </span>
+  <span>Корзина</span>
+ </a>
+ {% endif %}
  {% if request.state.user and request.state.user.role == 'admin' %}
  <a href="/users" class="nav-link {% if request.url.path == '/users' %}active{% endif %}">
   <span class="nav-ico">
@@ -484,6 +497,7 @@
         {% if 'analytics' in sections %}<a class="more-item {% if cur_path.startswith('/analytics') %}active{% endif %}" href="/analytics">📊<span>Аналитика</span></a>{% endif %}
         {% if 'assistant' in sections %}<a class="more-item {% if cur_path.startswith('/assistant') %}active{% endif %}" href="/assistant">🤖<span>AI Чат-бот</span></a>{% endif %}
         {% if 'settings' in sections %}<a class="more-item {% if cur_path.startswith('/settings') %}active{% endif %}" href="/settings">⚙️<span>Настройки</span></a>{% endif %}
+        {% if cu and cu.role in ('admin', 'manager') %}<a class="more-item {% if cur_path.startswith('/trash') %}active{% endif %}" href="/trash">🗑️<span>Корзина</span></a>{% endif %}
         {% if cu and cu.role == 'admin' %}<a class="more-item" href="/users">👥<span>Сотрудники</span></a>{% endif %}
         <a class="more-item" href="#" onclick="doLogout(event)">🚪<span>Выйти</span></a>
     </div>

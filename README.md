@@ -46,7 +46,7 @@ uvicorn app:app --reload --port 8000
 ## Деплой на Vercel
 
 Проект готов к деплою: `vercel.json` направляет все запросы в `app.py`,
-база данных копируется в `/tmp` (данные demo-режима сбрасываются при
+**без Postgres на Vercel данные могут пропадать** — база копируется в `/tmp` (данные demo-режима сбрасываются при
 перезапуске serverless-функции). Задайте `SESSION_SECRET` в настройках
 проекта Vercel. Production держите на `main`/`v1-stable`; preview — ветка `v2`.
 

@@ -162,7 +162,11 @@ def seed_demo_deals(db: Session, *, only_if_empty: bool = False) -> dict:
     Создаёт недостающие демо-сделки с префиксом DEMO:.
     only_if_empty=True — выйти, если в БД уже есть любые сделки (cold start).
     """
-    existing_count = db.query(Deal).count()
+    # Считаем только «живые» сделки — корзина не должна блокировать демо-seed
+    try:
+        existing_count = db.query(Deal).filter(Deal.deleted_at.is_(None)).count()
+    except Exception:
+        existing_count = db.query(Deal).count()
     if only_if_empty and existing_count > 0:
         return {
             "status": "skipped",

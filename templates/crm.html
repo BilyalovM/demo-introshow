@@ -793,9 +793,10 @@
                         </div>
                     </div>
 
-                    <div style="display:flex; gap:8px; margin-top:8px;">
+                    <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                         <button type="submit" class="btn btn-primary" style="flex:1;">Сохранить изменения</button>
                         <button type="button" class="btn" style="color:var(--danger);" onclick="archiveActiveDeal()">В архив</button>
+                        <button type="button" class="btn" style="color:var(--danger);" onclick="trashActiveDeal()">В корзину</button>
                     </div>
                 </form>
             </div>
@@ -2392,6 +2393,20 @@
     async function onDealCompanyChange() {
         const companyId = parseInt(document.getElementById('edit-deal-company').value) || null;
         await loadContactsForCompany(companyId, null);
+    }
+
+    async function trashActiveDeal() {
+        if (!activeDealId) return;
+        if (!confirm('Переместить сделку в корзину? Потом можно восстановить в разделе «Корзина».')) return;
+        const res = await fetch(`/api/deals/${activeDealId}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Не удалось удалить');
+            return;
+        }
+        closeDealSlider();
+        await loadDeals();
+        renderCrm();
     }
 
     async function archiveActiveDeal() {

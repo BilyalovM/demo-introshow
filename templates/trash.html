@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}Корзина - Intro Show{% endblock %}
+
+{% block extra_head %}
+<style>
+    .trash-wrap { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
+    .trash-card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.25rem;
+    }
+    .trash-card h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+    .trash-meta { color: var(--text-light); font-size: 12.5px; margin-top: 4px; }
+    .trash-row {
+        display: flex; gap: 12px; align-items: center; justify-content: space-between;
+        padding: 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+    }
+    .trash-row:last-child { border-bottom: none; }
+    .trash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .trash-actions button {
+        border: none; border-radius: 8px; padding: 0.45rem 0.85rem;
+        font-weight: 600; cursor: pointer; font-size: 13px;
+    }
+    .btn-restore { background: var(--primary); color: #fff; }
+    .btn-purge { background: transparent; color: #b91c1c; border: 1px solid #fecaca !important; }
+    .trash-empty { color: var(--text-light); font-size: 14px; padding: 8px 0; }
+    .trash-note {
+        background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+        border-radius: 10px; padding: 12px 14px; font-size: 13.5px; margin-bottom: 1.25rem; line-height: 1.45;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="trash-wrap">
+    <h2 style="margin:0 0 8px;">Корзина</h2>
+    <p style="margin:0 0 16px;color:var(--text-light);font-size:14px;">
+        Удалённые сделки, сметы и задачи. Можно восстановить или удалить навсегда (только админ).
+    </p>
+    <div class="trash-note">
+        Корзина защищает от случайного удаления внутри приложения.
+        На Vercel без Postgres данные всё равно могут пропасть при сбросе эфемерного SQLite —
+        постоянное хранение только на VPS + Postgres.
+    </div>
+
+    <div class="trash-card">
+        <h3>Сделки / сметы <span id="cnt-deals" class="muted"></span></h3>
+        <div id="list-deals"><p class="trash-empty">Загрузка…</p></div>
+    </div>
+    <div class="trash-card">
+        <h3>Задачи <span id="cnt-tasks" class="muted"></span></h3>
+        <div id="list-tasks"><p class="trash-empty">Загрузка…</p></div>
+    </div>
+    <div class="trash-card">
+        <h3>Компании <span id="cnt-companies" class="muted"></span></h3>
+        <div id="list-companies"><p class="trash-empty">Загрузка…</p></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const IS_ADMIN = {{ 'true' if request.state.user and request.state.user.role == 'admin' else 'false' }};
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+function renderRows(items, type) {
+    if (!items.length) return '<p class="trash-empty">Пусто</p>';
+    return items.map(it => {
+        const title = esc(it.title || ('#' + it.id));
+        const sub = [
+            it.company_name ? esc(it.company_name) : '',
+            it.deal_id ? ('сделка #' + it.deal_id) : '',
+            it.deleted_at ? ('удалено ' + esc(it.deleted_at)) : '',
+            it.deleted_by ? ('кем: ' + esc(it.deleted_by)) : '',
+        ].filter(Boolean).join(' · ');
+        const purgeBtn = IS_ADMIN
+            ? `<button type="button" class="btn-purge" onclick="purgeItem('${type}', ${it.id})">Удалить навсегда</button>`
+            : '';
+        return `<div class="trash-row">
+            <div>
+                <div><strong>${title}</strong> <span class="muted">#${it.id}</span></div>
+                <div class="trash-meta">${sub}</div>
+            </div>
+            <div class="trash-actions">
+                <button type="button" class="btn-restore" onclick="restoreItem('${type}', ${it.id})">Восстановить</button>
+                ${purgeBtn}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function loadTrash() {
+    const res = await fetch('/api/trash');
+    if (!res.ok) {
+        const msg = '<p class="trash-empty">Нет доступа или ошибка загрузки</p>';
+        document.getElementById('list-deals').innerHTML = msg;
+        document.getElementById('list-tasks').innerHTML = msg;
+        document.getElementById('list-companies').innerHTML = msg;
+        return;
+    }
+    const data = await res.json();
+    document.getElementById('cnt-deals').textContent = '(' + (data.deals || []).length + ')';
+    document.getElementById('cnt-tasks').textContent = '(' + (data.tasks || []).length + ')';
+    document.getElementById('cnt-companies').textContent = '(' + (data.companies || []).length + ')';
+    document.getElementById('list-deals').innerHTML = renderRows(data.deals || [], 'deal');
+    document.getElementById('list-tasks').innerHTML = renderRows(data.tasks || [], 'task');
+    document.getElementById('list-companies').innerHTML = renderRows(data.companies || [], 'company');
+}
+
+async function restoreItem(type, id) {
+    if (!confirm('Восстановить из корзины?')) return;
+    const res = await fetch(`/api/trash/${type}/${id}/restore`, { method: 'POST' });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Не удалось восстановить');
+        return;
+    }
+    loadTrash();
+}
+
+async function purgeItem(type, id) {
+    if (!confirm('Удалить навсегда? Это действие нельзя отменить.')) return;
+    const res = await fetch(`/api/trash/${type}/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Не удалось удалить');
+        return;
+    }
+    loadTrash();
+}
+
+loadTrash();
+</script>
+{% endblock %}

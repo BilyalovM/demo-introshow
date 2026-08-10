@@ -65,6 +65,9 @@ PATH_SECTIONS = {
     "/analytics": "analytics",
     "/assistant": "assistant",
     "/settings": "settings",
+    "/trash": "settings",
+    "/api/trash": "settings",
+    "/api/admin/db-health": "settings",
 }
 
 

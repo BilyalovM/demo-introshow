@@ -78,6 +78,9 @@ ACTION_LABELS = {
     "subrental_status": "статус субаренды",
     "workday_start": "начало рабочего дня",
     "workday_end": "завершение рабочего дня",
+    "soft_delete": "в корзину",
+    "restore": "восстановление из корзины",
+    "purge": "удаление навсегда",
 }
 
 ENTITY_LABELS = {

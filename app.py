@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
 from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -337,6 +337,15 @@ with Session(engine) as session:
         "ALTER TABLE work_sessions ADD COLUMN city_id INTEGER",
         "ALTER TABLE work_sessions ADD COLUMN start_place VARCHAR",
         "ALTER TABLE work_sessions ADD COLUMN end_place VARCHAR",
+        # Soft-delete / корзина (additive only — never drops data)
+        "ALTER TABLE deals ADD COLUMN deleted_at DATETIME",
+        "ALTER TABLE deals ADD COLUMN deleted_by_id INTEGER",
+        "ALTER TABLE tasks ADD COLUMN deleted_at DATETIME",
+        "ALTER TABLE tasks ADD COLUMN deleted_by_id INTEGER",
+        "ALTER TABLE companies ADD COLUMN deleted_at DATETIME",
+        "ALTER TABLE companies ADD COLUMN deleted_by_id INTEGER",
+        "ALTER TABLE deal_documents ADD COLUMN deleted_at DATETIME",
+        "ALTER TABLE deal_documents ADD COLUMN deleted_by_id INTEGER",
     ]:
         try:
             session.execute(text(ddl))
@@ -1040,7 +1049,40 @@ def _attach_city_context(request: Request, db: Session, user: Optional[User]):
 def _apply_deal_city_filter(query, city_id: Optional[int]):
     if not city_id:
         return query
+    # null city_id — видимы во всех городах (legacy / до backfill)
     return query.filter((Deal.city_id == city_id) | (Deal.city_id.is_(None)))
+
+
+def _not_deleted(query, model):
+    """Default lists: hide soft-deleted rows (Корзина)."""
+    col = getattr(model, "deleted_at", None)
+    if col is None:
+        return query
+    return query.filter(col.is_(None))
+
+
+def _require_trash_access(user: User):
+    if not user or user.role not in ("admin", "manager"):
+        return JSONResponse(status_code=403, content={"error": "Только администратор или менеджер"})
+    return None
+
+
+def _soft_delete_entity(entity, user: Optional[User]):
+    entity.deleted_at = datetime.utcnow()
+    if hasattr(entity, "deleted_by_id"):
+        entity.deleted_by_id = user.id if user else None
+
+
+def _restore_entity(entity):
+    entity.deleted_at = None
+    if hasattr(entity, "deleted_by_id"):
+        entity.deleted_by_id = None
+
+
+def _user_display_name(u: Optional[User]) -> Optional[str]:
+    if not u:
+        return None
+    return u.full_name or u.username
 
 
 def _sync_deal_city_text(db: Session, deal: Deal):
@@ -1343,6 +1385,10 @@ def _workday_history_impl(db: Session, user: User, from_date=None, to_date=None,
             summary_q = summary_q.filter(WorkSession.user_id == filter_user_id)
     else:
         summary_q = summary_q.filter(WorkSession.user_id == user.id)
+    if city_id:
+        summary_q = summary_q.filter(
+            (WorkSession.city_id == city_id) | (WorkSession.city_id.is_(None))
+        )
     week_sessions = summary_q.filter(
         or_(
             WorkSession.started_at >= week_start,
@@ -1412,7 +1458,7 @@ def workday_history(
 @app.get("/", response_class=HTMLResponse)
 async def read_dashboard(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     active = _resolve_active_city(db, user, request)
-    deals_q = db.query(Deal)
+    deals_q = _not_deleted(db.query(Deal), Deal)
     deals_q = _apply_deal_city_filter(deals_q, active.id if active else None)
     deals = deals_q.all()
     stages = {s.id: s for s in db.query(Stage).all()}
@@ -1446,7 +1492,7 @@ async def read_dashboard(request: Request, db: Session = Depends(get_db), user: 
     active_chats = db.query(ChatMessage.channel, ChatMessage.chat_id)\
         .filter(ChatMessage.created_at >= week_ago).distinct().count()
 
-    recent_deals = db.query(Deal).order_by(Deal.id.desc()).limit(5).all()
+    recent_deals = _not_deleted(db.query(Deal), Deal).order_by(Deal.id.desc()).limit(5).all()
     recent_messages = db.query(ChatMessage).order_by(ChatMessage.id.desc()).limit(6).all()
 
     stats = {
@@ -1455,7 +1501,7 @@ async def read_dashboard(request: Request, db: Session = Depends(get_db), user: 
         "deals_total": len(deals),
         "deals_active": len(active_deals),
         "deals_won": len(won_deals),
-        "companies_count": db.query(Company).count(),
+        "companies_count": _not_deleted(db.query(Company), Company).count(),
         "equipment_count": db.query(Equipment).count(),
         "active_chats": active_chats,
         "funnel": funnel,
@@ -1481,7 +1527,7 @@ def read_quote_detail(request: Request, quote_id: int, user: User = Depends(get_
 
 @app.get("/quotes", response_class=HTMLResponse)
 def read_quotes(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    deals = db.query(Deal).order_by(Deal.id.desc()).all()
+    deals = _not_deleted(db.query(Deal), Deal).order_by(Deal.id.desc()).all()
     return templates.TemplateResponse("quotes.html", {"request": request, "active_page": "quotes", "deals": deals})
 
 @app.get("/calendar", response_class=HTMLResponse)
@@ -1505,7 +1551,7 @@ def api_calendar_events(
     date_to = (request.query_params.get("to") or "").strip()
     mine = (request.query_params.get("mine") or "").strip() in ("1", "true", "yes")
     hide = _user_hide_prices(user)
-    q = db.query(Deal).filter(Deal.is_archived == False)  # noqa: E712
+    q = _not_deleted(db.query(Deal), Deal).filter(Deal.is_archived == False)  # noqa: E712
     staff_ids = [
         r[0] for r in db.query(DealStaffAssignment.deal_id)
         .filter(DealStaffAssignment.user_id == user.id).distinct().all()
@@ -1686,7 +1732,7 @@ async def read_tasks(request: Request, user: User = Depends(get_current_user)):
 @app.get("/analytics", response_class=HTMLResponse)
 async def read_analytics(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     active_city = _resolve_active_city(db, user, request)
-    deals_q = db.query(Deal)
+    deals_q = _not_deleted(db.query(Deal), Deal)
     deals_q = _apply_deal_city_filter(deals_q, active_city.id if active_city else None)
     deals = deals_q.all()
     stages = {s.id: s for s in db.query(Stage).all()}
@@ -2093,7 +2139,7 @@ def _task_to_dict(t: Task, comment_count: Optional[int] = None) -> dict:
 
 @app.get("/api/tasks")
 def get_tasks(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(Task)
+    query = _not_deleted(db.query(Task), Task)
     if deal_id:
         query = query.filter(Task.deal_id == deal_id)
     tasks = query.order_by(Task.status, Task.due_date).all()
@@ -2106,7 +2152,7 @@ def get_tasks(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
 
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _not_deleted(db.query(Task), Task).filter(Task.id == task_id).first()
     if not task:
         return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
     count = db.query(TaskComment).filter(TaskComment.task_id == task_id).count()
@@ -2170,7 +2216,7 @@ def create_task(t: TaskCreate, db: Session = Depends(get_db), user: User = Depen
 
 @app.put("/api/tasks/{task_id}")
 def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _not_deleted(db.query(Task), Task).filter(Task.id == task_id).first()
     if not task:
         return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
     for field in ("title", "description", "due_date", "priority", "deal_id", "tags"):
@@ -2193,14 +2239,24 @@ def update_task(task_id: int, t: TaskUpdate, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-def _purge_task(db: Session, task_id: Optional[int]) -> bool:
-    """Удалить задачу и связанные строки (комменты, исполнители, наблюдатели, чек-лист)."""
+def _soft_delete_task(db: Session, task_id: Optional[int], user: Optional[User] = None) -> bool:
+    """Переместить задачу в корзину (soft-delete)."""
+    if not task_id:
+        return False
+    task = _not_deleted(db.query(Task), Task).filter(Task.id == task_id).first()
+    if not task:
+        return False
+    _soft_delete_entity(task, user)
+    return True
+
+
+def _hard_purge_task(db: Session, task_id: Optional[int]) -> bool:
+    """Окончательно удалить задачу и связанные строки (только из корзины)."""
     if not task_id:
         return False
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         return False
-    # Снять FK-ссылки, чтобы не мешали удалению
     db.query(AppNotification).filter(AppNotification.task_id == task_id).update(
         {AppNotification.task_id: None}, synchronize_session=False
     )
@@ -2218,11 +2274,30 @@ def _purge_task(db: Session, task_id: Optional[int]) -> bool:
     return True
 
 
+def _purge_task(db: Session, task_id: Optional[int]) -> bool:
+    """Совместимость: soft-delete (корзина), не hard-delete."""
+    return _soft_delete_task(db, task_id, None)
+
+
 @app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    if _purge_task(db, task_id):
-        db.commit()
-    return {"status": "success"}
+def delete_task(
+    request: Request,
+    task_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not _soft_delete_task(db, task_id, user):
+        return JSONResponse(status_code=404, content={"error": "Задача не найдена"})
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type="task",
+        entity_id=task_id,
+        action="soft_delete",
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success", "trashed": True}
 
 @app.get("/api/tasks/{task_id}/comments")
 def get_task_comments(task_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -2531,6 +2606,225 @@ def delete_user(
 async def read_settings(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("settings.html", {"request": request, "active_page": "settings"})
 
+
+@app.get("/trash", response_class=HTMLResponse)
+async def read_trash(request: Request, user: User = Depends(get_current_user)):
+    if user.role not in ("admin", "manager"):
+        return HTMLResponse(
+            "<h3 style='font-family:sans-serif;padding:40px'>Корзина доступна администратору и менеджеру.</h3>",
+            status_code=403,
+        )
+    return templates.TemplateResponse("trash.html", {"request": request, "active_page": "trash"})
+
+
+@app.get("/api/admin/db-health")
+def api_db_health(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Проверка БД: счётчики + путь + предупреждение SQLite на Vercel."""
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Только администратор"})
+    info = database_backend_info()
+    deals_alive = _not_deleted(db.query(Deal), Deal).count()
+    tasks_alive = _not_deleted(db.query(Task), Task).count()
+    deals_trash = db.query(Deal).filter(Deal.deleted_at.isnot(None)).count()
+    tasks_trash = db.query(Task).filter(Task.deleted_at.isnot(None)).count()
+    work_sessions = db.query(WorkSession).count()
+    companies_alive = _not_deleted(db.query(Company), Company).count()
+    return {
+        **info,
+        "counts": {
+            "deals": deals_alive,
+            "deals_in_trash": deals_trash,
+            "tasks": tasks_alive,
+            "tasks_in_trash": tasks_trash,
+            "work_sessions": work_sessions,
+            "companies": companies_alive,
+        },
+        "db_path": info.get("sqlite_path") or ("DATABASE_URL (Postgres)" if info.get("is_postgres") else str(DATABASE_URL)[:80]),
+        "warning_ru": (
+            "На Vercel используется эфемерный SQLite (/tmp). Данные могут пропасть при cold start. "
+            "Для постоянной работы нужен VPS + Postgres (DATABASE_URL)."
+            if info.get("ephemeral_warning")
+            else (
+                "SQLite без Postgres — ок для локальной проверки, не для боевых сотрудников."
+                if info.get("is_sqlite")
+                else None
+            )
+        ),
+    }
+
+
+@app.get("/api/trash")
+def api_trash_list(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    denied = _require_trash_access(user)
+    if denied:
+        return denied
+    users_map = {u.id: _user_display_name(u) for u in db.query(User).all()}
+    deals = (
+        db.query(Deal)
+        .filter(Deal.deleted_at.isnot(None))
+        .order_by(Deal.deleted_at.desc())
+        .limit(200)
+        .all()
+    )
+    tasks = (
+        db.query(Task)
+        .filter(Task.deleted_at.isnot(None))
+        .order_by(Task.deleted_at.desc())
+        .limit(200)
+        .all()
+    )
+    companies = (
+        db.query(Company)
+        .filter(Company.deleted_at.isnot(None))
+        .order_by(Company.deleted_at.desc())
+        .limit(100)
+        .all()
+    )
+
+    def _fmt(dt):
+        return dt.strftime("%d.%m.%Y %H:%M") if dt else ""
+
+    return {
+        "deals": [
+            {
+                "id": d.id,
+                "title": d.title,
+                "company_name": d.company.name if d.company else "",
+                "deleted_at": _fmt(d.deleted_at),
+                "deleted_by": users_map.get(d.deleted_by_id),
+                "entity_type": "deal",
+            }
+            for d in deals
+        ],
+        "tasks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "deal_id": t.deal_id,
+                "deleted_at": _fmt(t.deleted_at),
+                "deleted_by": users_map.get(t.deleted_by_id),
+                "entity_type": "task",
+            }
+            for t in tasks
+        ],
+        "companies": [
+            {
+                "id": c.id,
+                "title": c.name,
+                "deleted_at": _fmt(c.deleted_at),
+                "deleted_by": users_map.get(c.deleted_by_id),
+                "entity_type": "company",
+            }
+            for c in companies
+        ],
+    }
+
+
+@app.post("/api/trash/{entity_type}/{entity_id}/restore")
+def api_trash_restore(
+    request: Request,
+    entity_type: str,
+    entity_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    denied = _require_trash_access(user)
+    if denied:
+        return denied
+    entity_type = (entity_type or "").lower().strip()
+    if entity_type == "deal":
+        row = db.query(Deal).filter(Deal.id == entity_id, Deal.deleted_at.isnot(None)).first()
+    elif entity_type == "task":
+        row = db.query(Task).filter(Task.id == entity_id, Task.deleted_at.isnot(None)).first()
+    elif entity_type == "company":
+        row = db.query(Company).filter(Company.id == entity_id, Company.deleted_at.isnot(None)).first()
+    else:
+        return JSONResponse(status_code=400, content={"error": "Неизвестный тип"})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Не найдено в корзине"})
+    _restore_entity(row)
+    if entity_type == "deal":
+        db.add(DealHistory(deal_id=entity_id, action_text="Сделка восстановлена из корзины"))
+        # Вернуть задачи сделки, удалённые вместе с ней (по времени ≈ deleted_at сделки)
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action="restore",
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success", "restored": True}
+
+
+@app.delete("/api/trash/{entity_type}/{entity_id}")
+def api_trash_purge(
+    request: Request,
+    entity_type: str,
+    entity_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Удалить навсегда — только admin."""
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Удаление навсегда — только администратор"})
+    entity_type = (entity_type or "").lower().strip()
+    if entity_type == "task":
+        row = db.query(Task).filter(Task.id == entity_id, Task.deleted_at.isnot(None)).first()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Не найдено в корзине"})
+        _hard_purge_task(db, entity_id)
+    elif entity_type == "deal":
+        row = db.query(Deal).filter(Deal.id == entity_id, Deal.deleted_at.isnot(None)).first()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Не найдено в корзине"})
+        # Смета = сделка: позиции и история остаются для аудита? Hard purge deal items + deal
+        db.query(DealItem).filter(DealItem.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealFieldValue).filter(DealFieldValue.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealHistory).filter(DealHistory.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(Activity).filter(Activity.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealAttachment).filter(DealAttachment.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealDocument).filter(DealDocument.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealAdvance).filter(DealAdvance.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealExpense).filter(DealExpense.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealPayrollLine).filter(DealPayrollLine.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(DealStaffAssignment).filter(DealStaffAssignment.deal_id == entity_id).delete(synchronize_session=False)
+        for t in db.query(Task).filter(Task.deal_id == entity_id).all():
+            _hard_purge_task(db, t.id)
+        db.query(Project2D).filter(Project2D.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(PushSubscription).filter(PushSubscription.deal_id == entity_id).delete(synchronize_session=False)
+        db.query(Invoice).filter(Invoice.deal_id == entity_id).update(
+            {Invoice.deal_id: None}, synchronize_session=False
+        )
+        db.query(Deal).filter(Deal.prev_deal_id == entity_id).update(
+            {Deal.prev_deal_id: None}, synchronize_session=False
+        )
+        db.delete(row)
+    elif entity_type == "company":
+        row = db.query(Company).filter(Company.id == entity_id, Company.deleted_at.isnot(None)).first()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Не найдено в корзине"})
+        if _not_deleted(db.query(Deal), Deal).filter(Deal.company_id == entity_id).first():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Сначала удалите или переместите связанные сделки"},
+            )
+        db.delete(row)
+    else:
+        return JSONResponse(status_code=400, content={"error": "Неизвестный тип"})
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action="purge",
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success", "purged": True}
+
+
 @app.get("/assistant", response_class=HTMLResponse)
 async def read_assistant(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("assistant.html", {"request": request, "active_page": "assistant"})
@@ -2655,7 +2949,7 @@ def api_list_documents(
 
     # Доступные к генерации (виртуальные) — по сделкам с позициями / всем активным
     if include_available:
-        deals_q = db.query(Deal).filter(Deal.is_archived == False)  # noqa: E712
+        deals_q = _not_deleted(db.query(Deal), Deal).filter(Deal.is_archived == False)  # noqa: E712
         if deal_id:
             deals_q = deals_q.filter(Deal.id == deal_id)
         deals_q = deals_q.order_by(Deal.id.desc()).limit(80)
@@ -3234,7 +3528,7 @@ async def upload_equipment_photo(equip_id: int, file: UploadFile = File(...), db
 # -- CRM Companies --
 @app.get("/api/companies")
 def get_companies(db: Session = Depends(get_db)):
-    return db.query(Company).all()
+    return _not_deleted(db.query(Company), Company).all()
 
 @app.post("/api/companies")
 def create_company(comp: CompanyCreate, db: Session = Depends(get_db)):
@@ -3276,7 +3570,12 @@ def get_company_detail(company_id: int, db: Session = Depends(get_db)):
     if not db_comp:
         return JSONResponse(status_code=404, content={"error": "Company not found"})
     
-    deals = db.query(Deal).filter(Deal.company_id == company_id).order_by(Deal.id.desc()).all()
+    deals = (
+        _not_deleted(db.query(Deal), Deal)
+        .filter(Deal.company_id == company_id)
+        .order_by(Deal.id.desc())
+        .all()
+    )
     deals_data = []
     for d in deals:
         deals_data.append({
@@ -3389,17 +3688,39 @@ def update_company(company_id: int, comp: CompanyCreate, db: Session = Depends(g
     return db_comp
 
 @app.delete("/api/companies/{company_id}")
-def delete_company(company_id: int, db: Session = Depends(get_db)):
-    db_comp = db.query(Company).filter(Company.id == company_id).first()
+def delete_company(
+    request: Request,
+    company_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    db_comp = _not_deleted(db.query(Company), Company).filter(Company.id == company_id).first()
     if not db_comp:
         return JSONResponse(status_code=404, content={"error": "Company not found"})
-    
-    if db.query(Deal).filter(Deal.company_id == company_id).first():
-        return JSONResponse(status_code=400, content={"error": "Cannot delete company with active deals"})
-        
-    db.delete(db_comp)
+
+    active_deals = (
+        _not_deleted(db.query(Deal), Deal)
+        .filter(Deal.company_id == company_id)
+        .count()
+    )
+    if active_deals:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Cannot delete company with active deals"},
+        )
+
+    _soft_delete_entity(db_comp, user)
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type="company",
+        entity_id=company_id,
+        action="soft_delete",
+        diff={"name": db_comp.name},
+        ip=audit.request_ip(request),
+    )
     db.commit()
-    return {"status": "success"}
+    return {"status": "success", "trashed": True}
 
 # -- Контакты (контактные лица компаний, как в Битрикс24) --
 
@@ -3864,9 +4185,9 @@ def get_equipment_availability(start_date: str = None, end_date: str = None, db:
     # например «Предоплата внесена», «Монтаж / Мероприятие»)
     active_stage_ids = [s.id for s in db.query(Stage).filter(Stage.is_active_rent == True).all()]  # noqa: E712
     if active_stage_ids:
-        all_deals = db.query(Deal).filter(Deal.stage.in_(active_stage_ids)).all()
+        all_deals = _not_deleted(db.query(Deal), Deal).filter(Deal.stage.in_(active_stage_ids)).all()
     else:
-        all_deals = db.query(Deal).all()
+        all_deals = _not_deleted(db.query(Deal), Deal).all()
     overlapping_deal_ids = []
     
     def parse_date(d_str):
@@ -5023,7 +5344,7 @@ def get_deals(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = db.query(Deal)
+    query = _not_deleted(db.query(Deal), Deal)
     if not include_archived:
         query = query.filter((Deal.is_archived == False) | (Deal.is_archived.is_(None)))  # noqa: E712
     if pipeline_id:
@@ -5171,7 +5492,7 @@ def update_deal_stage(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    db_deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    db_deal = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
     if not db_deal:
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
@@ -5330,7 +5651,7 @@ def update_deal_stage(
 
 @app.get("/api/deals/{deal_id}")
 def get_deal_detail(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    d = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     if not _user_assigned_to_deal(db, user, d):
@@ -5517,7 +5838,7 @@ def update_deal_items(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    d = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     # Менеджер проекта без role_sales не меняет смету
@@ -5597,7 +5918,7 @@ def update_deal(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    d = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     if _user_crm_own_only(user) and not _user_assigned_to_deal(db, user, d):
@@ -5670,7 +5991,7 @@ def update_deal(
 
 @app.post("/api/deals/{deal_id}/archive")
 def archive_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    d = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     d.is_archived = True
@@ -5681,13 +6002,42 @@ def archive_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depen
 
 @app.post("/api/deals/{deal_id}/unarchive")
 def unarchive_deal(deal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    d = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
     if not d:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     d.is_archived = False
     db.add(DealHistory(deal_id=deal_id, action_text="Сделка восстановлена из архива"))
     db.commit()
     return {"status": "success"}
+
+
+@app.delete("/api/deals/{deal_id}")
+def soft_delete_deal(
+    request: Request,
+    deal_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Переместить сделку/смету в корзину (soft-delete)."""
+    d = _not_deleted(db.query(Deal), Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    _soft_delete_entity(d, user)
+    # Связанные активные задачи тоже в корзину
+    for t in _not_deleted(db.query(Task), Task).filter(Task.deal_id == deal_id).all():
+        _soft_delete_entity(t, user)
+    db.add(DealHistory(deal_id=deal_id, action_text="Сделка перемещена в корзину"))
+    audit.write_audit(
+        db,
+        user_id=user.id,
+        entity_type="deal",
+        entity_id=deal_id,
+        action="soft_delete",
+        diff={"title": d.title},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success", "trashed": True}
 
 
 # -- Дела (Activities) --
@@ -6133,7 +6483,7 @@ def api_unassign_staff(deal_id: int, assignment_id: int, db: Session = Depends(g
 
     row.task_id = None
     db.delete(row)
-    _purge_task(db, task_id)
+    _soft_delete_task(db, task_id, user)
     db.add(DealHistory(deal_id=deal_id, action_text=f"Снят с проекта: {name}"))
     db.commit()
     return {"status": "success", "deleted_task_id": task_id}
@@ -8031,7 +8381,7 @@ def api_today(request: Request, db: Session = Depends(get_db), user: User = Depe
 
     # Субаренда сегодня / завтра: сделки с датой монтажа/ивента и позициями subrental
     sub_deals = (
-        db.query(Deal)
+        _not_deleted(db.query(Deal), Deal)
         .filter(
             Deal.is_archived == False,  # noqa: E712
             ((Deal.setup_date.in_([today, tomorrow])) | (Deal.event_date.in_([today, tomorrow]))),
@@ -8173,7 +8523,7 @@ def _run_reminder_robots(db: Session) -> dict:
 
     try:
         active_deals = (
-            db.query(Deal)
+            _not_deleted(db.query(Deal), Deal)
             .filter(Deal.is_archived == False)  # noqa: E712
             .order_by(Deal.id.desc())
             .limit(200)
@@ -8442,7 +8792,12 @@ def api_search(q: str = "", db: Session = Depends(get_db), user: User = Depends(
     if len(query) < 2:
         return {"deals": [], "companies": [], "tasks": []}
     like = f"%{query}%"
-    deals = db.query(Deal).filter(Deal.title.ilike(like), Deal.is_archived == False).limit(10).all()  # noqa: E712
+    deals = (
+        _not_deleted(db.query(Deal), Deal)
+        .filter(Deal.title.ilike(like), Deal.is_archived == False)  # noqa: E712
+        .limit(10)
+        .all()
+    )
     companies = db.query(Company).filter(Company.name.ilike(like)).limit(10).all()
     tasks = db.query(Task).filter(Task.title.ilike(like)).limit(10).all()
     return {

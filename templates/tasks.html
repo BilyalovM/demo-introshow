@@ -1104,8 +1104,13 @@ async function saveTask() {
 async function deleteTask() {
     const id = document.getElementById('tk_id').value;
     if (!id) return;
-    if (!confirm('Удалить задачу?')) return;
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    if (!confirm('Переместить задачу в корзину? Восстановить можно в разделе «Корзина».')) return;
+    const res = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Не удалось удалить задачу');
+        return;
+    }
     closeTaskForm();
     loadTasks();
 }
