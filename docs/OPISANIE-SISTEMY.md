@@ -265,7 +265,7 @@ Checklist по `static/roadmap.json` + встрече 05.08.2026:
 | **Эфемерная БД** | SQLite копируется в `/tmp` на serverless. Cold start / новый инстанс → **данные сбрасываются** |
 | **Корзина не спасает** | Soft-delete в `/trash` живёт в той же БД. После wipe корзина пуста вместе со сделками |
 | **Uploads** | Файлы документов на serverless недолговечны |
-| **Мессенджеры / WAHA** | Полноценный WhatsApp (Docker WAHA) на Vercel не живут — только заготовки / внешний webhook |
+| **Мессенджеры / WA Web** | Сессия WhatsApp Web (`wa_bridge`) только на VPS; CRM на Vercel принимает webhook. См. `docs/whatsapp-web.md` |
 | **Назначение демо** | Показать UI и процесс заказчику, **не** вести реальные проекты сотрудников |
 | **Боевой контур** | VPS + Postgres + Nginx/HTTPS + бэкапы (`docs/deploy-server.md`) |
 

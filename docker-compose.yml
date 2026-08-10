@@ -1,0 +1,41 @@
+# Intro Show CRM — helpers for self-hosted messengers.
+# CRM UI can stay on Vercel; WhatsApp Web bridge MUST run on a VPS (persistent process + disk).
+#
+# Usage (on VPS):
+#   cp .env.example .env   # set CRM_URL, WA_WEB_API_KEY
+#   docker compose up -d wa-bridge
+#
+# Session files live in ./uploads/wa-web-session (do NOT commit).
+
+services:
+  wa-bridge:
+    build: ./wa_bridge
+    container_name: introshow-wa-bridge
+    restart: unless-stopped
+    ports:
+      - "${WA_BRIDGE_PORT:-3001}:3001"
+    environment:
+      PORT: 3001
+      CRM_URL: ${CRM_URL:-https://demo-introshow.vercel.app}
+      CRM_API_KEY: ${WA_WEB_API_KEY:-change-me}
+      BRIDGE_API_KEY: ${WA_WEB_API_KEY:-change-me}
+      SESSION_PATH: /data/session
+      WA_BRIDGE_AUTOSTART: "1"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    volumes:
+      - ./uploads/wa-web-session:/data/session
+    # Chromium is memory-hungry; give the container room on small VPS
+    mem_limit: 1g
+
+  # Optional alternative: WAHA (same unofficial WhatsApp Web stack, Docker image).
+  # Prefer wa-bridge above for the Intro Show Settings «WhatsApp Web» UI.
+  # waha:
+  #   image: devlikeapro/waha:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     WHATSAPP_HOOK_URL: ${CRM_URL}/api/wa/webhook
+  #     WHATSAPP_HOOK_EVENTS: message
+  #   volumes:
+  #     - ./uploads/waha-sessions:/app/.sessions

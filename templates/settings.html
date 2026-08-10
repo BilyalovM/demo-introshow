@@ -218,7 +218,7 @@
 
         <div class="card">
             <h3 style="margin-top:0;">Интеграция Instagram Direct <span id="ig_conn" class="status-badge offline">не подключено</span></h3>
-            <p>Для приёма сообщений из Instagram нужен бизнес-аккаунт, привязанный к странице Facebook, и приложение Meta с продуктом «Messenger API for Instagram».</p>
+            <p>Официальный путь — Meta Graph API (бизнес-аккаунт + страница Facebook). <strong>Бесплатные неофициальные скрейперы Instagram DM мы не подключаем</strong>: часто ломаются и ведут к бану аккаунта. Подробнее — в <code>docs/whatsapp-web.md</code>.</p>
             <ol style="font-size: 0.9rem; margin: 0.8rem 0 1rem 1.2rem; line-height: 1.7; color: var(--text);">
                 <li>Создайте приложение на <a href="https://developers.facebook.com" target="_blank" style="color:var(--primary)">developers.facebook.com</a></li>
                 <li>Получите Page Access Token с правами instagram_manage_messages</li>
@@ -254,49 +254,67 @@
         </div>
 
         <div class="card">
-            <h3 style="margin-top:0;">WhatsApp-бот — чек-лист теста</h3>
-            <p style="font-size:14px;margin-bottom:10px;">Подключайте бота сначала на <strong>тестовый номер</strong>, не на основной. Webhook по умолчанию: <code>/api/wa/webhook</code> (переопределяется через <code>WHATSAPP_HOOK_URL</code> в Docker).</p>
-            <ol style="font-size:13.5px;line-height:1.7;margin:0 0 12px 1.2rem;">
-                <li>Задать <code>GEMINI_API_KEY</code> (см. блок AI выше) и проверить раздел «AI Чат-бот».</li>
-                <li>Загрузить прайс / пакеты в базу знаний бота.</li>
-                <li>Запустить WAHA с webhook на публичный HTTPS URL CRM + <code>/api/wa/webhook</code>.</li>
-                <li>Отсканировать QR тестовым WhatsApp (ниже).</li>
-                <li>5–7 дней тест: квалификация аренда/продажа, черновые цены → потом основной номер.</li>
-            </ol>
-            <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;">Webhook URL (подсказка для Docker)</label>
-            <input type="text" id="wa_hook_hint" readonly
-                   value=""
-                   style="width:100%;box-sizing:border-box;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-2,#f1f5f9);color:var(--text);font-family:monospace;font-size:12.5px;">
+            <h3 style="margin-top:0;">WhatsApp Web (бесплатно, QR)</h3>
+            <p style="font-size:14px;line-height:1.55;margin-bottom:12px;">
+                Подключение через self-hosted мост <code>wa_bridge</code> (whatsapp-web.js) на VPS —
+                без Wazzup и других платных агрегаторов. Сессия хранится на диске VPS
+                (<code>uploads/wa-web-session/</code>). На Vercel serverless сессию держать нельзя.
+            </p>
+            <p style="font-size:13px;line-height:1.5;padding:10px 12px;border-radius:8px;background:#fff7ed;color:#9a3412;margin-bottom:14px;">
+                ⚠ Неофициальный API WhatsApp Web: риск бана номера, нарушение ToS Meta.
+                Сначала тестовый номер. Подробности — <code>docs/whatsapp-web.md</code>.
+            </p>
+
+            <div style="display:flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap:wrap;">
+                <span style="font-weight: 500;">Статус:</span>
+                <span id="wa_web_status" class="status-badge offline">Проверка…</span>
+                <span id="wa_web_phone" style="font-size:13px;color:var(--text-light);"></span>
+            </div>
+            <p id="wa_web_hint" style="font-size:13px;color:var(--text-light);margin:0 0 12px;"></p>
+
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
+                <button type="button" id="btn_wa_web_connect" onclick="waWebConnect()">Подключить</button>
+                <button type="button" id="btn_wa_web_logout" onclick="waWebLogout()" style="background:#64748b;display:none;">Отключить</button>
+            </div>
+
+            <div id="wa_web_qr_container" style="display:none; text-align:center; margin-top:0.5rem;">
+                <p style="font-size:14px;">Откройте WhatsApp → <strong>Привязанные устройства</strong> → Привязка устройства и отсканируйте QR:</p>
+                <img id="wa_web_qr_image" src="" alt="QR WhatsApp Web"
+                     style="max-width:300px;border:1px solid var(--border);border-radius:var(--radius);padding:1rem;background:white;" />
+                <p style="font-size:0.9rem;color:var(--text-light);">QR обновляется автоматически. Если не появился — нажмите «Подключить» ещё раз.</p>
+            </div>
+
+            <details style="margin-top:1.25rem;">
+                <summary style="cursor:pointer;font-weight:600;font-size:14px;">Как запустить мост на VPS</summary>
+                <ol style="font-size:13.5px;line-height:1.7;margin:10px 0 0 1.2rem;">
+                    <li>На VPS: <code>docker compose up -d wa-bridge</code> (см. <code>docker-compose.yml</code>).</li>
+                    <li>В CRM (.env / Vercel): <code>WA_BRIDGE_URL=https://wa.ваш-vps</code> и общий <code>WA_WEB_API_KEY</code>.</li>
+                    <li>В bridge: <code>CRM_URL=https://ваш-crm</code> и тот же <code>WA_WEB_API_KEY</code>.</li>
+                    <li>Webhook входящих: <code>/api/webhooks/whatsapp-web</code> → Inbox + автосделка.</li>
+                </ol>
+                <label style="display:block;font-size:13px;font-weight:600;margin:12px 0 6px;">Webhook URL (для справки)</label>
+                <input type="text" id="wa_hook_hint" readonly value=""
+                       style="width:100%;box-sizing:border-box;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-2,#f1f5f9);color:var(--text);font-family:monospace;font-size:12.5px;">
+            </details>
         </div>
 
         <div class="card">
-            <h3 style="margin-top:0;">Интеграция WhatsApp (WAHA)</h3>
-            <p>Подключите рабочий WhatsApp для переписки с клиентами прямо из CRM.</p>
-            
-            <div style="display:flex; align-items: center; gap: 1rem; margin-top: 1.5rem; margin-bottom: 1.5rem;">
-                <span style="font-weight: 500;">Статус подключения:</span>
+            <h3 style="margin-top:0;">Альтернатива: WAHA (Docker)</h3>
+            <p style="font-size:14px;">Старый путь через контейнер WAHA. Основной рекомендованный — блок «WhatsApp Web» выше.</p>
+            <div style="display:flex; align-items: center; gap: 1rem; margin-top: 1rem; margin-bottom: 1rem;">
+                <span style="font-weight: 500;">Статус WAHA:</span>
                 <span id="wa_status" class="status-badge offline">Проверка...</span>
             </div>
-
             <div id="action_container">
-                <button id="btn_connect" onclick="startSession()" style="display:none;">Начать подключение</button>
+                <button id="btn_connect" onclick="startSession()" style="display:none;">Начать подключение WAHA</button>
             </div>
-
             <div id="qr_container">
-                <p>Откройте WhatsApp на телефоне -> Привязанные устройства -> Привязка устройства.</p>
+                <p>QR WAHA (если мост wa_bridge не используется):</p>
                 <img id="qr_image" src="" alt="QR Code" />
-                <p style="font-size: 0.9rem; color: var(--text-light);">QR-код может загружаться несколько секунд. Если код не появился, обновите страницу.</p>
             </div>
-        </div>
-        
-        <div class="card">
-            <h3 style="margin-top:0;">Как запустить сервер WhatsApp?</h3>
-            <p>Чтобы QR-код и интеграция работали, на этом компьютере/сервере должен быть установлен <strong>Docker</strong> и запущен контейнер WAHA.</p>
-            <p>Выполните в терминале команду (только один раз). Параметр WHATSAPP_HOOK подключает входящие сообщения к CRM и AI чат-боту:</p>
-            <code id="wa-docker-cmd" style="display:block; background:#f1f5f9; padding:1rem; border-radius:4px; font-family:monospace; word-break:break-all;">
-                docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=http://host.docker.internal:8000/api/wa/webhook -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha
+            <code id="wa-docker-cmd" style="display:block; background:#f1f5f9; padding:1rem; border-radius:4px; font-family:monospace; word-break:break-all; margin-top:1rem; font-size:12px;">
+                docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=https://ВАШ-CRM/api/wa/webhook -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha
             </code>
-            <p style="font-size:0.9rem; margin-top:1rem; color:var(--text-light);">После успешного запуска WAHA на порту 3000 вы сможете отсканировать QR-код выше. Входящие сообщения появятся в разделе «Чаты», и на них ответит AI чат-бот.</p>
         </div>
     </div>
 
@@ -307,6 +325,91 @@
 {% block extra_scripts %}
 <script>
         let checkInterval = null;
+        let waWebInterval = null;
+
+        async function checkWaWebStatus() {
+            const badge = document.getElementById('wa_web_status');
+            const phoneEl = document.getElementById('wa_web_phone');
+            const hint = document.getElementById('wa_web_hint');
+            const qrBox = document.getElementById('wa_web_qr_container');
+            const btnConnect = document.getElementById('btn_wa_web_connect');
+            const btnLogout = document.getElementById('btn_wa_web_logout');
+            if (!badge) return;
+            try {
+                const res = await fetch('/api/wa-web/status');
+                const data = await res.json();
+                const st = (data.status || 'offline').toLowerCase();
+                badge.innerText = data.label || st;
+                phoneEl.innerText = data.phone ? ('+' + data.phone) : '';
+                hint.innerText = data.hint || data.error || '';
+
+                if (st === 'connected') {
+                    badge.className = 'status-badge online';
+                    qrBox.style.display = 'none';
+                    btnConnect.style.display = 'none';
+                    btnLogout.style.display = 'inline-block';
+                    if (waWebInterval) { clearInterval(waWebInterval); waWebInterval = null; }
+                } else if (st === 'wait_qr') {
+                    badge.className = 'status-badge scanning';
+                    qrBox.style.display = 'block';
+                    document.getElementById('wa_web_qr_image').src = '/api/wa-web/qr?t=' + Date.now();
+                    btnConnect.style.display = 'inline-block';
+                    btnLogout.style.display = 'inline-block';
+                    if (!waWebInterval) waWebInterval = setInterval(checkWaWebStatus, 3000);
+                } else if (st === 'initializing') {
+                    badge.className = 'status-badge scanning';
+                    qrBox.style.display = 'none';
+                    btnConnect.disabled = true;
+                    btnConnect.innerText = 'Запуск…';
+                    btnLogout.style.display = 'none';
+                    if (!waWebInterval) waWebInterval = setInterval(checkWaWebStatus, 3000);
+                } else {
+                    badge.className = 'status-badge offline';
+                    qrBox.style.display = 'none';
+                    btnConnect.style.display = 'inline-block';
+                    btnConnect.disabled = false;
+                    btnConnect.innerText = 'Подключить';
+                    btnLogout.style.display = (st === 'offline' && !data.bridge_url) ? 'none' : 'inline-block';
+                    if (st === 'offline' || st === 'disconnected') {
+                        if (waWebInterval) { clearInterval(waWebInterval); waWebInterval = null; }
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+                badge.className = 'status-badge offline';
+                badge.innerText = 'Ошибка проверки';
+            }
+        }
+
+        async function waWebConnect() {
+            const btn = document.getElementById('btn_wa_web_connect');
+            btn.disabled = true;
+            btn.innerText = 'Запуск…';
+            try {
+                const res = await fetch('/api/wa-web/connect', { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    alert(data.error || 'Не удалось запустить подключение');
+                    btn.disabled = false;
+                    btn.innerText = 'Подключить';
+                    return;
+                }
+                if (!waWebInterval) waWebInterval = setInterval(checkWaWebStatus, 3000);
+                checkWaWebStatus();
+            } catch (e) {
+                alert('Ошибка сети');
+                btn.disabled = false;
+                btn.innerText = 'Подключить';
+            }
+        }
+
+        async function waWebLogout() {
+            if (!confirm('Отключить WhatsApp Web и сбросить сессию на VPS?')) return;
+            try {
+                await fetch('/api/wa-web/logout', { method: 'POST' });
+            } catch (e) { console.error(e); }
+            checkWaWebStatus();
+        }
 
         async function checkStatus() {
             try {
@@ -316,6 +419,7 @@
                 const badge = document.getElementById('wa_status');
                 const btn = document.getElementById('btn_connect');
                 const qrContainer = document.getElementById('qr_container');
+                if (!badge) return;
                 
                 if (data.status === 'OFFLINE') {
                     badge.className = 'status-badge offline';
@@ -324,11 +428,10 @@
                     qrContainer.style.display = 'none';
                     if(checkInterval) clearInterval(checkInterval);
                 } else if (data.status === 'NOT_FOUND') {
-                    // Session not created yet
                     badge.className = 'status-badge offline';
                     badge.innerText = 'Не подключено';
                     btn.style.display = 'block';
-                    btn.innerText = 'Начать подключение';
+                    btn.innerText = 'Начать подключение WAHA';
                     qrContainer.style.display = 'none';
                 } else if (data.status === 'SCAN_QR_CODE' || (data.status && data.status.includes('QR'))) {
                     badge.className = 'status-badge scanning';
@@ -355,7 +458,6 @@
             document.getElementById('btn_connect').disabled = true;
             document.getElementById('btn_connect').innerText = 'Запуск...';
             await fetch('/api/wa/start', { method: 'POST' });
-            // start polling
             checkInterval = setInterval(checkStatus, 3000);
             checkStatus();
         }
@@ -683,12 +785,13 @@
 
         function initWaHookHint() {
             const origin = window.location.origin;
-            const hook = origin + '/api/wa/webhook';
+            const webHook = origin + '/api/webhooks/whatsapp-web';
+            const wahaHook = origin + '/api/wa/webhook';
             const hint = document.getElementById('wa_hook_hint');
-            if (hint) hint.value = hook;
+            if (hint) hint.value = webHook;
             const cmd = document.getElementById('wa-docker-cmd');
             if (cmd) {
-                cmd.textContent = `docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=${hook} -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha`;
+                cmd.textContent = `docker run -it -p 3000:3000/tcp -e WHATSAPP_HOOK_URL=${wahaHook} -e WHATSAPP_HOOK_EVENTS=message devlikeapro/waha`;
             }
         }
 
@@ -820,6 +923,7 @@
         }
 
         window.onload = () => {
+            checkWaWebStatus();
             checkStatus();
             loadIntegrationStatus();
             loadSettingsRouting();

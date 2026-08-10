@@ -120,7 +120,19 @@ docker run --rm -p 8000:8000 \
   bash -lc 'pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8000'
 ```
 
-(обычно удобнее systemd + venv; WAHA для WhatsApp — отдельный контейнер, см. Настройки).
+(обычно удобнее systemd + venv).
+
+### WhatsApp Web bridge (обязательно отдельный процесс)
+
+Сессия WhatsApp Web **не живёт на Vercel**. На этом же (или отдельном) VPS:
+
+```bash
+# в .env рядом с compose: CRM_URL=https://…  WA_WEB_API_KEY=…
+docker compose up -d wa-bridge
+```
+
+В CRM задайте `WA_BRIDGE_URL` (доступный с хоста CRM URL моста) и тот же `WA_WEB_API_KEY`.  
+Подробно: [`docs/whatsapp-web.md`](whatsapp-web.md). Альтернатива — контейнер WAHA (см. Настройки).
 
 ## Бэкапы
 

@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-WAHA_URL = "http://127.0.0.1:3000"
+WAHA_URL = os.getenv("WAHA_URL", "http://127.0.0.1:3000")
+WA_BRIDGE_URL = os.getenv("WA_BRIDGE_URL", "").rstrip("/")
+WA_WEB_API_KEY = os.getenv("WA_WEB_API_KEY", "")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 
 # Web Push
@@ -25,9 +27,26 @@ def send_wa_message(phone: str, text: str):
     if clean_phone.startswith('8'): clean_phone = '7' + clean_phone[1:]
     if not clean_phone:
         return False
+    chat_id = f"{clean_phone}@c.us"
+    # WhatsApp Web bridge (предпочтительно)
+    if WA_BRIDGE_URL:
+        try:
+            headers = {"Content-Type": "application/json"}
+            if WA_WEB_API_KEY:
+                headers["X-API-Key"] = WA_WEB_API_KEY
+            r = requests.post(
+                f"{WA_BRIDGE_URL}/send",
+                json={"chat_id": chat_id, "text": text},
+                headers=headers,
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                return True
+        except Exception as e:
+            print("WA bridge Error:", e)
     payload = {
         "session": "default",
-        "chatId": f"{clean_phone}@c.us",
+        "chatId": chat_id,
         "text": text
     }
     try:

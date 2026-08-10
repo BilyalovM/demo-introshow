@@ -7,6 +7,12 @@ venv_new/
 .DS_Store
 FOR_UPLOAD/
 uploads/.DS_Store
+# WhatsApp Web / WAHA session auth (secrets — never commit)
+uploads/wa-web-session/**
+!uploads/wa-web-session/.gitkeep
+uploads/waha-sessions/
+wa_bridge/session/
+wa_bridge/node_modules/
 .session_secret
 uvicorn.log
 

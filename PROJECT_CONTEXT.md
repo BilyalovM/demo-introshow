@@ -12,9 +12,10 @@
 *   **База данных:** SQLite (через SQLAlchemy ORM). Все данные хранятся в одном файле `rental_app.db`.
 *   **Генерация документов:** Библиотека `docxtpl` (на базе `python-docx`). Использует шаблоны `.docx` из папки `templates/` и заменяет плейсхолдеры (например, `{{ company_name }}`) на реальные данные из БД.
 *   **Интеграции:**
-    *   **WhatsApp:** Интеграция работает через стороннее решение **WAHA (WhatsApp HTTP API)**. Приложение общается с запущенным Docker-контейнером WAHA по REST API. Авторизация происходит через генерацию и сканирование QR-кода прямо в интерфейсе настроек CRM. Входящие сообщения принимаются через webhook `/api/wa/webhook`.
-    *   **Telegram:** Реализовано через официальный Telegram Bot API (`requests.post`). Токен бота хранится в `.env` файле, настройки редактируются через UI. Входящие — через webhook `/api/tg/webhook` (настраивается кнопкой в Настройках).
-    *   **Instagram Direct:** Через Meta Graph API (нужен `IG_PAGE_TOKEN` и `IG_VERIFY_TOKEN` в `.env`). Входящие — через webhook `/api/ig/webhook`.
+    *   **WhatsApp Web (рекомендуется):** self-hosted мост `wa_bridge/` (whatsapp-web.js) на VPS. QR в Настройках → Inbox (`channel=whatsapp`) + автосделка. Webhook: `/api/webhooks/whatsapp-web`. Env: `WA_BRIDGE_URL`, `WA_WEB_API_KEY`. Документация: `docs/whatsapp-web.md`. Сессию на Vercel держать нельзя.
+    *   **WhatsApp (альтернатива WAHA):** Docker WAHA, webhook `/api/wa/webhook`, прокси `/api/wa/*`. Env: `WAHA_URL`.
+    *   **Telegram:** официальный Bot API. Токен в `.env` / UI. Webhook `/api/tg/webhook`.
+    *   **Instagram Direct:** только официальный Meta Graph API (`IG_PAGE_TOKEN`, `IG_VERIFY_TOKEN`, `/api/ig/webhook`). Неофициальные DM-скрейперы не используем (бан/хрупкость) — см. `docs/whatsapp-web.md`.
     *   **AI чат-бот:** Google Gemini REST API (`GEMINI_API_KEY` в `.env`). Модуль `chatbot.py`: отвечает клиентам во всех трёх мессенджерах на основе загруженной базы знаний, по настраиваемому графику работы, «как человек». Fallback по списку моделей (`GEMINI_MODELS`) при исчерпании квоты.
     *   **1С:** REST API для обмена данными: `GET/POST /api/1c/counterparties` (контрагенты), `GET/POST /api/1c/invoices` (счета). Авторизация по заголовку `X-API-Key` (ключ `ONEC_API_KEY` в `.env`, настраивается через UI).
     *   **Push-уведомления:** Библиотека `pywebpush` для браузерных уведомлений.
@@ -55,7 +56,9 @@
 | `GEMINI_API_KEY` | ключ Google Gemini для чат-бота |
 | `GEMINI_MODELS` | (опц.) список моделей через запятую, fallback по порядку |
 | `TG_BOT_TOKEN` | токен Telegram-бота |
-| `WAHA_URL` | адрес WAHA-контейнера (по умолчанию `http://127.0.0.1:3000`) |
+| `WA_BRIDGE_URL` | URL WhatsApp Web bridge на VPS (например `http://vps:3001`) |
+| `WA_WEB_API_KEY` | общий секрет CRM ↔ bridge |
+| `WAHA_URL` | адрес WAHA-контейнера (fallback, по умолчанию `http://127.0.0.1:3000`) |
 | `IG_PAGE_TOKEN` / `IG_VERIFY_TOKEN` | Meta Graph API для Instagram Direct |
 | `ONEC_API_KEY` | ключ для API-обмена с 1С |
 | `SESSION_SECRET` | (опц.) секрет подписи сессий; иначе генерируется в `.session_secret` |

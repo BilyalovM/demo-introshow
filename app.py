@@ -662,6 +662,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
 PUBLIC_PATH_PREFIXES = (
     "/static", "/uploads", "/login", "/api/login",
     "/api/tg/webhook", "/api/wa/webhook", "/api/ig/webhook",
+    "/api/webhooks/whatsapp-web",  # WhatsApp Web bridge (VPS) → CRM
     "/tracking/", "/api/push/", "/api/1c/", "/favicon",
     "/openapi.json",
     "/roadmap",  # публичный статус/roadmap для клиента
@@ -3799,54 +3800,210 @@ def delete_contact(contact_id: int, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 
-# -- WAHA (WhatsApp API) Proxies --
-WAHA_URL = "http://127.0.0.1:3000"
+# -- WhatsApp Web bridge + WAHA proxies --
+def _waha_url() -> str:
+    return os.getenv("WAHA_URL", "http://127.0.0.1:3000").rstrip("/")
+
+
+def _wa_bridge_url() -> str:
+    return os.getenv("WA_BRIDGE_URL", "").rstrip("/")
+
+
+def _wa_bridge_headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    key = os.getenv("WA_WEB_API_KEY", "")
+    if key:
+        h["X-API-Key"] = key
+    return h
+
+
+def _wa_web_key_ok(request: Request) -> bool:
+    """Проверка X-API-Key / Bearer для webhook от bridge. Пустой ключ — только если явно разрешено."""
+    expected = os.getenv("WA_WEB_API_KEY", "")
+    if not expected:
+        # На проде ключ обязателен; без ключа принимаем только если WA_WEB_ALLOW_OPEN=1 (локальная отладка)
+        return os.getenv("WA_WEB_ALLOW_OPEN", "") == "1"
+    key = request.headers.get("x-api-key") or ""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        key = auth[7:].strip()
+    return key == expected
+
+
+def _bridge_get(path: str, timeout: float = 5):
+    base = _wa_bridge_url()
+    if not base:
+        return None
+    return requests.get(f"{base}{path}", headers=_wa_bridge_headers(), timeout=timeout)
+
+
+def _bridge_post(path: str, json_body: dict = None, timeout: float = 10):
+    base = _wa_bridge_url()
+    if not base:
+        return None
+    return requests.post(
+        f"{base}{path}",
+        headers=_wa_bridge_headers(),
+        json=json_body or {},
+        timeout=timeout,
+    )
+
+
+@app.get("/api/wa-web/status")
+def wa_web_status(user: User = Depends(get_current_user)):
+    """Статус WhatsApp Web bridge (VPS). Для UI «Настройки»."""
+    bridge = _wa_bridge_url()
+    if not bridge:
+        return {
+            "status": "offline",
+            "label": "Мост не настроен",
+            "hint": "Задайте WA_BRIDGE_URL (VPS) и WA_WEB_API_KEY в .env CRM. См. docs/whatsapp-web.md",
+            "bridge_url": None,
+        }
+    try:
+        r = _bridge_get("/status", timeout=4)
+        if r is None:
+            return {"status": "offline", "label": "Мост не настроен", "bridge_url": None}
+        if r.status_code == 401:
+            return {"status": "offline", "label": "Неверный API-ключ", "bridge_url": bridge}
+        data = r.json() if r.ok else {}
+        raw = (data.get("status") or "disconnected").lower()
+        label_map = {
+            "connected": "Подключено",
+            "wait_qr": "Ожидание QR",
+            "initializing": "Запуск…",
+            "disconnected": "Не подключено",
+            "auth_failure": "Ошибка авторизации",
+        }
+        return {
+            "status": raw,
+            "label": label_map.get(raw, raw),
+            "phone": data.get("phone"),
+            "has_qr": data.get("has_qr"),
+            "last_error": data.get("last_error"),
+            "bridge_url": bridge,
+        }
+    except Exception as e:
+        return {
+            "status": "offline",
+            "label": "Мост недоступен",
+            "error": str(e),
+            "bridge_url": bridge,
+            "hint": "Проверьте, что docker compose wa-bridge запущен на VPS и порт открыт для CRM.",
+        }
+
+
+@app.post("/api/wa-web/connect")
+def wa_web_connect(user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if not _wa_bridge_url():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "WA_BRIDGE_URL не задан. Запустите bridge на VPS (docs/whatsapp-web.md)."},
+        )
+    try:
+        r = _bridge_post("/connect", timeout=8)
+        if r is None:
+            return JSONResponse(status_code=400, content={"error": "Мост не настроен"})
+        if not r.ok:
+            return JSONResponse(status_code=502, content={"error": r.text[:300]})
+        return r.json()
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+
+
+@app.post("/api/wa-web/logout")
+def wa_web_logout(user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if not _wa_bridge_url():
+        return JSONResponse(status_code=400, content={"error": "WA_BRIDGE_URL не задан"})
+    try:
+        r = _bridge_post("/logout", timeout=15)
+        if r is None:
+            return JSONResponse(status_code=400, content={"error": "Мост не настроен"})
+        return r.json() if r.ok else JSONResponse(status_code=502, content={"error": r.text[:300]})
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+
+
+@app.get("/api/wa-web/qr")
+def wa_web_qr(user: User = Depends(get_current_user)):
+    """Проксирует PNG QR с bridge для сканирования WhatsApp → Привязанные устройства."""
+    if not _wa_bridge_url():
+        return JSONResponse(status_code=400, content={"error": "WA_BRIDGE_URL не задан"})
+    try:
+        r = _bridge_get("/qr", timeout=5)
+        if r is None:
+            return JSONResponse(status_code=400, content={"error": "Мост не настроен"})
+        if r.status_code == 404:
+            return JSONResponse(status_code=404, content={"error": "QR ещё не готов или уже отсканирован"})
+        if not r.ok:
+            return JSONResponse(status_code=502, content={"error": r.text[:300]})
+        return Response(content=r.content, media_type="image/png", headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+
 
 @app.get("/api/wa/status")
 def wa_status():
+    """Статус WAHA (альтернатива). Основной путь — /api/wa-web/status."""
     try:
-        r = requests.get(f"{WAHA_URL}/api/sessions/default", timeout=2)
+        r = requests.get(f"{_waha_url()}/api/sessions/default", timeout=2)
         if r.status_code == 200:
             return r.json()
         return {"status": "NOT_FOUND"}
-    except:
+    except Exception:
         return {"status": "OFFLINE", "error": "WAHA is not running"}
+
 
 @app.post("/api/wa/start")
 def wa_start():
     try:
-        r = requests.post(f"{WAHA_URL}/api/sessions/start", json={"name": "default"}, timeout=5)
+        r = requests.post(f"{_waha_url()}/api/sessions/start", json={"name": "default"}, timeout=5)
         return {"status": "started"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 @app.get("/api/wa/qr")
 def wa_qr():
     try:
-        # returns JSON {"mimetype": "image/png", "data": "base64..."} usually or we can request format
-        r = requests.get(f"{WAHA_URL}/api/sessions/default/auth/qr?format=raw", timeout=2)
+        r = requests.get(f"{_waha_url()}/api/sessions/default/auth/qr?format=raw", timeout=2)
         if r.status_code == 200:
-            from fastapi.responses import Response
             return Response(content=r.content, media_type="image/png")
         return JSONResponse(status_code=404, content={"error": "QR not ready or already scanned"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 class SendMsg(BaseModel):
     phone: str
     text: str
 
+
 @app.post("/api/wa/send")
 def wa_send(msg: SendMsg):
     try:
-        clean_phone = ''.join(filter(str.isdigit, msg.phone))
-        if clean_phone.startswith('8'): clean_phone = '7' + clean_phone[1:]
+        clean_phone = "".join(filter(str.isdigit, msg.phone))
+        if clean_phone.startswith("8"):
+            clean_phone = "7" + clean_phone[1:]
+        chat_id = f"{clean_phone}@c.us"
+        # Предпочитаем bridge
+        if _wa_bridge_url():
+            try:
+                r = _bridge_post("/send", {"chat_id": chat_id, "text": msg.text}, timeout=15)
+                if r is not None and r.ok:
+                    return r.json()
+            except Exception:
+                pass
         payload = {
             "session": "default",
-            "chatId": f"{clean_phone}@c.us",
-            "text": msg.text
+            "chatId": chat_id,
+            "text": msg.text,
         }
-        r = requests.post(f"{WAHA_URL}/api/sendText", json=payload, timeout=5)
+        r = requests.post(f"{_waha_url()}/api/sendText", json=payload, timeout=5)
         return r.json()
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -6852,6 +7009,39 @@ def wa_webhook(event: dict, db: Session = Depends(get_db)):
         ensure_deal_for_chat(db, "whatsapp", chat_id, sender_name=sender)
     except Exception as e:
         print("ensure_deal_for_chat (wa) error:", e)
+    chatbot.handle_incoming(db, "whatsapp", chat_id, text_msg, sender_name=sender)
+    return {"status": "ok"}
+
+
+# -- WhatsApp Web bridge (whatsapp-web.js на VPS) --
+@app.post("/api/webhooks/whatsapp-web")
+def wa_web_webhook(request: Request, event: dict, db: Session = Depends(get_db)):
+    """Входящие от self-hosted WhatsApp Web bridge → Inbox + автосделка.
+
+    Payload: {event: "message"|"status", chat_id, text, sender_name, ...}
+    Auth: заголовок X-API-Key = WA_WEB_API_KEY.
+    """
+    if not _wa_web_key_ok(request):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    ev = (event.get("event") or "message").lower()
+    if ev == "status":
+        # статусные пинги — только лог, без Inbox
+        print("wa-web status:", event.get("status"), event.get("phone") or "")
+        return {"status": "ok"}
+
+    if ev != "message":
+        return {"status": "ignored"}
+
+    chat_id = str(event.get("chat_id") or event.get("chatId") or "").strip()
+    text_msg = str(event.get("text") or event.get("body") or "").strip()
+    if not chat_id or not text_msg:
+        return {"status": "ignored"}
+    sender = str(event.get("sender_name") or event.get("sender") or chat_id.split("@")[0])
+    try:
+        ensure_deal_for_chat(db, "whatsapp", chat_id, sender_name=sender)
+    except Exception as e:
+        print("ensure_deal_for_chat (wa-web) error:", e)
     chatbot.handle_incoming(db, "whatsapp", chat_id, text_msg, sender_name=sender)
     return {"status": "ok"}
 

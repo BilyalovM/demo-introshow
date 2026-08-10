@@ -215,20 +215,48 @@ def save_message(db: Session, channel: str, chat_id: str, direction: str,
 
 # ---------- Отправка сообщений по каналам ----------
 
-WAHA_URL = os.getenv("WAHA_URL", "http://127.0.0.1:3000")
-
-
-def send_whatsapp(chat_id: str, text: str) -> bool:
+def _send_whatsapp_bridge(chat_id: str, text: str) -> bool:
+    """Отправка через self-hosted WhatsApp Web bridge (wa_bridge / whatsapp-web.js)."""
+    bridge = os.getenv("WA_BRIDGE_URL", "").rstrip("/")
+    if not bridge:
+        return False
+    headers = {"Content-Type": "application/json"}
+    key = os.getenv("WA_WEB_API_KEY", "")
+    if key:
+        headers["X-API-Key"] = key
     try:
         r = requests.post(
-            f"{WAHA_URL}/api/sendText",
+            f"{bridge}/send",
+            json={"chat_id": chat_id, "text": text},
+            headers=headers,
+            timeout=15,
+        )
+        return r.status_code in (200, 201)
+    except Exception as e:
+        print("WA bridge send error:", e)
+        return False
+
+
+def _send_whatsapp_waha(chat_id: str, text: str) -> bool:
+    """Отправка через WAHA (альтернативный WhatsApp Web Docker)."""
+    waha = os.getenv("WAHA_URL", "http://127.0.0.1:3000").rstrip("/")
+    try:
+        r = requests.post(
+            f"{waha}/api/sendText",
             json={"session": "default", "chatId": chat_id, "text": text},
             timeout=10,
         )
         return r.status_code in (200, 201)
     except Exception as e:
-        print("WA send error:", e)
+        print("WAHA send error:", e)
         return False
+
+
+def send_whatsapp(chat_id: str, text: str) -> bool:
+    """Сначала WhatsApp Web bridge, затем WAHA (если настроен)."""
+    if _send_whatsapp_bridge(chat_id, text):
+        return True
+    return _send_whatsapp_waha(chat_id, text)
 
 
 def send_telegram(chat_id: str, text: str) -> bool:

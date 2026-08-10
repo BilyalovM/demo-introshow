@@ -1,0 +1,19 @@
+{
+  "name": "introshow-wa-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WhatsApp Web bridge for Intro Show CRM (QR / free self-hosted)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}
