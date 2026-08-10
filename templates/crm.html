@@ -444,6 +444,104 @@
             margin-right: 8px;
         }
     }
+
+    /* Pipeline stages editor — prevent label clipping / control overlap */
+    #pipeline-admin-modal .pipe-admin-card {
+        width: min(760px, 96vw);
+        max-width: 96%;
+        padding: 22px;
+        position: relative;
+        max-height: 90vh;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        box-sizing: border-box;
+    }
+    #pipeline-admin-modal .pipe-stage-row {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+        min-width: 0;
+    }
+    #pipeline-admin-modal .pipe-stage-main {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+    #pipeline-admin-modal .pipe-stage-idx {
+        flex: 0 0 22px;
+        width: 22px;
+        text-align: center;
+        font-size: 12px;
+    }
+    #pipeline-admin-modal .pipe-stage-name {
+        flex: 1 1 auto;
+        min-width: 0;
+        width: 100%;
+    }
+    #pipeline-admin-modal .pipe-stage-actions {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 4px;
+    }
+    #pipeline-admin-modal .pipe-stage-actions .btn {
+        flex: 0 0 auto;
+        min-width: 34px;
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+    #pipeline-admin-modal .pipe-stage-flags {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 14px;
+        padding-left: 30px;
+        min-width: 0;
+    }
+    #pipeline-admin-modal .pipe-stage-flag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        line-height: 1.2;
+        white-space: nowrap;
+        flex: 0 0 auto;
+        min-width: 0;
+        overflow: visible;
+        color: var(--text);
+    }
+    #pipeline-admin-modal .pipe-stage-flag input {
+        flex: 0 0 auto;
+        margin: 0;
+        width: auto;
+        max-width: none;
+        min-width: 0;
+        padding: 0;
+    }
+    @media (max-width: 520px) {
+        #pipeline-admin-modal .pipe-stage-main {
+            flex-wrap: wrap;
+        }
+        #pipeline-admin-modal .pipe-stage-name {
+            flex: 1 1 calc(100% - 40px);
+            order: 1;
+        }
+        #pipeline-admin-modal .pipe-stage-idx {
+            order: 0;
+        }
+        #pipeline-admin-modal .pipe-stage-actions {
+            order: 2;
+            margin-left: auto;
+        }
+        #pipeline-admin-modal .pipe-stage-flags {
+            padding-left: 0;
+        }
+    }
 </style>
 {% endblock %}
 
@@ -1087,9 +1185,9 @@
 
 <!-- Pipeline admin modal -->
 <div id="pipeline-admin-modal" class="slider-overlay" style="align-items:center; justify-content:center; z-index:1200;" onclick="if(event.target===this) closePipelineAdmin()">
-    <div class="card" style="width:760px; max-width:96%; padding:22px; position:relative; max-height:90vh; overflow:auto;" onclick="event.stopPropagation()">
-        <button type="button" onclick="closePipelineAdmin()" style="position:absolute; top:10px; right:14px; border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--muted);">&times;</button>
-        <h3 style="margin-top:0; margin-bottom:6px;">Воронки CRM</h3>
+    <div class="card pipe-admin-card" onclick="event.stopPropagation()">
+        <button type="button" onclick="closePipelineAdmin()" style="position:absolute; top:10px; right:14px; border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--muted); z-index:1;">&times;</button>
+        <h3 style="margin-top:0; margin-bottom:6px; padding-right:28px;">Воронки CRM</h3>
         <p class="muted" style="font-size:13px; margin:0 0 14px;">Лиды → успешная стадия создаёт сделку в воронке <strong>Аренда</strong> или <strong>Продажа</strong> (выбор при конвертации). Маршрутизация источников — ниже.</p>
 
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:10px;">
@@ -1097,8 +1195,8 @@
             <button type="button" class="btn btn-sm pipe-admin-tab" id="pipe-tab-routing" onclick="switchPipeAdminTab('routing')">Маршрутизация источников</button>
         </div>
 
-        <div id="pipe-admin-pane-list">
-            <div id="pipeline-admin-list" style="display:flex; flex-direction:column; gap:12px; margin-bottom:16px;"></div>
+        <div id="pipe-admin-pane-list" style="min-width:0;">
+            <div id="pipeline-admin-list" style="display:flex; flex-direction:column; gap:12px; margin-bottom:16px; min-width:0;"></div>
             <div style="border:1px dashed var(--border); border-radius:10px; padding:12px;">
                 <div style="font-weight:700; margin-bottom:8px; font-size:13px;">Новая воронка</div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
@@ -2585,32 +2683,42 @@
             const kindLabel = p.kind === 'lead' ? 'Лиды' : 'Продажи';
             const stages = (p.stages || []).slice().sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
             const stagesHtml = stages.map((s, idx) => `
-                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border);">
-                    <span class="muted" style="width:22px;text-align:center;font-size:12px;">${idx + 1}</span>
-                    <input type="text" id="stage-name-${s.id}" value="${escapeHtml(s.name)}" style="flex:1;min-width:120px;">
-                    <label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Успех">
-                        <input type="checkbox" id="stage-won-${s.id}" ${s.is_won ? 'checked' : ''}> Успех
-                    </label>
-                    <label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Отказ">
-                        <input type="checkbox" id="stage-lost-${s.id}" ${s.is_lost ? 'checked' : ''}> Отказ
-                    </label>
-                    ${p.kind === 'lead' ? `<label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Создать сделку">
-                        <input type="checkbox" id="stage-creates-${s.id}" ${s.creates_deal ? 'checked' : ''}> → Сделка
-                    </label>` : `<label style="font-size:11px;display:flex;align-items:center;gap:3px;white-space:nowrap;" title="Бронь оборудования">
-                        <input type="checkbox" id="stage-rent-${s.id}" ${s.is_active_rent ? 'checked' : ''}> Бронь
-                    </label>`}
-                    <button type="button" class="btn btn-sm" onclick="moveStage(${p.id},${s.id},-1)" title="Выше">↑</button>
-                    <button type="button" class="btn btn-sm" onclick="moveStage(${p.id},${s.id},1)" title="Ниже">↓</button>
-                    <button type="button" class="btn btn-sm" onclick="saveStage(${s.id}, '${p.kind}')">OK</button>
-                    <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deleteStage(${s.id})">✕</button>
+                <div class="pipe-stage-row">
+                    <div class="pipe-stage-main">
+                        <span class="muted pipe-stage-idx">${idx + 1}</span>
+                        <input type="text" class="pipe-stage-name" id="stage-name-${s.id}" value="${escapeHtml(s.name)}" autocomplete="off">
+                        <div class="pipe-stage-actions">
+                            <button type="button" class="btn btn-sm" onclick="moveStage(${p.id},${s.id},-1)" title="Выше" aria-label="Выше">↑</button>
+                            <button type="button" class="btn btn-sm" onclick="moveStage(${p.id},${s.id},1)" title="Ниже" aria-label="Ниже">↓</button>
+                            <button type="button" class="btn btn-sm" onclick="saveStage(${s.id}, '${p.kind}')">OK</button>
+                            <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deleteStage(${s.id})" aria-label="Удалить">✕</button>
+                        </div>
+                    </div>
+                    <div class="pipe-stage-flags">
+                        <label class="pipe-stage-flag" title="Успех">
+                            <input type="checkbox" id="stage-won-${s.id}" ${s.is_won ? 'checked' : ''}>
+                            <span>Успех</span>
+                        </label>
+                        <label class="pipe-stage-flag" title="Отказ">
+                            <input type="checkbox" id="stage-lost-${s.id}" ${s.is_lost ? 'checked' : ''}>
+                            <span>Отказ</span>
+                        </label>
+                        ${p.kind === 'lead' ? `<label class="pipe-stage-flag" title="Создать сделку">
+                            <input type="checkbox" id="stage-creates-${s.id}" ${s.creates_deal ? 'checked' : ''}>
+                            <span>→ Сделка</span>
+                        </label>` : `<label class="pipe-stage-flag" title="Бронь оборудования">
+                            <input type="checkbox" id="stage-rent-${s.id}" ${s.is_active_rent ? 'checked' : ''}>
+                            <span>Бронь</span>
+                        </label>`}
+                    </div>
                 </div>
             `).join('') || '<div class="muted" style="font-size:12px;">Стадий нет</div>';
 
             return `
-            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;">
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0;overflow:visible;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0;">
                     <span style="font-size:11px;font-weight:650;padding:2px 8px;border-radius:7px;background:var(--primary-soft);color:var(--primary);">${kindLabel}</span>
-                    <input type="text" value="${escapeHtml(p.name)}" id="pipe-name-${p.id}" style="flex:1;min-width:140px;">
+                    <input type="text" value="${escapeHtml(p.name)}" id="pipe-name-${p.id}" style="flex:1;min-width:0;max-width:100%;">
                     <select id="pipe-kind-${p.id}" style="padding:6px 8px;">
                         <option value="lead" ${p.kind === 'lead' ? 'selected' : ''}>Лиды</option>
                         <option value="deal" ${p.kind !== 'lead' ? 'selected' : ''}>Продажи</option>
@@ -2624,10 +2732,10 @@
                     <button type="button" class="btn btn-sm" onclick="togglePipelineStages(${p.id})">${expanded ? 'Скрыть стадии' : 'Стадии (' + stages.length + ')'}</button>
                     <button type="button" class="btn btn-sm" style="color:var(--danger);" onclick="deletePipeline(${p.id})">Удалить</button>
                 </div>
-                <div id="pipe-stages-${p.id}" style="display:${expanded ? 'block' : 'none'}; margin-top:10px;">
+                <div id="pipe-stages-${p.id}" style="display:${expanded ? 'block' : 'none'}; margin-top:10px; min-width:0;">
                     ${stagesHtml}
-                    <div style="display:flex;gap:8px;margin-top:10px;">
-                        <input type="text" id="new-stage-name-${p.id}" placeholder="Новая стадия" style="flex:1;">
+                    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;min-width:0;">
+                        <input type="text" id="new-stage-name-${p.id}" placeholder="Новая стадия" style="flex:1;min-width:0;">
                         <button type="button" class="btn btn-sm btn-green" onclick="addStage(${p.id})">+ Стадия</button>
                     </div>
                 </div>

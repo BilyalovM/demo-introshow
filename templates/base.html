@@ -285,9 +285,19 @@
 
         <div class="content">
             <header class="topbar">
- <a class="mobile-brand" href="/">
-  <span class="brand-logo"><img class="brand-img" src="{{ url_for('static', path='img/introshow_logo.png') }}" alt="Intro Show" style="height:28px;max-width:140px;" /></span>
+ <a class="mobile-brand" href="/" aria-label="Intro Show">
+  <span class="brand-logo"><img class="brand-img" src="{{ url_for('static', path='img/introshow_logo.png') }}" alt="Intro Show" /></span>
  </a>
+ {% set city_list = request.state.cities or [] %}
+ {% if city_list and (request.state.can_switch_city or (request.state.user and request.state.user.role in ('admin', 'manager'))) %}
+ <div class="city-switcher" title="Город CRM">
+  <select id="city-switcher-select" aria-label="Город" onchange="switchCrmCity(this.value)">
+   {% for c in city_list %}
+   <option value="{{ c.id }}" {% if request.state.current_city and c.id == request.state.current_city.id %}selected{% endif %}>{{ c.name }}</option>
+   {% endfor %}
+  </select>
+ </div>
+ {% endif %}
  <div class="search" style="position:relative;">
   <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="18">
    <circle cx="11" cy="11" r="7">
@@ -300,16 +310,6 @@
  </div>
  <div class="topbar-spacer">
  </div>
- {% set city_list = request.state.cities or [] %}
- {% if city_list and (request.state.can_switch_city or (request.state.user and request.state.user.role in ('admin', 'manager'))) %}
- <div class="city-switcher" title="Город CRM">
-  <select id="city-switcher-select" aria-label="Город" onchange="switchCrmCity(this.value)">
-   {% for c in city_list %}
-   <option value="{{ c.id }}" {% if request.state.current_city and c.id == request.state.current_city.id %}selected{% endif %}>{{ c.name }}</option>
-   {% endfor %}
-  </select>
- </div>
- {% endif %}
   <button aria-label="Поиск" class="icon-btn mobile-only">
    <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewbox="0 0 24 24" width="18">
     <circle cx="11" cy="11" r="7">

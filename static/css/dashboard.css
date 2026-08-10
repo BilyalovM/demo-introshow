@@ -237,14 +237,18 @@ h4 {
   width: 100%;
 }
 .city-switcher {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-right: 8px;
+  flex: 0 0 auto;
+  z-index: 1;
 }
 .city-switcher select {
   appearance: none;
   -webkit-appearance: none;
+  position: relative;
   padding: 7px 28px 7px 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -257,6 +261,8 @@ h4 {
   letter-spacing: 0.02em;
   cursor: pointer;
   max-width: 140px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .city-switcher select:focus {
   outline: none;
@@ -1560,33 +1566,60 @@ table.data th.num {
     padding: 2px;
   }
   .topbar {
-    padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
-    gap: 10px;
+    padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    min-width: 0;
   }
   .topbar .presence,
   .topbar .search,
   .topbar .topbar-spacer {
     display: none;
   }
+  /* Mobile: city on the left; logo stays in sidebar (shown only if no city switcher) */
   .mobile-brand {
+    display: none;
+  }
+  .topbar:not(:has(.city-switcher)) .mobile-brand {
     display: flex;
     align-items: center;
-    gap: 9px;
-    flex: 1 1;
+    gap: 8px;
+    flex: 1 1 auto;
     min-width: 0;
+    max-width: 46vw;
+    overflow: hidden;
   }
-  .mobile-brand .brand-logo {
+  .topbar:not(:has(.city-switcher)) .mobile-brand .brand-logo {
     width: auto;
     height: auto;
     background: transparent;
     box-shadow: none;
+    margin: 0;
   }
-  .mobile-brand .brand-img {
+  .topbar:not(:has(.city-switcher)) .mobile-brand .brand-img {
     height: 28px;
-    max-width: 140px;
+    max-width: 120px;
   }
-  .mobile-brand .brand-name {
-    font-size: 12px;
+  .city-switcher {
+    position: relative;
+    order: -1;
+    margin-right: auto;
+    margin-left: 0;
+    flex: 0 1 auto;
+    max-width: min(148px, 42vw);
+    min-width: 0;
+  }
+  .topbar .city-switcher select {
+    width: 100%;
+    max-width: 100%;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 26px 8px 10px;
+    min-height: 36px;
+  }
+  .topbar > .icon-btn,
+  .topbar > .profile-menu {
+    flex: 0 0 auto;
   }
   .main {
     padding: 16px;
