@@ -4,8 +4,8 @@
 
 {% block extra_head %}
 <style>
-/* Смета: страница должна скроллиться целиком — «Позиции сметы» всегда достижимы.
-   Каталог — отдельная область прокрутки. Правая колонка (итоги) остаётся sticky. */
+/* Смета: один скролл страницы (document). Без внутренних скроллеров
+   в колонках и каталоге — правая колонка тянется по контенту. */
 body:has(.quote-layout),
 html:has(.quote-layout) {
     overflow-x: clip;
@@ -23,39 +23,21 @@ body:has(.quote-layout) .main {
     overflow-y: visible !important;
 }
 #catalogContainer {
-    max-height: min(380px, 38vh);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    max-height: none;
+    overflow: visible;
 }
-@media (min-width: 1025px) {
-    .quote-main {
-        max-height: none !important;
-        overflow: visible !important;
-    }
-    .quote-side {
-        position: sticky;
-        top: 20px;
-        align-self: start;
-        max-height: calc(100dvh - 88px);
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding-right: 4px;
-    }
+.quote-main,
+.quote-side {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+    align-self: start;
 }
 @media (max-width: 1024px) {
     .quote-layout { grid-template-columns: 1fr !important; }
-    .quote-side {
-        position: static !important;
-        max-height: none !important;
-        overflow: visible !important;
-    }
 }
 @media (max-width: 768px) {
-    #catalogContainer { max-height: min(320px, 42vh); }
-    /* Глобальный .card { overflow:hidden } на мобиле режет внутренний скролл каталога */
     .quote-layout .card { overflow: visible; }
-    .quote-layout #catalogContainer { overflow-y: auto; }
 }
 </style>
 {% endblock %}
@@ -119,7 +101,7 @@ body:has(.quote-layout) .main {
         </div>
     </div>
 
-    <div class="grid quote-side" style="gap:16px;position:sticky;top:20px">
+    <div class="grid quote-side" style="gap:16px">
         <div class="card">
             <h3 style="margin-top:0">Арендатор (клиент)</h3>
             <label class="field"><span>Компания</span>
