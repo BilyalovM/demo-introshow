@@ -98,6 +98,11 @@ def filter_technichka_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 
 
 def _resolve_logo_path(context: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    if context and (
+        context.get("tpl_force_no_logo")
+        or context.get("tpl_show_logo") is False
+    ):
+        return None
     candidates = []
     if context:
         candidates.append(context.get("logo_path"))
@@ -110,6 +115,33 @@ def _resolve_logo_path(context: Optional[Dict[str, Any]] = None) -> Optional[str
         if path and os.path.isfile(path):
             return path
     return None
+
+
+def _tpl_flag(context: Optional[Dict[str, Any]], key: str, default: bool = True) -> bool:
+    if not context or key not in context:
+        return default
+    return bool(context.get(key))
+
+
+def _add_plain_notes(doc: Document, text: str, *, size: int = 9, italic: bool = False) -> None:
+    """Многострочные примечания из шаблона (после плейсхолдеров)."""
+    if not (text or "").strip():
+        return
+    for line in str(text).splitlines():
+        line = line.rstrip()
+        if not line.strip():
+            doc.add_paragraph("")
+            continue
+        p = doc.add_paragraph()
+        r = p.add_run(line)
+        if italic:
+            r.italic = True
+        _set_run_font(r, size=size)
+
+
+def _resolve_doc_title(context: Dict[str, Any], default_title: str) -> str:
+    custom = (context.get("tpl_custom_title") or "").strip()
+    return custom or default_title
 
 
 def resolve_photo_path(photo_url: str) -> str:
@@ -466,12 +498,13 @@ def _add_kp_header(
         _set_run_font(run, bold=True, size=14)
 
     company_bits = []
-    phone = (context.get("our_company_phone") or "").strip()
-    email = (context.get("our_company_email") or "").strip()
-    if phone:
-        company_bits.append(phone)
-    if email:
-        company_bits.append(email)
+    if _tpl_flag(context, "tpl_show_company_block", True):
+        phone = (context.get("our_company_phone") or "").strip()
+        email = (context.get("our_company_email") or "").strip()
+        if phone:
+            company_bits.append(phone)
+        if email:
+            company_bits.append(email)
     if company_bits:
         p_c = left.add_paragraph()
         r = p_c.add_run(" · ".join(company_bits))
@@ -518,6 +551,8 @@ def _add_kp_header(
 
 def _add_company_footer(doc: Document, context: Dict[str, Any]) -> None:
     """Реквизиты компании внизу (как в КП IntroShow)."""
+    if not _tpl_flag(context, "tpl_include_company_contacts", True):
+        return
     name = (context.get("our_company_name") or "").strip()
     phone = (context.get("our_company_phone") or "").strip()
     address = (context.get("our_company_address") or "").strip()
@@ -543,19 +578,24 @@ def _add_company_footer(doc: Document, context: Dict[str, Any]) -> None:
         _set_run_font(r, size=9)
 
 
-def _add_client_notes_and_signatures(doc: Document) -> None:
+def _add_client_notes_and_signatures(doc: Document, context: Optional[Dict[str, Any]] = None) -> None:
     """Примечания и строки утверждения — как в клиентских КП."""
     doc.add_paragraph("")
-    notes = [
-        "Примечание: 1. Клиенту необходимо произвести 100% предоплату по данному "
-        "коммерческому предложению до начала работ Компании по проекту.",
-        "Примечание: 2. Расходные материалы не входят в стоимость оборудования, "
-        "если не указано иное в смете.",
-    ]
-    for text in notes:
-        p = doc.add_paragraph()
-        r = p.add_run(text)
-        _set_run_font(r, size=8)
+    # Если в шаблоне заданы body_notes — дефолтные примечания не дублируем
+    has_custom_body = bool((context or {}).get("tpl_body_notes"))
+    if not has_custom_body:
+        notes = [
+            "Примечание: 1. Клиенту необходимо произвести 100% предоплату по данному "
+            "коммерческому предложению до начала работ Компании по проекту.",
+            "Примечание: 2. Расходные материалы не входят в стоимость оборудования, "
+            "если не указано иное в смете.",
+        ]
+        for text in notes:
+            p = doc.add_paragraph()
+            r = p.add_run(text)
+            _set_run_font(r, size=8)
+    if not _tpl_flag(context, "tpl_include_signature", True):
+        return
     doc.add_paragraph("")
     for label in (
         "Смету утвердил со стороны Исполнителя: _______________________________",
@@ -779,13 +819,17 @@ def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
         include_customer=False,
     )
 
+    default_title = f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}"
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run(f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}")
+    run = title.add_run(_resolve_doc_title(context, default_title))
     _set_run_font(run, bold=True, size=14)
 
-    items = filter_technichka_items(context.get("items", []))
-    _add_estimate_table(doc, items, with_prices=False)
+    _add_plain_notes(doc, context.get("tpl_body_notes") or "")
+
+    if _tpl_flag(context, "tpl_include_items_table", True):
+        items = filter_technichka_items(context.get("items", []))
+        _add_estimate_table(doc, items, with_prices=False)
 
     note = doc.add_paragraph()
     nr = note.add_run(
@@ -794,6 +838,10 @@ def generate_technichka_docx(context: Dict[str, Any], output_path: str) -> str:
     )
     nr.italic = True
     _set_run_font(nr, size=9)
+
+    _add_plain_notes(doc, context.get("tpl_footer_notes") or "")
+    if _tpl_flag(context, "tpl_include_company_contacts", False):
+        _add_company_footer(doc, context)
 
     doc.save(output_path)
     return output_path
@@ -834,11 +882,14 @@ def generate_estimate_docx(
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
     else:
         title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
+    title_text = _resolve_doc_title(context, title_text)
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = title.add_run(title_text)
     _set_run_font(run, bold=True, size=14)
+
+    _add_plain_notes(doc, context.get("tpl_body_notes") or "")
 
     all_items = list(context.get("items", []) or [])
     if hide_sub:
@@ -854,29 +905,33 @@ def generate_estimate_docx(
         if not main_items and not sub_items and all_items:
             main_items = all_items
 
-    if main_items:
-        _add_estimate_table(doc, main_items, with_prices=True, show_unit_price=show_unit_price)
-    elif is_client:
-        doc.add_paragraph("Нет позиций для клиентской сметы.")
+    if _tpl_flag(context, "tpl_include_items_table", True):
+        if main_items:
+            _add_estimate_table(doc, main_items, with_prices=True, show_unit_price=show_unit_price)
+        elif is_client:
+            doc.add_paragraph("Нет позиций для клиентской сметы.")
 
-    if mode == "internal" and sub_items:
+        if mode == "internal" and sub_items:
+            doc.add_paragraph("")
+            h = doc.add_paragraph()
+            run = h.add_run("Субаренда (только для нас)")
+            _set_run_font(run, bold=True, size=12)
+            note = doc.add_paragraph()
+            nr = note.add_run("В клиентской смете эти позиции идут как обычные, без себестоимости.")
+            nr.italic = True
+            _add_subrental_table(doc, sub_items)
+
+    if _tpl_flag(context, "tpl_include_totals", True):
         doc.add_paragraph("")
-        h = doc.add_paragraph()
-        run = h.add_run("Субаренда (только для нас)")
-        _set_run_font(run, bold=True, size=12)
-        note = doc.add_paragraph()
-        nr = note.add_run("В клиентской смете эти позиции идут как обычные, без себестоимости.")
-        nr.italic = True
-        _add_subrental_table(doc, sub_items)
-
-    doc.add_paragraph("")
-    _add_totals_block(doc, context, mode)
+        _add_totals_block(doc, context, mode)
 
     if is_client:
-        _add_client_notes_and_signatures(doc)
+        _add_client_notes_and_signatures(doc, context)
         _add_company_footer(doc, context)
     elif mode == "internal":
         _add_company_footer(doc, context)
+
+    _add_plain_notes(doc, context.get("tpl_footer_notes") or "")
 
     doc.save(output_path)
     return output_path
@@ -1015,6 +1070,8 @@ class _EstimatePDF:
 
 
 def _pdf_letterhead_lines(context: Dict[str, Any]) -> List[str]:
+    if not _tpl_flag(context, "tpl_include_company_contacts", True):
+        return []
     name = (context.get("our_company_name") or "").strip()
     phone = (context.get("our_company_phone") or "").strip()
     email = (context.get("our_company_email") or "").strip()
@@ -1031,6 +1088,17 @@ def _pdf_letterhead_lines(context: Dict[str, Any]) -> List[str]:
     if bin_code:
         lines.append(f"БИН {bin_code}")
     return lines
+
+
+def _pdf_add_notes(pdf: "_EstimatePDF", text: str) -> None:
+    if not (text or "").strip():
+        return
+    pdf.pdf.ln(1)
+    for line in str(text).splitlines():
+        if not line.strip():
+            pdf.pdf.ln(2)
+            continue
+        pdf.line(line)
 
 
 def _pdf_meta_lines(
@@ -1090,14 +1158,15 @@ def _pdf_add_kp_header(
         pdf.pdf.multi_cell(logo_w, 6, name)
         logo_h = max(logo_h, pdf.pdf.get_y() - y0)
 
-    phone = (context.get("our_company_phone") or "").strip()
-    email = (context.get("our_company_email") or "").strip()
-    contact = " · ".join(x for x in (phone, email) if x)
-    if contact:
-        pdf.pdf.set_xy(x0, y0 + logo_h + 1)
-        pdf.pdf.set_font("DejaVu", "", 7)
-        pdf.pdf.multi_cell(logo_w, 3.5, contact[:80])
-        logo_h = pdf.pdf.get_y() - y0
+    if _tpl_flag(context, "tpl_show_company_block", True):
+        phone = (context.get("our_company_phone") or "").strip()
+        email = (context.get("our_company_email") or "").strip()
+        contact = " · ".join(x for x in (phone, email) if x)
+        if contact:
+            pdf.pdf.set_xy(x0, y0 + logo_h + 1)
+            pdf.pdf.set_font("DejaVu", "", 7)
+            pdf.pdf.multi_cell(logo_w, 3.5, contact[:80])
+            logo_h = pdf.pdf.get_y() - y0
 
     meta_h = 0.0
     if pairs:
@@ -1295,8 +1364,9 @@ def generate_estimate_pdf(
         title_text = f"СМЕТА № {context.get('number', '')} от {context.get('date', '')}"
     else:
         title_text = f"СМЕТА (ВНУТРЕННЯЯ) № {context.get('number', '')} от {context.get('date', '')}"
-    pdf.title(title_text)
+    pdf.title(_resolve_doc_title(context, title_text))
     pdf.pdf.ln(1)
+    _pdf_add_notes(pdf, context.get("tpl_body_notes") or "")
 
     all_items = list(context.get("items", []) or [])
     hide_sub = is_client or bool(context.get("hide_subrental_section"))
@@ -1313,42 +1383,43 @@ def generate_estimate_pdf(
             main_items = all_items
 
     sum_col_w = _PDF_SUM_W
-    if main_items:
-        sum_col_w = _pdf_draw_sectioned_table(
-            pdf, main_items, with_prices=True, show_unit_price=show_unit_price
-        )
-    elif is_client:
-        pdf.line("Нет позиций для клиентской сметы.")
+    if _tpl_flag(context, "tpl_include_items_table", True):
+        if main_items:
+            sum_col_w = _pdf_draw_sectioned_table(
+                pdf, main_items, with_prices=True, show_unit_price=show_unit_price
+            )
+        elif is_client:
+            pdf.line("Нет позиций для клиентской сметы.")
 
-    if mode == "internal" and sub_items:
-        pdf.pdf.ln(3)
-        pdf.line("Субаренда (только для нас)", bold=True)
-        pdf.line("В клиентской смете эти позиции идут как обычные, без себестоимости.")
-        rows = []
-        for idx, item in enumerate(sub_items, 1):
-            qty = item.get("quantity", 1)
-            days = item.get("days", 1)
-            rows.append([
-                str(idx),
-                str(item.get("name", ""))[:40],
-                str(item.get("supplier") or "—")[:20],
-                _fmt_money(item.get("price", 0)),
-                _fmt_money(item.get("cost_price", 0)),
-                f"{qty}×{days}",
-                _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
-            ])
-        sub_widths = [8, 46, 28, 24, 24, 16, _PDF_SUM_W]
-        usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
-        if sum(sub_widths) > usable:
-            scale = usable / sum(sub_widths)
-            sub_widths = [w * scale for w in sub_widths]
-            sum_col_w = sub_widths[-1]
-        pdf.table(
-            ["№", "Наименование", "Поставщик", "Цена", "Себест.", "К×С", "Сумма"],
-            rows,
-            sub_widths,
-            aligns=["C", "L", "L", "R", "R", "C", "R"],
-        )
+        if mode == "internal" and sub_items:
+            pdf.pdf.ln(3)
+            pdf.line("Субаренда (только для нас)", bold=True)
+            pdf.line("В клиентской смете эти позиции идут как обычные, без себестоимости.")
+            rows = []
+            for idx, item in enumerate(sub_items, 1):
+                qty = item.get("quantity", 1)
+                days = item.get("days", 1)
+                rows.append([
+                    str(idx),
+                    str(item.get("name", ""))[:40],
+                    str(item.get("supplier") or "—")[:20],
+                    _fmt_money(item.get("price", 0)),
+                    _fmt_money(item.get("cost_price", 0)),
+                    f"{qty}×{days}",
+                    _fmt_money(item.get("line_total_discounted", item.get("line_total_base", 0))),
+                ])
+            sub_widths = [8, 46, 28, 24, 24, 16, _PDF_SUM_W]
+            usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
+            if sum(sub_widths) > usable:
+                scale = usable / sum(sub_widths)
+                sub_widths = [w * scale for w in sub_widths]
+                sum_col_w = sub_widths[-1]
+            pdf.table(
+                ["№", "Наименование", "Поставщик", "Цена", "Себест.", "К×С", "Сумма"],
+                rows,
+                sub_widths,
+                aligns=["C", "L", "L", "R", "R", "C", "R"],
+            )
 
     disc_pct = float(context.get("discount_percentage") or 0)
     tax_pct = float(context.get("tax_percentage") or 0)
@@ -1366,66 +1437,72 @@ def generate_estimate_pdf(
     tax_amount = context.get("tax_amount") or 0
     grand = context.get("grand_total", 0)
 
-    totals_rows = [("Итоговая сумма за оборудование", _fmt_money(float(eq_base)))]
-    if disc_pct:
-        totals_rows.append((f"Скидка на оборудование {disc_pct:.0f}%", f"−{_fmt_money(float(discount_amount or 0))}"))
-        totals_rows.append(("Оборудование со скидкой", _fmt_money(float(eq_total))))
-    totals_rows.append(("Работа персонала + расходники", _fmt_money(float(fixed_total))))
-    totals_rows.append(("Сумма итого", _fmt_money(float(after_discount))))
-    if tax_pct or tax_amount:
-        totals_rows.append(
-            (f"Итоговая сумма за проект с учетом НДС {tax_pct:.0f}%", _fmt_money(float(grand)))
-        )
-    else:
-        totals_rows.append(("ИТОГО", _fmt_money(float(grand))))
+    if _tpl_flag(context, "tpl_include_totals", True):
+        totals_rows = [("Итоговая сумма за оборудование", _fmt_money(float(eq_base)))]
+        if disc_pct:
+            totals_rows.append((f"Скидка на оборудование {disc_pct:.0f}%", f"−{_fmt_money(float(discount_amount or 0))}"))
+            totals_rows.append(("Оборудование со скидкой", _fmt_money(float(eq_total))))
+        totals_rows.append(("Работа персонала + расходники", _fmt_money(float(fixed_total))))
+        totals_rows.append(("Сумма итого", _fmt_money(float(after_discount))))
+        if tax_pct or tax_amount:
+            totals_rows.append(
+                (f"Итоговая сумма за проект с учетом НДС {tax_pct:.0f}%", _fmt_money(float(grand)))
+            )
+        else:
+            totals_rows.append(("ИТОГО", _fmt_money(float(grand))))
 
-    pdf.pdf.ln(3)
-    pdf.totals_table(totals_rows, sum_col_w=sum_col_w)
-    pdf.right(get_rubles_text(float(grand or 0)), bold=True)
+        pdf.pdf.ln(3)
+        pdf.totals_table(totals_rows, sum_col_w=sum_col_w)
+        pdf.right(get_rubles_text(float(grand or 0)), bold=True)
 
-    if mode == "internal":
-        cost_total = float(context.get("cost_total") or 0)
-        margin = context.get("margin")
-        if margin is None:
-            margin = float(grand or 0) - cost_total
-        if cost_total or margin:
-            pdf.pdf.ln(2)
-            pdf.line("Маржа (внутренний блок)", bold=True)
-            pdf.pdf.set_fill_color(*RGB_GRAY)
-            usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
-            w_val = float(sum_col_w)
-            w_label = usable - w_val
-            pdf.pdf.set_font("DejaVu", "B", 9)
-            for label, value in (
-                ("Себестоимость субаренды", _fmt_money(cost_total)),
-                ("Маржа", _fmt_money(float(margin))),
-            ):
-                pdf.pdf.cell(w_label, 7, label, border=1, fill=True, align="L")
-                pdf.pdf.cell(w_val, 7, value, border=1, fill=True, align="R")
-                pdf.pdf.ln()
-                pdf._reset_x()
-            pdf.pdf.set_font("DejaVu", size=10)
+        if mode == "internal":
+            cost_total = float(context.get("cost_total") or 0)
+            margin = context.get("margin")
+            if margin is None:
+                margin = float(grand or 0) - cost_total
+            if cost_total or margin:
+                pdf.pdf.ln(2)
+                pdf.line("Маржа (внутренний блок)", bold=True)
+                pdf.pdf.set_fill_color(*RGB_GRAY)
+                usable = pdf.pdf.w - pdf.pdf.l_margin - pdf.pdf.r_margin
+                w_val = float(sum_col_w)
+                w_label = usable - w_val
+                pdf.pdf.set_font("DejaVu", "B", 9)
+                for label, value in (
+                    ("Себестоимость субаренды", _fmt_money(cost_total)),
+                    ("Маржа", _fmt_money(float(margin))),
+                ):
+                    pdf.pdf.cell(w_label, 7, label, border=1, fill=True, align="L")
+                    pdf.pdf.cell(w_val, 7, value, border=1, fill=True, align="R")
+                    pdf.pdf.ln()
+                    pdf._reset_x()
+                pdf.pdf.set_font("DejaVu", size=10)
 
     if is_client:
         pdf.pdf.ln(3)
-        pdf.pdf.set_font("DejaVu", size=7)
-        for note in (
-            "Примечание: 1. Клиенту необходимо произвести 100% предоплату по данному "
-            "коммерческому предложению до начала работ Компании по проекту.",
-            "Примечание: 2. Расходные материалы не входят в стоимость оборудования, "
-            "если не указано иное в смете.",
-        ):
-            pdf.line(note)
-        pdf.pdf.ln(2)
-        pdf.pdf.set_font("DejaVu", size=9)
-        pdf.line("Смету утвердил со стороны Исполнителя: _______________________________")
-        pdf.line("Смету утвердил со стороны Заказчика: _________________________________")
-        pdf.line("Дата утверждения сметы: ____________________")
+        has_custom_body = bool(context.get("tpl_body_notes"))
+        if not has_custom_body:
+            pdf.pdf.set_font("DejaVu", size=7)
+            for note in (
+                "Примечание: 1. Клиенту необходимо произвести 100% предоплату по данному "
+                "коммерческому предложению до начала работ Компании по проекту.",
+                "Примечание: 2. Расходные материалы не входят в стоимость оборудования, "
+                "если не указано иное в смете.",
+            ):
+                pdf.line(note)
+        if _tpl_flag(context, "tpl_include_signature", True):
+            pdf.pdf.ln(2)
+            pdf.pdf.set_font("DejaVu", size=9)
+            pdf.line("Смету утвердил со стороны Исполнителя: _______________________________")
+            pdf.line("Смету утвердил со стороны Заказчика: _________________________________")
+            pdf.line("Дата утверждения сметы: ____________________")
         for lh in _pdf_letterhead_lines(context):
             pdf.line(lh)
     else:
         for lh in _pdf_letterhead_lines(context):
             pdf.line(lh)
+
+    _pdf_add_notes(pdf, context.get("tpl_footer_notes") or "")
 
     pdf.save(output_path)
     return output_path
@@ -1441,15 +1518,21 @@ def generate_technichka_pdf(context: Dict[str, Any], output_path: str) -> str:
         for_warehouse=True,
         include_customer=False,
     )
-    pdf.title(f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}")
+    default_title = f"ТЕХНИЧКА № {context.get('number', '')} от {context.get('date', '')}"
+    pdf.title(_resolve_doc_title(context, default_title))
     pdf.pdf.ln(1)
-    items = filter_technichka_items(list(context.get("items", []) or []))
-    _pdf_draw_sectioned_table(pdf, items, with_prices=False)
+    _pdf_add_notes(pdf, context.get("tpl_body_notes") or "")
+    if _tpl_flag(context, "tpl_include_items_table", True):
+        items = filter_technichka_items(list(context.get("items", []) or []))
+        _pdf_draw_sectioned_table(pdf, items, with_prices=False)
     pdf.pdf.ln(2)
     pdf.line(
         "Цены скрыты. Только оборудование для склада/площадки — "
         "без логистики и технического персонала."
     )
+    _pdf_add_notes(pdf, context.get("tpl_footer_notes") or "")
+    for lh in _pdf_letterhead_lines(context):
+        pdf.line(lh)
     pdf.save(output_path)
     return output_path
 
@@ -1464,9 +1547,11 @@ def generate_contract_pdf(context: Dict[str, Any], output_path: str) -> str:
         for_warehouse=False,
         include_customer=True,
     )
-    pdf.title(
+    default_title = (
         f"ДОГОВОР № {context.get('contract_number', '')} от {context.get('contract_date', '')}"
     )
+    pdf.title(_resolve_doc_title(context, default_title))
+    _pdf_add_notes(pdf, context.get("tpl_body_notes") or "")
     pdf.line(f"Заказчик: {context.get('company_name') or '—'}", bold=True)
     if context.get("director_name"):
         pdf.line(f"Директор / представитель: {context['director_name']}")
@@ -1481,34 +1566,40 @@ def generate_contract_pdf(context: Dict[str, Any], output_path: str) -> str:
     if context.get("event_address"):
         pdf.line(f"Адрес: {context['event_address']}")
     pdf.pdf.ln(2)
-    pdf.line("Спецификация оборудования и услуг", bold=True)
 
     items = list(context.get("items", []) or [])
     sum_col_w = _PDF_SUM_W
-    if items:
-        sum_col_w = _pdf_draw_sectioned_table(pdf, items, with_prices=True)
-    else:
-        pdf.line("Нет позиций.")
+    if _tpl_flag(context, "tpl_include_items_table", True):
+        pdf.line("Спецификация оборудования и услуг", bold=True)
+        if items:
+            sum_col_w = _pdf_draw_sectioned_table(pdf, items, with_prices=True)
+        else:
+            pdf.line("Нет позиций.")
 
-    disc_pct = float(context.get("discount_percentage") or 0)
-    tax_pct = float(context.get("tax_percentage") or 0)
-    grand = float(context.get("grand_total") or 0)
-    totals = [
-        ("Оборудование", _fmt_money(float(context.get("equipment_total") or 0))),
-        ("Логистика и персонал", _fmt_money(float(context.get("fixed_total") or 0))),
-    ]
-    if disc_pct:
-        totals.append((f"Скидка {disc_pct:.0f}%", "—"))
-    if tax_pct or context.get("tax_amount"):
-        totals.append((f"Налог {tax_pct:.0f}%", _fmt_money(float(context.get("tax_amount") or 0))))
-    totals.append(("ИТОГО", _fmt_money(grand)))
-    pdf.pdf.ln(3)
-    pdf.totals_table(totals, sum_col_w=sum_col_w)
-    pdf.right(get_rubles_text(grand), bold=True)
+    if _tpl_flag(context, "tpl_include_totals", True):
+        disc_pct = float(context.get("discount_percentage") or 0)
+        tax_pct = float(context.get("tax_percentage") or 0)
+        grand = float(context.get("grand_total") or 0)
+        totals = [
+            ("Оборудование", _fmt_money(float(context.get("equipment_total") or 0))),
+            ("Логистика и персонал", _fmt_money(float(context.get("fixed_total") or 0))),
+        ]
+        if disc_pct:
+            totals.append((f"Скидка {disc_pct:.0f}%", "—"))
+        if tax_pct or context.get("tax_amount"):
+            totals.append((f"Налог {tax_pct:.0f}%", _fmt_money(float(context.get("tax_amount") or 0))))
+        totals.append(("ИТОГО", _fmt_money(grand)))
+        pdf.pdf.ln(3)
+        pdf.totals_table(totals, sum_col_w=sum_col_w)
+        pdf.right(get_rubles_text(grand), bold=True)
+
     pdf.pdf.ln(4)
     pdf.line(
         "Полный юридический текст договора см. в версии Word. "
         "Этот PDF — спецификация и итоговая сумма для клиента."
     )
+    _pdf_add_notes(pdf, context.get("tpl_footer_notes") or "")
+    for lh in _pdf_letterhead_lines(context):
+        pdf.line(lh)
     pdf.save(output_path)
     return output_path

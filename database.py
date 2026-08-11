@@ -544,6 +544,28 @@ class DealDocument(Base):
     deleted_by = relationship("User", foreign_keys=[deleted_by_id])
 
 
+class DocumentTemplate(Base):
+    """Системный шаблон документа (смета / договор / техничка): шапка, примечания, блоки."""
+    __tablename__ = "document_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    # estimate_internal | estimate_client | estimate_client_priced | contract | technichka
+    doc_type = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    show_logo = Column(Boolean, default=True)
+    show_company_block = Column(Boolean, default=True)
+    custom_title = Column(String, nullable=True)
+    body_notes = Column(String, nullable=True)  # свободный текст с {{placeholders}}
+    footer_notes = Column(String, nullable=True)
+    # {items_table, totals, signature, company_contacts}
+    include_sections = Column(JSON, default=dict)
+    formats = Column(JSON, default=list)  # ["docx", "pdf"]
+    used_fields = Column(JSON, default=list)  # список CRM-полей для каталога
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    updated_by = Column(String, nullable=True)
+
+
 class DealAdvance(Base):
     """Аванс сотруднику по проекту/сделке — вычитается из зарплаты."""
     __tablename__ = "deal_advances"

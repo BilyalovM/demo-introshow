@@ -32,11 +32,12 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, DocumentTemplate, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
 from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
 from document_generator import generate_contract, get_rubles_text
+import document_templates as doc_templates
 import notifications
 import auth
 import chatbot
@@ -407,6 +408,13 @@ with Session(engine) as session:
         session.commit()
     except Exception:
         session.rollback()
+
+    # Seed системных шаблонов документов (смета / договор / техничка)
+    try:
+        doc_templates.seed_document_templates(session)
+    except Exception as e:
+        session.rollback()
+        print("document_templates seed error:", e)
 
     # 4b2. Налог всегда 16%: выравниваем существующие сделки
     try:
@@ -2841,7 +2849,22 @@ async def read_crm(request: Request, user: User = Depends(get_current_user)):
 
 @app.get("/documents", response_class=HTMLResponse)
 async def read_documents(request: Request, user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("documents.html", {"request": request, "active_page": "documents"})
+    can_edit = bool(
+        user
+        and (
+            user.role == "admin"
+            or auth.user_can_access(user, "settings")
+            or auth.user_can_access(user, "documents")
+        )
+    )
+    return templates.TemplateResponse(
+        "documents.html",
+        {
+            "request": request,
+            "active_page": "documents",
+            "can_edit_templates": can_edit,
+        },
+    )
 
 
 @app.post("/api/admin/restore-demo-deals")
@@ -3003,6 +3026,210 @@ def api_list_documents(
         "doc_types": [{"key": k, "label": v} for k, v in DOC_TYPE_LABELS.items()],
         "count": len(items),
     }
+
+
+def _can_edit_doc_templates(user: User) -> bool:
+    if not user:
+        return False
+    if user.role == "admin":
+        return True
+    return auth.user_can_access(user, "settings") or auth.user_can_access(user, "documents")
+
+
+class DocumentTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    show_logo: Optional[bool] = None
+    show_company_block: Optional[bool] = None
+    custom_title: Optional[str] = None
+    body_notes: Optional[str] = None
+    footer_notes: Optional[str] = None
+    include_sections: Optional[Dict[str, bool]] = None
+
+
+@app.get("/api/document-templates")
+def api_list_document_templates(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Каталог системных шаблонов документов + список плейсхолдеров."""
+    try:
+        doc_templates.seed_document_templates(db)
+    except Exception:
+        db.rollback()
+    rows = (
+        db.query(DocumentTemplate)
+        .order_by(DocumentTemplate.id.asc())
+        .all()
+    )
+    # Стабильный порядок по DEFAULT_TEMPLATES
+    order = {s["doc_type"]: i for i, s in enumerate(doc_templates.DEFAULT_TEMPLATES)}
+    rows = sorted(rows, key=lambda r: order.get(r.doc_type, 99))
+    return {
+        "items": [doc_templates.template_to_dict(r) for r in rows],
+        "placeholders": doc_templates.PLACEHOLDERS,
+        "can_edit": _can_edit_doc_templates(user),
+        "warning": (
+            "Структура таблицы позиций пока фиксирована кодом; "
+            "настраиваются шапка, примечания, футер и блоки."
+        ),
+    }
+
+
+@app.get("/api/document-templates/{doc_type}")
+def api_get_document_template(
+    doc_type: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        doc_templates.seed_document_templates(db)
+    except Exception:
+        db.rollback()
+    row = doc_templates.get_template_row(db, doc_type)
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Шаблон не найден"})
+    return doc_templates.template_to_dict(row)
+
+
+@app.put("/api/document-templates/{doc_type}")
+def api_update_document_template(
+    doc_type: str,
+    payload: DocumentTemplateUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not _can_edit_doc_templates(user):
+        return JSONResponse(status_code=403, content={"error": "Нет прав на изменение шаблонов"})
+    try:
+        doc_templates.seed_document_templates(db)
+    except Exception:
+        db.rollback()
+    row = doc_templates.get_template_row(db, doc_type)
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Шаблон не найден"})
+
+    data = payload.dict(exclude_unset=True)
+    for key in (
+        "name", "description", "is_active", "show_logo", "show_company_block",
+        "custom_title", "body_notes", "footer_notes",
+    ):
+        if key in data:
+            setattr(row, key, data[key])
+    if "include_sections" in data and isinstance(data["include_sections"], dict):
+        current = dict(row.include_sections or {})
+        for sk, sv in data["include_sections"].items():
+            if sk in ("items_table", "totals", "signature", "company_contacts"):
+                current[sk] = bool(sv)
+        row.include_sections = current
+    row.updated_by = user.username if user else None
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    audit.write_audit(
+        db,
+        user_id=user.id if user else None,
+        entity_type="document_template",
+        entity_id=row.id,
+        action="update",
+        diff={"doc_type": row.doc_type, **{k: data[k] for k in data}},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return doc_templates.template_to_dict(row)
+
+
+@app.get("/api/document-templates/{doc_type}/sample")
+def api_sample_document_template(
+    doc_type: str,
+    background_tasks: BackgroundTasks,
+    format: str = "docx",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Образец документа по шаблону (демо-данные)."""
+    base = (doc_type or "").replace("_pdf", "")
+    fmt = (format or "docx").lower().strip()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+    try:
+        doc_templates.seed_document_templates(db)
+    except Exception:
+        db.rollback()
+    row = doc_templates.get_template_row(db, base)
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Шаблон не найден"})
+
+    context = doc_templates.apply_template_to_context(
+        doc_templates.sample_context(base), db, base
+    )
+    logo_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "static", "img", "introshow_logo.png",
+    )
+    if os.path.isfile(logo_path) and context.get("tpl_show_logo", True):
+        context["logo_path"] = logo_path
+
+    suffix = ".pdf" if fmt == "pdf" else ".docx"
+    fd, temp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    from document_generator import (
+        generate_estimate_docx,
+        generate_estimate_pdf,
+        generate_technichka_docx,
+        generate_technichka_pdf,
+        generate_contract_pdf,
+    )
+
+    if base == "technichka":
+        if fmt == "pdf":
+            generate_technichka_pdf(context, temp_path)
+        else:
+            generate_technichka_docx(context, temp_path)
+    elif base == "contract":
+        if fmt == "pdf":
+            generate_contract_pdf(context, temp_path)
+        else:
+            # Word-договор требует .docx шаблон — для sample отдаём PDF-спецификацию как fallback
+            # если нет полного юр. текста. Для docx sample используем estimate_docx-подобную
+            # спецификацию через generate_contract_pdf → лучше estimate client_priced как образец
+            # шапки. Проще: сгенерировать PDF и переименовать? Нет — генерим estimate-like
+            # DOCX со спецификацией договора.
+            generate_estimate_docx(context, temp_path, mode="client_priced")
+    elif base == "estimate_client":
+        if fmt == "pdf":
+            generate_estimate_pdf(context, temp_path, mode="client")
+        else:
+            generate_estimate_docx(context, temp_path, mode="client")
+    elif base == "estimate_client_priced":
+        if fmt == "pdf":
+            generate_estimate_pdf(context, temp_path, mode="client_priced")
+        else:
+            generate_estimate_docx(context, temp_path, mode="client_priced")
+    else:
+        if fmt == "pdf":
+            generate_estimate_pdf(context, temp_path, mode="internal")
+        else:
+            generate_estimate_docx(context, temp_path, mode="internal")
+
+    def cleanup_file(path: str):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    background_tasks.add_task(cleanup_file, temp_path)
+    fname = f"Sample_{base}{suffix}"
+    media = (
+        "application/pdf"
+        if fmt == "pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(temp_path, media_type=media, filename=fname)
+
 
 @app.get("/tracking/{deal_id}", response_class=HTMLResponse)
 def read_tracking(request: Request, deal_id: int, db: Session = Depends(get_db)):
@@ -5172,7 +5399,7 @@ def _build_technichka_context(deal: Deal, assignee_name: str = "", db: Session =
         os.path.dirname(os.path.abspath(__file__)),
         "static", "img", "introshow_logo.png",
     )
-    return {
+    ctx = {
         "number": f"TECH-{deal.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
         **header,
@@ -5186,6 +5413,7 @@ def _build_technichka_context(deal: Deal, assignee_name: str = "", db: Session =
         "logo_path": logo_path if os.path.isfile(logo_path) else None,
         "manager_phone": letterhead.get("company_phone") or "",
     }
+    return doc_templates.apply_template_to_context(ctx, db, "technichka")
 
 
 DOC_TYPE_LABELS = {
@@ -7791,10 +8019,13 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
 
     # Договор — как клиентская смета: без субаренды
     result = _calc_deal(d, exclude_subrental=True)
-    
-    context = {
+    header = _estimate_header_fields(d)
+    letterhead = _get_company_letterhead(db)
+
+    context = doc_templates.apply_template_to_context({
         "contract_number": f"CRM-{d.id}",
         "contract_date": datetime.today().strftime("%d.%m.%Y"),
+        **header,
         "company_name": comp.name,
         "director_name": comp.director_name,
         "iin_bin": comp.bin,
@@ -7806,13 +8037,24 @@ def download_deal_contract(deal_id: int, background_tasks: BackgroundTasks, db: 
         "equipment_total": result["equipment_total"],
         "fixed_total": result["fixed_total"],
         "grand_total": result["grand_total"],
-        "discount_percentage": d.discount_percentage
-    }
-    
+        "discount_percentage": d.discount_percentage,
+        "our_company_name": letterhead.get("company_name") or "Intro Show",
+        "our_company_phone": letterhead.get("company_phone") or "",
+        "our_company_email": letterhead.get("company_email") or "",
+        "our_company_address": letterhead.get("company_address") or "",
+        "our_company_bin": letterhead.get("company_bin") or "",
+        # доступны в Word-шаблоне как tpl_body_notes / tpl_footer_notes / tpl_custom_title
+        "body_notes": "",
+        "footer_notes": "",
+    }, db, "contract")
+    context["body_notes"] = context.get("tpl_body_notes") or ""
+    context["footer_notes"] = context.get("tpl_footer_notes") or ""
+    context["custom_title"] = context.get("tpl_custom_title") or ""
+
     template_path = CONTRACT_TEMPLATE_PATH
     fd, temp_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
-    
+
     generate_contract(context, template_path, temp_path)
     _register_deal_document(
         db, d.id, "contract",
@@ -7916,7 +8158,7 @@ def _build_estimate_context(d: Deal, mode_norm: str, db: Session = None) -> dict
         os.path.dirname(os.path.abspath(__file__)),
         "static", "img", "introshow_logo.png",
     )
-    return {
+    ctx = {
         "number": f"CRM-{d.id}",
         "date": datetime.today().strftime("%d.%m.%Y"),
         **header,
@@ -7942,6 +8184,12 @@ def _build_estimate_context(d: Deal, mode_norm: str, db: Session = None) -> dict
         "discount_percentage": d.discount_percentage or 0,
         "hide_subrental_section": is_client,
     }
+    doc_type = {
+        "internal": "estimate_internal",
+        "client": "estimate_client",
+        "client_priced": "estimate_client_priced",
+    }.get(mode_norm, "estimate_internal")
+    return doc_templates.apply_template_to_context(ctx, db, doc_type)
 
 
 @app.get("/api/deals/{deal_id}/estimate.pdf")
@@ -8002,7 +8250,7 @@ def download_deal_contract_pdf(
         os.path.dirname(os.path.abspath(__file__)),
         "static", "img", "introshow_logo.png",
     )
-    context = {
+    context = doc_templates.apply_template_to_context({
         "contract_number": f"CRM-{d.id}",
         "contract_date": datetime.today().strftime("%d.%m.%Y"),
         **header,
@@ -8027,7 +8275,7 @@ def download_deal_contract_pdf(
         "discount_percentage": d.discount_percentage or 0,
         "tax_percentage": result.get("tax_percentage", FIXED_TAX_PERCENTAGE),
         "tax_amount": result.get("tax_amount", 0),
-    }
+    }, db, "contract")
 
     from document_generator import generate_contract_pdf
     fd, temp_path = tempfile.mkstemp(suffix=".pdf")

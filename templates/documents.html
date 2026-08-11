@@ -4,6 +4,23 @@
 
 {% block extra_head %}
 <style>
+.docs-tabs {
+    display:flex; gap:4px; margin-bottom:16px; flex-wrap:wrap;
+    border-bottom:1px solid var(--border); padding-bottom:0;
+}
+.docs-tab {
+    appearance:none; border:none; background:transparent;
+    padding:10px 16px; font-size:14px; font-weight:600;
+    color:var(--muted); cursor:pointer; border-bottom:2px solid transparent;
+    margin-bottom:-1px; font-family:inherit;
+}
+.docs-tab:hover { color:var(--text); }
+.docs-tab.active {
+    color:var(--coral, #e25a3c);
+    border-bottom-color:var(--coral, #e25a3c);
+}
+.docs-pane { display:none; }
+.docs-pane.active { display:block; }
 .docs-toolbar {
     display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;
     margin-bottom:16px;
@@ -27,16 +44,101 @@
 .doc-status.available { background:var(--bg-2); color:var(--muted); }
 .docs-table td { vertical-align:middle; }
 .docs-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.docs-warn {
+    background:rgba(226,90,60,.08); border:1px solid rgba(226,90,60,.25);
+    color:var(--text); padding:10px 14px; border-radius:10px;
+    font-size:13px; margin-bottom:16px; line-height:1.45;
+}
+.tpl-grid {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));
+    gap:14px;
+}
+.tpl-card {
+    border:1px solid var(--border); border-radius:12px;
+    padding:16px; background:var(--background);
+    display:flex; flex-direction:column; gap:10px;
+}
+.tpl-card h3 { margin:0; font-size:16px; font-weight:700; }
+.tpl-card .tpl-code {
+    font-size:11px; font-weight:600; color:var(--muted);
+    font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tpl-card .tpl-desc { font-size:13.5px; color:var(--text); line-height:1.4; margin:0; }
+.tpl-meta { display:flex; flex-wrap:wrap; gap:6px; }
+.tpl-chip {
+    font-size:11px; font-weight:600; padding:3px 8px; border-radius:6px;
+    background:var(--bg-2, #f3f4f6); color:var(--muted);
+}
+.tpl-chip.fmt { background:rgba(226,90,60,.12); color:var(--coral, #e25a3c); }
+.tpl-fields { font-size:12px; color:var(--muted); line-height:1.5; }
+.tpl-card-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:auto; }
+.tpl-editor-backdrop {
+    position:fixed; inset:0; background:rgba(15,15,20,.45);
+    z-index:80; display:none; align-items:center; justify-content:center;
+    padding:16px;
+}
+.tpl-editor-backdrop.open { display:flex; }
+.tpl-editor {
+    background:var(--background); color:var(--text);
+    border-radius:14px; width:min(720px, 100%);
+    max-height:min(92vh, 900px); overflow:auto;
+    border:1px solid var(--border); box-shadow:0 20px 50px rgba(0,0,0,.18);
+}
+.tpl-editor header {
+    display:flex; justify-content:space-between; align-items:center;
+    gap:12px; padding:14px 18px; border-bottom:1px solid var(--border);
+    position:sticky; top:0; background:var(--background); z-index:1;
+}
+.tpl-editor header h2 { margin:0; font-size:17px; }
+.tpl-editor .body { padding:16px 18px 20px; display:flex; flex-direction:column; gap:14px; }
+.tpl-editor label.field {
+    display:flex; flex-direction:column; gap:5px;
+    font-size:12px; font-weight:700; color:var(--muted);
+}
+.tpl-editor input[type=text], .tpl-editor textarea {
+    padding:0.6rem 0.75rem; border:1px solid var(--border); border-radius:8px;
+    background:var(--background); color:var(--text); font-size:13.5px;
+    font-family:inherit; resize:vertical;
+}
+.tpl-editor textarea { min-height:72px; }
+.tpl-toggles {
+    display:grid; grid-template-columns:1fr 1fr; gap:8px 16px;
+}
+.tpl-toggles label {
+    display:flex; align-items:center; gap:8px;
+    font-size:13px; font-weight:600; color:var(--text); cursor:pointer;
+}
+.ph-picker {
+    display:flex; flex-wrap:wrap; gap:6px;
+}
+.ph-btn {
+    appearance:none; border:1px solid var(--border); background:var(--bg-2, #f3f4f6);
+    color:var(--text); font-size:11px; font-weight:600; padding:4px 8px;
+    border-radius:6px; cursor:pointer; font-family:inherit;
+}
+.ph-btn:hover { border-color:var(--coral, #e25a3c); color:var(--coral, #e25a3c); }
+.tpl-editor footer {
+    display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;
+    padding-top:4px;
+}
+.tpl-inactive { opacity:.55; }
 @media (max-width:720px) {
     .docs-toolbar select, .docs-toolbar input { min-width:100%; width:100%; }
+    .tpl-toggles { grid-template-columns:1fr; }
 }
 </style>
 {% endblock %}
 
 {% block content %}
 <h1 class="page-title">Документы</h1>
-<p class="page-sub">Реестр смет, договоров и техничек по сделкам. Скачивание генерирует файл, если он ещё не сохранён.</p>
+<p class="page-sub">Реестр файлов по сделкам и каталог системных шаблонов с конструктором шапки и примечаний.</p>
 
+<nav class="docs-tabs" role="tablist">
+    <button type="button" class="docs-tab active" id="tab-registry" onclick="switchDocsTab('registry')">Реестр</button>
+    <button type="button" class="docs-tab" id="tab-templates" onclick="switchDocsTab('templates')">Шаблоны</button>
+</nav>
+
+<div id="pane-registry" class="docs-pane active">
 <div class="card" style="margin-bottom:16px;">
     <div class="docs-toolbar">
         <label>Сделка
@@ -87,15 +189,85 @@
         </table>
     </div>
 </div>
+</div>
+
+<div id="pane-templates" class="docs-pane">
+    <div class="docs-warn" id="tpl-warning">
+        Структура таблицы позиций пока фиксирована кодом; настраиваются шапка, примечания, футер и блоки.
+    </div>
+    <div class="tpl-grid" id="tpl-grid">
+        <div class="muted">Загрузка шаблонов…</div>
+    </div>
+</div>
+
+<div class="tpl-editor-backdrop" id="tpl-editor-backdrop" onclick="if(event.target===this)closeTplEditor()">
+    <div class="tpl-editor" role="dialog" aria-modal="true" aria-labelledby="tpl-editor-title">
+        <header>
+            <h2 id="tpl-editor-title">Шаблон</h2>
+            <button type="button" class="btn btn-sm" onclick="closeTplEditor()">Закрыть</button>
+        </header>
+        <div class="body">
+            <input type="hidden" id="tpl-doc-type">
+            <label class="field">Название
+                <input type="text" id="tpl-name">
+            </label>
+            <label class="field">Описание
+                <input type="text" id="tpl-description">
+            </label>
+            <div class="tpl-toggles">
+                <label><input type="checkbox" id="tpl-active"> Активен</label>
+                <label><input type="checkbox" id="tpl-show-logo"> Логотип</label>
+                <label><input type="checkbox" id="tpl-show-company"> Контакты в шапке</label>
+                <label><input type="checkbox" id="tpl-sec-items"> Таблица позиций</label>
+                <label><input type="checkbox" id="tpl-sec-totals"> Итоги</label>
+                <label><input type="checkbox" id="tpl-sec-signature"> Подписи</label>
+                <label><input type="checkbox" id="tpl-sec-contacts"> Реквизиты внизу</label>
+            </div>
+            <label class="field">Свой заголовок (пусто = стандартный)
+                <input type="text" id="tpl-custom-title" data-ph-target placeholder="Напр. СМЕТА для {{deal.title}}">
+            </label>
+            <div>
+                <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;">Вставить поле CRM</div>
+                <div class="ph-picker" id="ph-picker"></div>
+            </div>
+            <label class="field">Примечания в теле (после заголовка)
+                <textarea id="tpl-body-notes" data-ph-target placeholder="Текст с {{placeholders}}"></textarea>
+            </label>
+            <label class="field">Футер / примечания внизу
+                <textarea id="tpl-footer-notes" data-ph-target></textarea>
+            </label>
+            <footer>
+                <button type="button" class="btn" onclick="closeTplEditor()">Отмена</button>
+                <button type="button" class="btn btn-primary" id="tpl-save-btn" onclick="saveTplEditor()">Сохранить</button>
+            </footer>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
+const CAN_EDIT_TEMPLATES = {{ 'true' if can_edit_templates else 'false' }};
 const STATUS_LABEL = {
     generated: 'Сгенерирован',
     stored: 'Файл',
     available: 'Доступен',
 };
+
+let _placeholders = [];
+let _lastPhTarget = null;
+let _templatesLoaded = false;
+
+function switchDocsTab(name) {
+    document.querySelectorAll('.docs-tab').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.docs-pane').forEach(el => el.classList.remove('active'));
+    const tab = document.getElementById('tab-' + name);
+    const pane = document.getElementById('pane-' + name);
+    if (tab) tab.classList.add('active');
+    if (pane) pane.classList.add('active');
+    if (name === 'templates' && !_templatesLoaded) loadTemplates();
+    try { history.replaceState(null, '', name === 'templates' ? '#templates' : '#registry'); } catch (_) {}
+}
 
 async function loadDealOptions() {
     const sel = document.getElementById('f-deal');
@@ -195,6 +367,152 @@ function escapeHtml(s) {
     })[c]);
 }
 
+async function loadTemplates() {
+    const grid = document.getElementById('tpl-grid');
+    grid.innerHTML = '<div class="muted">Загрузка шаблонов…</div>';
+    try {
+        const res = await fetch('/api/document-templates');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка');
+        _templatesLoaded = true;
+        _placeholders = data.placeholders || [];
+        if (data.warning) {
+            document.getElementById('tpl-warning').textContent = data.warning;
+        }
+        renderPhPicker();
+        const items = data.items || [];
+        if (!items.length) {
+            grid.innerHTML = '<div class="muted">Шаблоны не найдены.</div>';
+            return;
+        }
+        const canEdit = data.can_edit !== false && CAN_EDIT_TEMPLATES;
+        grid.innerHTML = items.map(t => {
+            const formats = (t.formats || []).map(f =>
+                `<span class="tpl-chip fmt">${escapeHtml(String(f).toUpperCase())}</span>`
+            ).join('');
+            const fields = (t.used_fields_labeled || [])
+                .map(f => escapeHtml(f.label || f.key))
+                .join(' · ');
+            const inactive = t.is_active ? '' : ' tpl-inactive';
+            const editBtn = canEdit
+                ? `<button type="button" class="btn btn-sm btn-primary" onclick='openTplEditor(${JSON.stringify(t.doc_type)})'>Настроить</button>`
+                : '';
+            return `<article class="tpl-card${inactive}" data-doc-type="${escapeHtml(t.doc_type)}">
+                <div class="tpl-code">${escapeHtml(t.doc_type)}</div>
+                <h3>${escapeHtml(t.name)}</h3>
+                <p class="tpl-desc">${escapeHtml(t.description || '')}</p>
+                <div class="tpl-meta">${formats}${t.is_active ? '' : '<span class="tpl-chip">выкл.</span>'}</div>
+                <div class="tpl-fields"><strong>Поля CRM:</strong> ${fields || '—'}</div>
+                <div class="tpl-card-actions">
+                    <a class="btn btn-sm" href="${escapeHtml(t.sample_docx_url)}" target="_blank" rel="noopener">Образец Word</a>
+                    <a class="btn btn-sm" href="${escapeHtml(t.sample_pdf_url)}" target="_blank" rel="noopener">Образец PDF</a>
+                    ${editBtn}
+                </div>
+            </article>`;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = `<div style="color:#b91c1c">${escapeHtml(e.message || String(e))}</div>`;
+    }
+}
+
+function renderPhPicker() {
+    const box = document.getElementById('ph-picker');
+    box.innerHTML = (_placeholders || []).map(p =>
+        `<button type="button" class="ph-btn" title="${escapeHtml(p.key)}" onclick='insertPlaceholder(${JSON.stringify(p.key)})'>${escapeHtml(p.label)}</button>`
+    ).join('');
+}
+
+function trackPhTarget(el) {
+    if (el && el.hasAttribute && el.hasAttribute('data-ph-target')) {
+        _lastPhTarget = el;
+    }
+}
+
+document.addEventListener('focusin', (e) => trackPhTarget(e.target));
+
+function insertPlaceholder(token) {
+    const el = _lastPhTarget
+        || document.getElementById('tpl-body-notes')
+        || document.getElementById('tpl-custom-title');
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const v = el.value || '';
+    el.value = v.slice(0, start) + token + v.slice(end);
+    el.focus();
+    const pos = start + token.length;
+    try { el.setSelectionRange(pos, pos); } catch (_) {}
+}
+
+async function openTplEditor(docType) {
+    try {
+        const res = await fetch('/api/document-templates/' + encodeURIComponent(docType));
+        const t = await res.json();
+        if (!res.ok) throw new Error(t.error || 'Ошибка');
+        document.getElementById('tpl-doc-type').value = t.doc_type;
+        document.getElementById('tpl-editor-title').textContent = t.name || t.doc_type;
+        document.getElementById('tpl-name').value = t.name || '';
+        document.getElementById('tpl-description').value = t.description || '';
+        document.getElementById('tpl-active').checked = !!t.is_active;
+        document.getElementById('tpl-show-logo').checked = !!t.show_logo;
+        document.getElementById('tpl-show-company').checked = !!t.show_company_block;
+        document.getElementById('tpl-custom-title').value = t.custom_title || '';
+        document.getElementById('tpl-body-notes').value = t.body_notes || '';
+        document.getElementById('tpl-footer-notes').value = t.footer_notes || '';
+        const sec = t.include_sections || {};
+        document.getElementById('tpl-sec-items').checked = sec.items_table !== false;
+        document.getElementById('tpl-sec-totals').checked = !!sec.totals;
+        document.getElementById('tpl-sec-signature').checked = !!sec.signature;
+        document.getElementById('tpl-sec-contacts').checked = sec.company_contacts !== false;
+        document.getElementById('tpl-editor-backdrop').classList.add('open');
+        _lastPhTarget = document.getElementById('tpl-body-notes');
+    } catch (e) {
+        alert(e.message || String(e));
+    }
+}
+
+function closeTplEditor() {
+    document.getElementById('tpl-editor-backdrop').classList.remove('open');
+}
+
+async function saveTplEditor() {
+    const docType = document.getElementById('tpl-doc-type').value;
+    const payload = {
+        name: document.getElementById('tpl-name').value.trim(),
+        description: document.getElementById('tpl-description').value.trim(),
+        is_active: document.getElementById('tpl-active').checked,
+        show_logo: document.getElementById('tpl-show-logo').checked,
+        show_company_block: document.getElementById('tpl-show-company').checked,
+        custom_title: document.getElementById('tpl-custom-title').value,
+        body_notes: document.getElementById('tpl-body-notes').value,
+        footer_notes: document.getElementById('tpl-footer-notes').value,
+        include_sections: {
+            items_table: document.getElementById('tpl-sec-items').checked,
+            totals: document.getElementById('tpl-sec-totals').checked,
+            signature: document.getElementById('tpl-sec-signature').checked,
+            company_contacts: document.getElementById('tpl-sec-contacts').checked,
+        },
+    };
+    const btn = document.getElementById('tpl-save-btn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/document-templates/' + encodeURIComponent(docType), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Не удалось сохранить');
+        closeTplEditor();
+        _templatesLoaded = false;
+        await loadTemplates();
+    } catch (e) {
+        alert(e.message || String(e));
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 document.getElementById('f-deal').addEventListener('change', loadDocuments);
 document.getElementById('f-type').addEventListener('change', loadDocuments);
 document.getElementById('f-available').addEventListener('change', loadDocuments);
@@ -204,6 +522,9 @@ document.getElementById('f-to').addEventListener('change', loadDocuments);
 (async () => {
     await loadDealOptions();
     await loadDocuments();
+    if (location.hash === '#templates') {
+        switchDocsTab('templates');
+    }
 })();
 </script>
 {% endblock %}

@@ -58,6 +58,7 @@ PATH_SECTIONS = {
     "/quotes": "quotes",
     "/documents": "documents",
     "/api/documents": "documents",
+    "/api/document-templates": "documents",
     "/calendar": "calendar",
     "/equipment": "equipment",
     "/companies": "companies",
