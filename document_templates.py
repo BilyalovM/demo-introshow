@@ -317,6 +317,8 @@ def template_to_dict(row) -> Dict[str, Any]:
         "updated_by": row.updated_by,
         "sample_docx_url": f"/api/document-templates/{row.doc_type}/sample?format=docx",
         "sample_pdf_url": f"/api/document-templates/{row.doc_type}/sample?format=pdf",
+        "preview_url": f"/api/document-templates/{row.doc_type}/preview.html",
+        "preview_pdf_url": f"/api/document-templates/{row.doc_type}/preview.pdf?inline=1",
     }
 
 
@@ -335,13 +337,18 @@ def apply_template_to_context(
     context: Dict[str, Any],
     db: Optional[Session],
     doc_type: str,
+    overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Мержит настройки шаблона в context для document_generator.
     Ключи: tpl_show_logo, tpl_show_company_block, tpl_custom_title,
     tpl_body_notes, tpl_footer_notes, tpl_include_*.
+
+    overrides — сессионные правки превью (custom_title / body_notes / footer_notes
+    и опционально флаги show_logo / show_company_block / include_sections).
     """
     ctx = dict(context or {})
+    overrides = overrides or {}
     defaults = next(
         (d for d in DEFAULT_TEMPLATES if d["doc_type"] == (doc_type or "").replace("_pdf", "")),
         None,
@@ -378,6 +385,19 @@ def apply_template_to_context(
         footer_notes = defaults.get("footer_notes") or ""
         sections = dict(defaults["include_sections"])
 
+    if "custom_title" in overrides and overrides["custom_title"] is not None:
+        custom_title = str(overrides["custom_title"])
+    if "body_notes" in overrides and overrides["body_notes"] is not None:
+        body_notes = str(overrides["body_notes"])
+    if "footer_notes" in overrides and overrides["footer_notes"] is not None:
+        footer_notes = str(overrides["footer_notes"])
+    if "show_logo" in overrides and overrides["show_logo"] is not None:
+        show_logo = bool(overrides["show_logo"])
+    if "show_company_block" in overrides and overrides["show_company_block"] is not None:
+        show_company = bool(overrides["show_company_block"])
+    if isinstance(overrides.get("include_sections"), dict):
+        sections = {**sections, **overrides["include_sections"]}
+
     # grand_total_text для плейсхолдеров
     if "grand_total_text" not in ctx and ctx.get("grand_total") is not None:
         try:
@@ -391,6 +411,10 @@ def apply_template_to_context(
     ctx["tpl_custom_title"] = render_placeholders(custom_title, ctx).strip()
     ctx["tpl_body_notes"] = render_placeholders(body_notes, ctx).strip()
     ctx["tpl_footer_notes"] = render_placeholders(footer_notes, ctx).strip()
+    # сырые значения для формы превью (с плейсхолдерами)
+    ctx["tpl_custom_title_raw"] = custom_title or ""
+    ctx["tpl_body_notes_raw"] = body_notes or ""
+    ctx["tpl_footer_notes_raw"] = footer_notes or ""
     ctx["tpl_include_items_table"] = bool(sections.get("items_table", True))
     ctx["tpl_include_totals"] = bool(sections.get("totals", True))
     ctx["tpl_include_signature"] = bool(sections.get("signature", False))
@@ -401,6 +425,149 @@ def apply_template_to_context(
         ctx["tpl_force_no_logo"] = True
 
     return ctx
+
+
+def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
+    """Структурированный HTML-превью документа (без скачивания)."""
+    import html as html_mod
+
+    def esc(v: Any) -> str:
+        return html_mod.escape(str(v if v is not None else ""))
+
+    title = (
+        context.get("tpl_custom_title")
+        or {
+            "estimate_internal": "Смета внутренняя",
+            "estimate_client": "Смета клиенту (без цен)",
+            "estimate_client_priced": "Смета клиенту (с ценами)",
+            "contract": "Договор / спецификация",
+            "technichka": "Техничка",
+        }.get(doc_type, "Документ")
+    )
+    company = context.get("our_company_name") or "Intro Show"
+    client = context.get("company_name") or ""
+    project = context.get("project_name") or context.get("event_name") or ""
+    number = context.get("number") or context.get("contract_number") or ""
+    date = context.get("date") or context.get("contract_date") or ""
+    city = context.get("city") or ""
+    event_date = context.get("event_date") or ""
+    manager = context.get("manager_name") or ""
+    body_notes = context.get("tpl_body_notes") or ""
+    footer_notes = context.get("tpl_footer_notes") or ""
+    show_company = context.get("tpl_show_company_block", True)
+    show_items = context.get("tpl_include_items_table", True)
+    show_totals = context.get("tpl_include_totals", True)
+    show_contacts = context.get("tpl_include_company_contacts", True)
+
+    meta_rows = []
+    if number:
+        meta_rows.append(f"<div><span>№</span> {esc(number)}</div>")
+    if date:
+        meta_rows.append(f"<div><span>Дата</span> {esc(date)}</div>")
+    if project:
+        meta_rows.append(f"<div><span>Проект</span> {esc(project)}</div>")
+    if client:
+        meta_rows.append(f"<div><span>Клиент</span> {esc(client)}</div>")
+    if city:
+        meta_rows.append(f"<div><span>Город</span> {esc(city)}</div>")
+    if event_date:
+        meta_rows.append(f"<div><span>Мероприятие</span> {esc(event_date)}</div>")
+    if manager:
+        meta_rows.append(f"<div><span>Менеджер</span> {esc(manager)}</div>")
+
+    items_html = ""
+    if show_items:
+        rows = []
+        for i, it in enumerate(context.get("items") or [], 1):
+            name = esc(it.get("name") or "")
+            qty = esc(it.get("quantity") if it.get("quantity") is not None else "")
+            days = esc(it.get("days") if it.get("days") is not None else "")
+            price = it.get("price")
+            line = it.get("line_total_discounted")
+            if line is None:
+                line = it.get("line_total_base")
+            price_s = f"{float(price):,.0f}".replace(",", " ") if price is not None else "—"
+            line_s = f"{float(line):,.0f}".replace(",", " ") if line is not None else "—"
+            if doc_type == "technichka":
+                rows.append(
+                    f"<tr><td>{i}</td><td>{name}</td><td class='num'>{qty}</td></tr>"
+                )
+            elif doc_type == "estimate_client":
+                rows.append(
+                    f"<tr><td>{i}</td><td>{name}</td><td class='num'>{qty}</td>"
+                    f"<td class='num'>{days}</td><td class='num'>{line_s}</td></tr>"
+                )
+            else:
+                rows.append(
+                    f"<tr><td>{i}</td><td>{name}</td><td class='num'>{qty}</td>"
+                    f"<td class='num'>{days}</td><td class='num'>{price_s}</td>"
+                    f"<td class='num'>{line_s}</td></tr>"
+                )
+        if doc_type == "technichka":
+            head = "<tr><th>№</th><th>Наименование</th><th>Кол-во</th></tr>"
+        elif doc_type == "estimate_client":
+            head = "<tr><th>№</th><th>Наименование</th><th>Кол-во</th><th>Смены</th><th>Сумма</th></tr>"
+        else:
+            head = (
+                "<tr><th>№</th><th>Наименование</th><th>Кол-во</th>"
+                "<th>Смены</th><th>Цена</th><th>Сумма</th></tr>"
+            )
+        items_html = f"<table class='pv-items'><thead>{head}</thead><tbody>{''.join(rows)}</tbody></table>"
+
+    totals_html = ""
+    if show_totals and doc_type != "technichka":
+        gt = context.get("grand_total")
+        gt_s = f"{float(gt):,.0f}".replace(",", " ") if gt is not None else "—"
+        totals_html = f"<div class='pv-totals'><strong>Итого:</strong> {esc(gt_s)} ₸</div>"
+
+    contacts = ""
+    if show_company or show_contacts:
+        phone = context.get("our_company_phone") or ""
+        email = context.get("our_company_email") or ""
+        addr = context.get("our_company_address") or ""
+        contacts = (
+            f"<div class='pv-contacts'><div class='pv-brand'>{esc(company)}</div>"
+            f"<div>{esc(phone)}</div><div>{esc(email)}</div><div>{esc(addr)}</div></div>"
+        )
+
+    notes_body = (
+        f"<div class='pv-notes'>{esc(body_notes).replace(chr(10), '<br>')}</div>"
+        if body_notes else ""
+    )
+    notes_footer = (
+        f"<div class='pv-footer-notes'>{esc(footer_notes).replace(chr(10), '<br>')}</div>"
+        if footer_notes else ""
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{esc(title)}</title>
+<style>
+body {{ margin:0; padding:24px; font-family: 'DM Sans', system-ui, sans-serif;
+  color:#1a1a1a; background:#fff; font-size:14px; line-height:1.45; }}
+.pv-title {{ font-size:22px; font-weight:700; margin:0 0 12px; }}
+.pv-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-bottom:16px; }}
+.pv-meta span {{ color:#6b7280; font-size:12px; font-weight:600; margin-right:6px; }}
+.pv-notes, .pv-footer-notes {{ margin:14px 0; white-space:pre-wrap; color:#374151; }}
+.pv-items {{ width:100%; border-collapse:collapse; margin:12px 0; }}
+.pv-items th, .pv-items td {{ border-bottom:1px solid #e5e7eb; padding:8px 6px; text-align:left; }}
+.pv-items th {{ font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }}
+.pv-items .num {{ text-align:right; white-space:nowrap; }}
+.pv-totals {{ margin-top:14px; font-size:16px; text-align:right; }}
+.pv-contacts {{ margin-top:24px; padding-top:14px; border-top:1px solid #e5e7eb; color:#4b5563; font-size:13px; }}
+.pv-brand {{ font-weight:700; color:#111; margin-bottom:4px; }}
+@media (max-width:640px) {{ .pv-meta {{ grid-template-columns:1fr; }} body {{ padding:14px; }} }}
+</style></head><body>
+{contacts if show_company else ''}
+<h1 class="pv-title">{esc(title)}</h1>
+<div class="pv-meta">{''.join(meta_rows)}</div>
+{notes_body}
+{items_html}
+{totals_html}
+{notes_footer}
+{contacts if (show_contacts and not show_company) else ''}
+</body></html>"""
 
 
 def sample_context(doc_type: str) -> Dict[str, Any]:

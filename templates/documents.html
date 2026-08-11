@@ -72,59 +72,181 @@
 .tpl-chip.fmt { background:rgba(226,90,60,.12); color:var(--coral, #e25a3c); }
 .tpl-fields { font-size:12px; color:var(--muted); line-height:1.5; }
 .tpl-card-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:auto; }
+
+/* Configure modal */
 .tpl-editor-backdrop {
-    position:fixed; inset:0; background:rgba(15,15,20,.45);
-    z-index:80; display:none; align-items:center; justify-content:center;
-    padding:16px;
+    position:fixed; inset:0; background:rgba(15,15,20,.5);
+    z-index:1200; display:none; align-items:center; justify-content:center;
+    padding:16px; overflow:auto;
 }
 .tpl-editor-backdrop.open { display:flex; }
 .tpl-editor {
-    background:var(--background); color:var(--text);
+    background:var(--surface, var(--background)); color:var(--text);
     border-radius:14px; width:min(720px, 100%);
     max-height:min(92vh, 900px); overflow:auto;
-    border:1px solid var(--border); box-shadow:0 20px 50px rgba(0,0,0,.18);
+    border:1px solid var(--border); box-shadow:0 20px 50px rgba(0,0,0,.22);
+    display:flex; flex-direction:column;
 }
 .tpl-editor header {
     display:flex; justify-content:space-between; align-items:center;
     gap:12px; padding:14px 18px; border-bottom:1px solid var(--border);
-    position:sticky; top:0; background:var(--background); z-index:1;
+    position:sticky; top:0; background:var(--surface, var(--background)); z-index:2;
+    flex-shrink:0;
 }
 .tpl-editor header h2 { margin:0; font-size:17px; }
-.tpl-editor .body { padding:16px 18px 20px; display:flex; flex-direction:column; gap:14px; }
-.tpl-editor label.field {
-    display:flex; flex-direction:column; gap:5px;
-    font-size:12px; font-weight:700; color:var(--muted);
+.tpl-editor .body {
+    padding:16px 18px 20px;
+    display:grid;
+    grid-template-columns:1fr;
+    gap:14px;
 }
-.tpl-editor input[type=text], .tpl-editor textarea {
+.tpl-editor label.field {
+    display:flex !important; flex-direction:column; gap:6px;
+    font-size:12px; font-weight:700; color:var(--muted);
+    margin:0 !important; min-width:0;
+}
+.tpl-editor input[type=text],
+.tpl-editor textarea {
+    width:100%; box-sizing:border-box;
     padding:0.6rem 0.75rem; border:1px solid var(--border); border-radius:8px;
     background:var(--background); color:var(--text); font-size:13.5px;
     font-family:inherit; resize:vertical;
 }
-.tpl-editor textarea { min-height:72px; }
+.tpl-editor textarea { min-height:80px; }
 .tpl-toggles {
-    display:grid; grid-template-columns:1fr 1fr; gap:8px 16px;
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:10px 18px;
+    padding:12px 14px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:var(--bg-2, rgba(0,0,0,.03));
 }
 .tpl-toggles label {
-    display:flex; align-items:center; gap:8px;
-    font-size:13px; font-weight:600; color:var(--text); cursor:pointer;
+    display:flex !important;
+    align-items:flex-start;
+    gap:10px;
+    font-size:13px;
+    font-weight:600;
+    color:var(--text);
+    cursor:pointer;
+    line-height:1.35;
+    margin:0;
+    min-width:0;
 }
-.ph-picker {
-    display:flex; flex-wrap:wrap; gap:6px;
+.tpl-toggles input[type=checkbox] {
+    width:16px !important;
+    height:16px !important;
+    min-width:16px;
+    margin:2px 0 0;
+    flex-shrink:0;
+    accent-color:var(--coral, #e25a3c);
+    padding:0;
+    border-radius:3px;
 }
+.tpl-toggles label span { flex:1; min-width:0; word-break:break-word; }
+.ph-picker { display:flex; flex-wrap:wrap; gap:6px; }
 .ph-btn {
     appearance:none; border:1px solid var(--border); background:var(--bg-2, #f3f4f6);
     color:var(--text); font-size:11px; font-weight:600; padding:4px 8px;
     border-radius:6px; cursor:pointer; font-family:inherit;
 }
 .ph-btn:hover { border-color:var(--coral, #e25a3c); color:var(--coral, #e25a3c); }
-.tpl-editor footer {
+.tpl-editor footer.tpl-editor-actions {
     display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;
-    padding-top:4px;
+    padding-top:4px; margin:0;
 }
 .tpl-inactive { opacity:.55; }
+
+/* Preview drawer */
+.pv-drawer-backdrop {
+    position:fixed; inset:0; background:rgba(15,15,20,.5);
+    z-index:1300; display:none; align-items:stretch; justify-content:flex-end;
+}
+.pv-drawer-backdrop.open { display:flex; }
+.pv-drawer {
+    width:min(1100px, 100%);
+    height:100%;
+    background:var(--surface, var(--background));
+    color:var(--text);
+    border-left:1px solid var(--border);
+    box-shadow:-12px 0 40px rgba(0,0,0,.18);
+    display:flex; flex-direction:column;
+    min-width:0;
+}
+.pv-drawer header {
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:12px 16px; border-bottom:1px solid var(--border);
+    flex-shrink:0; flex-wrap:wrap;
+}
+.pv-drawer header h2 { margin:0; font-size:17px; font-weight:700; }
+.pv-drawer-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.pv-drawer-body {
+    flex:1; min-height:0;
+    display:grid;
+    grid-template-columns:minmax(260px, 320px) 1fr;
+}
+.pv-edit-panel {
+    border-right:1px solid var(--border);
+    padding:14px 16px;
+    overflow:auto;
+    display:flex; flex-direction:column; gap:12px;
+    background:var(--bg-2, rgba(0,0,0,.02));
+}
+.pv-edit-panel label.field {
+    display:flex !important; flex-direction:column; gap:5px;
+    font-size:12px; font-weight:700; color:var(--muted); margin:0 !important;
+}
+.pv-edit-panel input[type=text],
+.pv-edit-panel textarea {
+    width:100%; box-sizing:border-box;
+    padding:0.55rem 0.7rem; border:1px solid var(--border); border-radius:8px;
+    background:var(--background); color:var(--text); font-size:13px;
+    font-family:inherit; resize:vertical;
+}
+.pv-edit-panel textarea { min-height:90px; }
+.pv-preview-panel {
+    min-width:0; min-height:0;
+    display:flex; flex-direction:column;
+    background:#e8e8ea;
+}
+.pv-mode-tabs {
+    display:flex; gap:4px; padding:8px 12px; background:var(--surface, var(--background));
+    border-bottom:1px solid var(--border); flex-shrink:0;
+}
+.pv-mode-tab {
+    appearance:none; border:1px solid var(--border); background:transparent;
+    padding:6px 12px; border-radius:8px; font-size:12.5px; font-weight:600;
+    color:var(--muted); cursor:pointer; font-family:inherit;
+}
+.pv-mode-tab.active {
+    background:rgba(226,90,60,.12); color:var(--coral, #e25a3c);
+    border-color:rgba(226,90,60,.35);
+}
+.pv-frame-wrap { flex:1; min-height:0; position:relative; }
+.pv-frame-wrap iframe {
+    position:absolute; inset:0; width:100%; height:100%; border:0; background:#fff;
+}
+.pv-hint { font-size:12px; color:var(--muted); line-height:1.4; margin:0; }
+.pv-toast {
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    background:#111; color:#fff; padding:10px 16px; border-radius:10px;
+    font-size:13px; z-index:1400; display:none; box-shadow:0 8px 24px rgba(0,0,0,.25);
+}
+.pv-toast.show { display:block; }
+
+@media (max-width:900px) {
+    .pv-drawer-body { grid-template-columns:1fr; grid-template-rows:auto 1fr; }
+    .pv-edit-panel {
+        border-right:none; border-bottom:1px solid var(--border);
+        max-height:42vh;
+    }
+    .pv-drawer { width:100%; }
+}
 @media (max-width:720px) {
     .docs-toolbar select, .docs-toolbar input { min-width:100%; width:100%; }
     .tpl-toggles { grid-template-columns:1fr; }
+    .tpl-editor { max-height:96vh; }
 }
 </style>
 {% endblock %}
@@ -158,7 +280,7 @@
             <input type="date" id="f-to">
         </label>
         <label style="flex-direction:row;align-items:center;gap:8px;padding-bottom:8px;">
-            <input type="checkbox" id="f-available" checked>
+            <input type="checkbox" id="f-available" checked style="width:auto;min-width:auto;">
             <span style="font-weight:600;color:var(--text);">Показать доступные к генерации</span>
         </label>
         <div class="btn-row">
@@ -200,6 +322,7 @@
     </div>
 </div>
 
+<!-- Configure modal -->
 <div class="tpl-editor-backdrop" id="tpl-editor-backdrop" onclick="if(event.target===this)closeTplEditor()">
     <div class="tpl-editor" role="dialog" aria-modal="true" aria-labelledby="tpl-editor-title">
         <header>
@@ -209,40 +332,81 @@
         <div class="body">
             <input type="hidden" id="tpl-doc-type">
             <label class="field">Название
-                <input type="text" id="tpl-name">
+                <input type="text" id="tpl-name" autocomplete="off">
             </label>
             <label class="field">Описание
-                <input type="text" id="tpl-description">
+                <input type="text" id="tpl-description" autocomplete="off">
             </label>
-            <div class="tpl-toggles">
-                <label><input type="checkbox" id="tpl-active"> Активен</label>
-                <label><input type="checkbox" id="tpl-show-logo"> Логотип</label>
-                <label><input type="checkbox" id="tpl-show-company"> Контакты в шапке</label>
-                <label><input type="checkbox" id="tpl-sec-items"> Таблица позиций</label>
-                <label><input type="checkbox" id="tpl-sec-totals"> Итоги</label>
-                <label><input type="checkbox" id="tpl-sec-signature"> Подписи</label>
-                <label><input type="checkbox" id="tpl-sec-contacts"> Реквизиты внизу</label>
+            <div class="tpl-toggles" role="group" aria-label="Блоки шаблона">
+                <label><input type="checkbox" id="tpl-active"><span>Активен</span></label>
+                <label><input type="checkbox" id="tpl-show-logo"><span>Логотип</span></label>
+                <label><input type="checkbox" id="tpl-show-company"><span>Контакты в шапке</span></label>
+                <label><input type="checkbox" id="tpl-sec-items"><span>Таблица позиций</span></label>
+                <label><input type="checkbox" id="tpl-sec-totals"><span>Итоги</span></label>
+                <label><input type="checkbox" id="tpl-sec-signature"><span>Подписи</span></label>
+                <label><input type="checkbox" id="tpl-sec-contacts"><span>Реквизиты внизу</span></label>
             </div>
             <label class="field">Свой заголовок (пусто = стандартный)
-                <input type="text" id="tpl-custom-title" data-ph-target placeholder="Напр. СМЕТА для {{ '{{deal.title}}' }}">
+                <input type="text" id="tpl-custom-title" data-ph-target autocomplete="off">
             </label>
             <div>
                 <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;">Вставить поле CRM</div>
                 <div class="ph-picker" id="ph-picker"></div>
             </div>
             <label class="field">Примечания в теле (после заголовка)
-                <textarea id="tpl-body-notes" data-ph-target placeholder="Текст с {{ '{{placeholders}}' }}"></textarea>
+                <textarea id="tpl-body-notes" data-ph-target></textarea>
             </label>
             <label class="field">Футер / примечания внизу
                 <textarea id="tpl-footer-notes" data-ph-target></textarea>
             </label>
-            <footer>
+            <footer class="tpl-editor-actions">
                 <button type="button" class="btn" onclick="closeTplEditor()">Отмена</button>
                 <button type="button" class="btn btn-primary" id="tpl-save-btn" onclick="saveTplEditor()">Сохранить</button>
             </footer>
         </div>
     </div>
 </div>
+
+<!-- Preview drawer -->
+<div class="pv-drawer-backdrop" id="pv-drawer-backdrop" onclick="if(event.target===this)closePreview()">
+    <div class="pv-drawer" role="dialog" aria-modal="true" aria-labelledby="pv-title">
+        <header>
+            <h2 id="pv-title">Превью</h2>
+            <div class="pv-drawer-actions">
+                <button type="button" class="btn btn-sm" onclick="prepareForClient()">Подготовить для клиента</button>
+                <button type="button" class="btn btn-sm" id="pv-registry-btn" onclick="savePreviewToRegistry()" hidden>В реестр</button>
+                <button type="button" class="btn btn-sm" onclick="downloadPreview('docx')">Скачать Word</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="downloadPreview('pdf')">Скачать PDF</button>
+                <button type="button" class="btn btn-sm" onclick="closePreview()">Закрыть</button>
+            </div>
+        </header>
+        <div class="pv-drawer-body">
+            <aside class="pv-edit-panel">
+                <p class="pv-hint">Правки только для этой сессии превью. «Применить» обновит вид; чтобы сохранить в шаблон — откройте «Настроить».</p>
+                <label class="field">Заголовок
+                    <input type="text" id="pv-custom-title" autocomplete="off">
+                </label>
+                <label class="field">Примечания в теле
+                    <textarea id="pv-body-notes"></textarea>
+                </label>
+                <label class="field">Футер / примечания
+                    <textarea id="pv-footer-notes"></textarea>
+                </label>
+                <button type="button" class="btn btn-primary" id="pv-apply-btn" onclick="applyPreviewEdits()">Применить</button>
+            </aside>
+            <section class="pv-preview-panel">
+                <div class="pv-mode-tabs">
+                    <button type="button" class="pv-mode-tab active" id="pv-tab-html" onclick="setPreviewMode('html')">HTML</button>
+                    <button type="button" class="pv-mode-tab" id="pv-tab-pdf" onclick="setPreviewMode('pdf')">PDF</button>
+                </div>
+                <div class="pv-frame-wrap">
+                    <iframe id="pv-frame" title="Превью документа"></iframe>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+<div class="pv-toast" id="pv-toast"></div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -257,6 +421,9 @@ const STATUS_LABEL = {
 let _placeholders = [];
 let _lastPhTarget = null;
 let _templatesLoaded = false;
+let _previewDocType = null;
+let _previewMode = 'html';
+let _previewBlobUrl = null;
 
 function switchDocsTab(name) {
     document.querySelectorAll('.docs-tab').forEach(el => el.classList.remove('active'));
@@ -367,6 +534,14 @@ function escapeHtml(s) {
     })[c]);
 }
 
+function showToast(msg) {
+    const el = document.getElementById('pv-toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
 async function loadTemplates() {
     const grid = document.getElementById('tpl-grid');
     grid.innerHTML = '<div class="muted">Загрузка шаблонов…</div>';
@@ -397,6 +572,7 @@ async function loadTemplates() {
             const editBtn = canEdit
                 ? `<button type="button" class="btn btn-sm btn-primary" onclick='openTplEditor(${JSON.stringify(t.doc_type)})'>Настроить</button>`
                 : '';
+            const dtype = JSON.stringify(t.doc_type);
             return `<article class="tpl-card${inactive}" data-doc-type="${escapeHtml(t.doc_type)}">
                 <div class="tpl-code">${escapeHtml(t.doc_type)}</div>
                 <h3>${escapeHtml(t.name)}</h3>
@@ -404,8 +580,9 @@ async function loadTemplates() {
                 <div class="tpl-meta">${formats}${t.is_active ? '' : '<span class="tpl-chip">выкл.</span>'}</div>
                 <div class="tpl-fields"><strong>Поля CRM:</strong> ${fields || '—'}</div>
                 <div class="tpl-card-actions">
-                    <a class="btn btn-sm" href="${escapeHtml(t.sample_docx_url)}" target="_blank" rel="noopener">Образец Word</a>
-                    <a class="btn btn-sm" href="${escapeHtml(t.sample_pdf_url)}" target="_blank" rel="noopener">Образец PDF</a>
+                    <button type="button" class="btn btn-sm btn-primary" onclick='openPreview(${dtype})'>Открыть</button>
+                    <button type="button" class="btn btn-sm" onclick='openPreview(${dtype}, "pdf")'>Образец PDF</button>
+                    <button type="button" class="btn btn-sm" onclick='openPreview(${dtype}, "html")'>Образец Word</button>
                     ${editBtn}
                 </div>
             </article>`;
@@ -457,7 +634,11 @@ async function openTplEditor(docType) {
         document.getElementById('tpl-show-logo').checked = !!t.show_logo;
         document.getElementById('tpl-show-company').checked = !!t.show_company_block;
         document.getElementById('tpl-custom-title').value = t.custom_title || '';
+        // placeholders set in JS so Jinja never parses curly braces in HTML attributes
+        document.getElementById('tpl-custom-title').placeholder =
+            'Напр. СМЕТА для ' + String.fromCharCode(123, 123) + 'deal.title' + String.fromCharCode(125, 125);
         document.getElementById('tpl-body-notes').value = t.body_notes || '';
+        document.getElementById('tpl-body-notes').placeholder = 'Текст с плейсхолдерами CRM';
         document.getElementById('tpl-footer-notes').value = t.footer_notes || '';
         const sec = t.include_sections || {};
         document.getElementById('tpl-sec-items').checked = sec.items_table !== false;
@@ -465,6 +646,7 @@ async function openTplEditor(docType) {
         document.getElementById('tpl-sec-signature').checked = !!sec.signature;
         document.getElementById('tpl-sec-contacts').checked = sec.company_contacts !== false;
         document.getElementById('tpl-editor-backdrop').classList.add('open');
+        document.body.style.overflow = 'hidden';
         _lastPhTarget = document.getElementById('tpl-body-notes');
     } catch (e) {
         alert(e.message || String(e));
@@ -473,6 +655,9 @@ async function openTplEditor(docType) {
 
 function closeTplEditor() {
     document.getElementById('tpl-editor-backdrop').classList.remove('open');
+    if (!document.getElementById('pv-drawer-backdrop').classList.contains('open')) {
+        document.body.style.overflow = '';
+    }
 }
 
 async function saveTplEditor() {
@@ -512,6 +697,219 @@ async function saveTplEditor() {
         btn.disabled = false;
     }
 }
+
+function previewOverridesPayload() {
+    return {
+        custom_title: document.getElementById('pv-custom-title').value,
+        body_notes: document.getElementById('pv-body-notes').value,
+        footer_notes: document.getElementById('pv-footer-notes').value,
+    };
+}
+
+function revokePreviewBlob() {
+    if (_previewBlobUrl) {
+        try { URL.revokeObjectURL(_previewBlobUrl); } catch (_) {}
+        _previewBlobUrl = null;
+    }
+}
+
+async function openPreview(docType, mode) {
+    _previewDocType = docType;
+    _previewMode = mode === 'pdf' ? 'pdf' : 'html';
+    document.getElementById('pv-title').textContent = 'Загрузка…';
+    document.getElementById('pv-drawer-backdrop').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    const dealId = document.getElementById('f-deal').value;
+    document.getElementById('pv-registry-btn').hidden = !dealId;
+    setPreviewMode(_previewMode, false);
+    try {
+        const res = await fetch('/api/document-templates/' + encodeURIComponent(docType) + '/preview-meta');
+        const meta = await res.json();
+        if (!res.ok) throw new Error(meta.error || 'Ошибка');
+        document.getElementById('pv-title').textContent = meta.name || docType;
+        document.getElementById('pv-custom-title').value = meta.custom_title || '';
+        document.getElementById('pv-body-notes').value = meta.body_notes || '';
+        document.getElementById('pv-footer-notes').value = meta.footer_notes || '';
+        await refreshPreviewFrame();
+    } catch (e) {
+        alert(e.message || String(e));
+        closePreview();
+    }
+}
+
+function setPreviewMode(mode, reload) {
+    _previewMode = mode === 'pdf' ? 'pdf' : 'html';
+    document.getElementById('pv-tab-html').classList.toggle('active', _previewMode === 'html');
+    document.getElementById('pv-tab-pdf').classList.toggle('active', _previewMode === 'pdf');
+    if (reload !== false) refreshPreviewFrame();
+}
+
+async function refreshPreviewFrame() {
+    if (!_previewDocType) return;
+    const frame = document.getElementById('pv-frame');
+    const payload = previewOverridesPayload();
+    revokePreviewBlob();
+    frame.removeAttribute('srcdoc');
+    frame.src = 'about:blank';
+    try {
+        if (_previewMode === 'pdf') {
+            const res = await fetch(
+                '/api/document-templates/' + encodeURIComponent(_previewDocType) + '/preview.pdf?inline=1',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }
+            );
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось загрузить PDF');
+            }
+            const blob = await res.blob();
+            _previewBlobUrl = URL.createObjectURL(blob);
+            frame.src = _previewBlobUrl;
+        } else {
+            const res = await fetch(
+                '/api/document-templates/' + encodeURIComponent(_previewDocType) + '/preview.html',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }
+            );
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось загрузить превью');
+            }
+            const html = await res.text();
+            frame.srcdoc = html;
+        }
+    } catch (e) {
+        frame.srcdoc = `<p style="padding:24px;font-family:sans-serif;color:#b91c1c">${escapeHtml(e.message || String(e))}</p>`;
+    }
+}
+
+async function applyPreviewEdits() {
+    const btn = document.getElementById('pv-apply-btn');
+    btn.disabled = true;
+    try {
+        await refreshPreviewFrame();
+        showToast('Превью обновлено');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function downloadPreview(fmt) {
+    if (!_previewDocType) return;
+    const payload = previewOverridesPayload();
+    const url = fmt === 'pdf'
+        ? '/api/document-templates/' + encodeURIComponent(_previewDocType) + '/preview.pdf?inline=0'
+        : '/api/document-templates/' + encodeURIComponent(_previewDocType) + '/preview.docx';
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Ошибка скачивания');
+        }
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        const obj = URL.createObjectURL(blob);
+        a.href = obj;
+        a.download = `Sample_${_previewDocType}.${fmt === 'pdf' ? 'pdf' : 'docx'}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(obj), 2000);
+    } catch (e) {
+        alert(e.message || String(e));
+    }
+}
+
+function prepareForClient() {
+    if (!_previewDocType) return;
+    const base = location.origin;
+    const pdf = `${base}/api/document-templates/${encodeURIComponent(_previewDocType)}/preview.pdf?inline=1`;
+    const docx = `${base}/api/document-templates/${encodeURIComponent(_previewDocType)}/sample?format=docx`;
+    const text = [
+        'Документ для клиента (образец шаблона Intro Show):',
+        '',
+        'PDF: ' + pdf,
+        'Word: ' + docx,
+        '',
+        'Откройте ссылки в CRM после входа или скачайте файл кнопками в превью.',
+    ].join('\n');
+    const subject = encodeURIComponent('Документ: ' + (document.getElementById('pv-title').textContent || _previewDocType));
+    const body = encodeURIComponent(text);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Ссылки скопированы');
+        }).catch(() => {});
+    }
+    window.open('mailto:?subject=' + subject + '&body=' + body, '_blank');
+}
+
+async function savePreviewToRegistry() {
+    const dealId = document.getElementById('f-deal').value;
+    if (!dealId || !_previewDocType) {
+        showToast('Выберите сделку в фильтре реестра');
+        return;
+    }
+    // Скачиваем PDF как факт генерации через существующий deal endpoint, если есть;
+    // иначе просто помечаем через sample download URL в реестре после открытия deal doc.
+    try {
+        const map = {
+            estimate_internal: `/api/deals/${dealId}/estimate.pdf?mode=internal`,
+            estimate_client: `/api/deals/${dealId}/estimate.pdf?mode=client`,
+            estimate_client_priced: `/api/deals/${dealId}/estimate.pdf?mode=client_priced`,
+            contract: `/api/deals/${dealId}/contract.pdf`,
+            technichka: `/api/deals/${dealId}/technichka`,
+        };
+        const url = map[_previewDocType];
+        if (!url) {
+            showToast('Для этого типа сохранение в реестр — из карточки сделки');
+            return;
+        }
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Не удалось сгенерировать документ по сделке');
+        // trigger download registration side-effect
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        const obj = URL.createObjectURL(blob);
+        a.href = obj;
+        a.download = `Deal_${dealId}_${_previewDocType}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(obj), 2000);
+        showToast('Документ сгенерирован по сделке #' + dealId);
+        await loadDocuments();
+    } catch (e) {
+        alert(e.message || String(e));
+    }
+}
+
+function closePreview() {
+    document.getElementById('pv-drawer-backdrop').classList.remove('open');
+    revokePreviewBlob();
+    document.getElementById('pv-frame').src = 'about:blank';
+    document.getElementById('pv-frame').removeAttribute('srcdoc');
+    _previewDocType = null;
+    if (!document.getElementById('tpl-editor-backdrop').classList.contains('open')) {
+        document.body.style.overflow = '';
+    }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (document.getElementById('pv-drawer-backdrop').classList.contains('open')) closePreview();
+        else if (document.getElementById('tpl-editor-backdrop').classList.contains('open')) closeTplEditor();
+    }
+});
 
 document.getElementById('f-deal').addEventListener('change', loadDocuments);
 document.getElementById('f-type').addEventListener('change', loadDocuments);

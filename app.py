@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Redirect
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Tuple
 import json
 import os
 import re
@@ -3141,29 +3141,41 @@ def api_update_document_template(
     return doc_templates.template_to_dict(row)
 
 
-@app.get("/api/document-templates/{doc_type}/sample")
-def api_sample_document_template(
+class DocumentTemplatePreviewBody(BaseModel):
+    custom_title: Optional[str] = None
+    body_notes: Optional[str] = None
+    footer_notes: Optional[str] = None
+    show_logo: Optional[bool] = None
+    show_company_block: Optional[bool] = None
+    include_sections: Optional[Dict[str, bool]] = None
+    deal_id: Optional[int] = None
+
+
+def _template_preview_overrides(payload: Optional[DocumentTemplatePreviewBody]) -> Dict[str, Any]:
+    if not payload:
+        return {}
+    data = payload.dict(exclude_unset=True)
+    data.pop("deal_id", None)
+    return data
+
+
+def _build_sample_template_context(
+    db: Session,
     doc_type: str,
-    background_tasks: BackgroundTasks,
-    format: str = "docx",
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Образец документа по шаблону (демо-данные)."""
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Tuple[Optional[Tuple[Dict[str, Any], str]], Optional[JSONResponse]]:
+    """Готовит context + base doc_type для sample/preview. (context, base) или (None, error_response)."""
     base = (doc_type or "").replace("_pdf", "")
-    fmt = (format or "docx").lower().strip()
-    if fmt not in ("docx", "pdf"):
-        fmt = "docx"
     try:
         doc_templates.seed_document_templates(db)
     except Exception:
         db.rollback()
     row = doc_templates.get_template_row(db, base)
     if not row:
-        return JSONResponse(status_code=404, content={"error": "Шаблон не найден"})
+        return None, JSONResponse(status_code=404, content={"error": "Шаблон не найден"})
 
     context = doc_templates.apply_template_to_context(
-        doc_templates.sample_context(base), db, base
+        doc_templates.sample_context(base), db, base, overrides=overrides
     )
     logo_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
@@ -3171,11 +3183,11 @@ def api_sample_document_template(
     )
     if os.path.isfile(logo_path) and context.get("tpl_show_logo", True):
         context["logo_path"] = logo_path
+    return (context, base), None
 
-    suffix = ".pdf" if fmt == "pdf" else ".docx"
-    fd, temp_path = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
 
+def _render_sample_document_file(context: Dict[str, Any], base: str, fmt: str) -> str:
+    """Генерирует sample docx/pdf во временный файл, возвращает путь."""
     from document_generator import (
         generate_estimate_docx,
         generate_estimate_pdf,
@@ -3183,6 +3195,13 @@ def api_sample_document_template(
         generate_technichka_pdf,
         generate_contract_pdf,
     )
+
+    fmt = (fmt or "docx").lower().strip()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+    suffix = ".pdf" if fmt == "pdf" else ".docx"
+    fd, temp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
 
     if base == "technichka":
         if fmt == "pdf":
@@ -3193,11 +3212,7 @@ def api_sample_document_template(
         if fmt == "pdf":
             generate_contract_pdf(context, temp_path)
         else:
-            # Word-договор требует .docx шаблон — для sample отдаём PDF-спецификацию как fallback
-            # если нет полного юр. текста. Для docx sample используем estimate_docx-подобную
-            # спецификацию через generate_contract_pdf → лучше estimate client_priced как образец
-            # шапки. Проще: сгенерировать PDF и переименовать? Нет — генерим estimate-like
-            # DOCX со спецификацией договора.
+            # Word-договор требует .docx шаблон — для sample отдаём estimate-like DOCX.
             generate_estimate_docx(context, temp_path, mode="client_priced")
     elif base == "estimate_client":
         if fmt == "pdf":
@@ -3214,7 +3229,16 @@ def api_sample_document_template(
             generate_estimate_pdf(context, temp_path, mode="internal")
         else:
             generate_estimate_docx(context, temp_path, mode="internal")
+    return temp_path
 
+
+def _file_response_with_cleanup(
+    background_tasks: BackgroundTasks,
+    temp_path: str,
+    media: str,
+    fname: str,
+    inline: bool = False,
+):
     def cleanup_file(path: str):
         try:
             os.remove(path)
@@ -3222,13 +3246,169 @@ def api_sample_document_template(
             pass
 
     background_tasks.add_task(cleanup_file, temp_path)
+    return FileResponse(
+        temp_path,
+        media_type=media,
+        filename=fname,
+        content_disposition_type="inline" if inline else "attachment",
+    )
+
+
+@app.get("/api/document-templates/{doc_type}/sample")
+def api_sample_document_template(
+    doc_type: str,
+    background_tasks: BackgroundTasks,
+    format: str = "docx",
+    inline: int = 0,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Образец документа по шаблону (демо-данные)."""
+    result, err = _build_sample_template_context(db, doc_type)
+    if err:
+        return err
+    context, base = result
+    fmt = (format or "docx").lower().strip()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+    temp_path = _render_sample_document_file(context, base, fmt)
+    suffix = ".pdf" if fmt == "pdf" else ".docx"
     fname = f"Sample_{base}{suffix}"
     media = (
         "application/pdf"
         if fmt == "pdf"
         else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
-    return FileResponse(temp_path, media_type=media, filename=fname)
+    return _file_response_with_cleanup(
+        background_tasks, temp_path, media, fname, inline=bool(inline) and fmt == "pdf"
+    )
+
+
+@app.get("/api/document-templates/{doc_type}/preview.pdf")
+def api_preview_document_template_pdf(
+    doc_type: str,
+    background_tasks: BackgroundTasks,
+    inline: int = 1,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """PDF-превью шаблона для встраивания в CRM (Content-Disposition: inline)."""
+    result, err = _build_sample_template_context(db, doc_type)
+    if err:
+        return err
+    context, base = result
+    temp_path = _render_sample_document_file(context, base, "pdf")
+    return _file_response_with_cleanup(
+        background_tasks,
+        temp_path,
+        "application/pdf",
+        f"Preview_{base}.pdf",
+        inline=bool(inline),
+    )
+
+
+@app.get("/api/document-templates/{doc_type}/preview.html", response_class=HTMLResponse)
+def api_preview_document_template_html(
+    doc_type: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """HTML-превью шаблона (структурированное) для in-app просмотра."""
+    result, err = _build_sample_template_context(db, doc_type)
+    if err:
+        return err
+    context, base = result
+    return HTMLResponse(doc_templates.build_html_preview(context, base))
+
+
+@app.post("/api/document-templates/{doc_type}/preview.html", response_class=HTMLResponse)
+def api_preview_document_template_html_post(
+    doc_type: str,
+    payload: DocumentTemplatePreviewBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """HTML-превью с сессионными правками title/notes (без сохранения шаблона)."""
+    overrides = _template_preview_overrides(payload)
+    result, err = _build_sample_template_context(db, doc_type, overrides=overrides)
+    if err:
+        return err
+    context, base = result
+    return HTMLResponse(doc_templates.build_html_preview(context, base))
+
+
+@app.post("/api/document-templates/{doc_type}/preview.pdf")
+def api_preview_document_template_pdf_post(
+    doc_type: str,
+    payload: DocumentTemplatePreviewBody,
+    background_tasks: BackgroundTasks,
+    inline: int = 1,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """PDF-превью с сессионными правками."""
+    overrides = _template_preview_overrides(payload)
+    result, err = _build_sample_template_context(db, doc_type, overrides=overrides)
+    if err:
+        return err
+    context, base = result
+    temp_path = _render_sample_document_file(context, base, "pdf")
+    return _file_response_with_cleanup(
+        background_tasks,
+        temp_path,
+        "application/pdf",
+        f"Preview_{base}.pdf",
+        inline=bool(inline),
+    )
+
+
+@app.post("/api/document-templates/{doc_type}/preview.docx")
+def api_preview_document_template_docx_post(
+    doc_type: str,
+    payload: DocumentTemplatePreviewBody,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Скачать Word с сессионными правками превью."""
+    overrides = _template_preview_overrides(payload)
+    result, err = _build_sample_template_context(db, doc_type, overrides=overrides)
+    if err:
+        return err
+    context, base = result
+    temp_path = _render_sample_document_file(context, base, "docx")
+    return _file_response_with_cleanup(
+        background_tasks,
+        temp_path,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        f"Sample_{base}.docx",
+        inline=False,
+    )
+
+
+@app.get("/api/document-templates/{doc_type}/preview-meta")
+def api_preview_document_template_meta(
+    doc_type: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Метаданные для формы превью/редактирования (сырые notes + ссылки)."""
+    result, err = _build_sample_template_context(db, doc_type)
+    if err:
+        return err
+    context, base = result
+    row = doc_templates.get_template_row(db, base)
+    return {
+        "doc_type": base,
+        "name": row.name if row else base,
+        "custom_title": context.get("tpl_custom_title_raw") or "",
+        "body_notes": context.get("tpl_body_notes_raw") or "",
+        "footer_notes": context.get("tpl_footer_notes_raw") or "",
+        "preview_html_url": f"/api/document-templates/{base}/preview.html",
+        "preview_pdf_url": f"/api/document-templates/{base}/preview.pdf?inline=1",
+        "sample_docx_url": f"/api/document-templates/{base}/sample?format=docx",
+        "sample_pdf_url": f"/api/document-templates/{base}/sample?format=pdf",
+    }
 
 
 @app.get("/tracking/{deal_id}", response_class=HTMLResponse)
