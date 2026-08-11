@@ -224,14 +224,14 @@
                 <label><input type="checkbox" id="tpl-sec-contacts"> Реквизиты внизу</label>
             </div>
             <label class="field">Свой заголовок (пусто = стандартный)
-                <input type="text" id="tpl-custom-title" data-ph-target placeholder="Напр. СМЕТА для {{deal.title}}">
+                <input type="text" id="tpl-custom-title" data-ph-target placeholder="Напр. СМЕТА для {{ '{{deal.title}}' }}">
             </label>
             <div>
                 <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;">Вставить поле CRM</div>
                 <div class="ph-picker" id="ph-picker"></div>
             </div>
             <label class="field">Примечания в теле (после заголовка)
-                <textarea id="tpl-body-notes" data-ph-target placeholder="Текст с {{placeholders}}"></textarea>
+                <textarea id="tpl-body-notes" data-ph-target placeholder="Текст с {{ '{{placeholders}}' }}"></textarea>
             </label>
             <label class="field">Футер / примечания внизу
                 <textarea id="tpl-footer-notes" data-ph-target></textarea>
