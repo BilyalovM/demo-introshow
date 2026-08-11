@@ -163,7 +163,7 @@ body:has(.quote-layout) .sidebar {
             <h3 id="docsRegistryTitle" style="margin:0">Реестр документов</h3>
             <button type="button" class="btn btn-sm" onclick="closeDocsRegistry()">Закрыть</button>
         </div>
-        <p class="muted" style="font-size:12.5px;margin:0 0 12px">Выберите документ для выгрузки. Техничка — только через CRM → Команда.</p>
+        <p class="muted" style="font-size:12.5px;margin:0 0 12px">Откройте превью с данными сметы, отредактируйте в документе, затем скачайте Word/PDF. Техничка — CRM → Команда.</p>
         <div class="docs-registry-list">
             <div class="docs-registry-row">
                 <div>
@@ -171,8 +171,8 @@ body:has(.quote-layout) .sidebar {
                     <div class="muted" style="font-size:12px">Полная смета с субарендой и маржой</div>
                 </div>
                 <div class="docs-registry-actions">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('internal')">Word</button>
-                    <button type="button" class="btn btn-sm" onclick="downloadDoc('internal_pdf')">PDF</button>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="openQuoteDocPreview('estimate_internal')">Превью</button>
+                    <button type="button" class="btn btn-sm" onclick="openQuoteDocPreview('estimate_internal','pdf')">PDF</button>
                 </div>
             </div>
             <div class="docs-registry-row">
@@ -181,8 +181,8 @@ body:has(.quote-layout) .sidebar {
                     <div class="muted" style="font-size:12px">Цены за ед. видны; без маржи и себестоимости субаренды</div>
                 </div>
                 <div class="docs-registry-actions">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('client_priced')">Word</button>
-                    <button type="button" class="btn btn-sm" onclick="downloadDoc('client_priced_pdf')">PDF</button>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="openQuoteDocPreview('estimate_client_priced')">Превью</button>
+                    <button type="button" class="btn btn-sm" onclick="openQuoteDocPreview('estimate_client_priced','pdf')">PDF</button>
                 </div>
             </div>
             <div class="docs-registry-row">
@@ -191,8 +191,8 @@ body:has(.quote-layout) .sidebar {
                     <div class="muted" style="font-size:12px">Без цены за ед., только суммы строк и итог</div>
                 </div>
                 <div class="docs-registry-actions">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('client')">Word</button>
-                    <button type="button" class="btn btn-sm" onclick="downloadDoc('client_pdf')">PDF</button>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="openQuoteDocPreview('estimate_client')">Превью</button>
+                    <button type="button" class="btn btn-sm" onclick="openQuoteDocPreview('estimate_client','pdf')">PDF</button>
                 </div>
             </div>
             <div class="docs-registry-row">
@@ -201,13 +201,14 @@ body:has(.quote-layout) .sidebar {
                     <div class="muted" style="font-size:12px">Нужен выбранный клиент</div>
                 </div>
                 <div class="docs-registry-actions">
-                    <button type="button" class="btn btn-sm btn-primary" onclick="downloadDoc('contract')">Word</button>
-                    <button type="button" class="btn btn-sm" onclick="downloadDoc('contract_pdf')">PDF</button>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="openQuoteDocPreview('contract')">Превью</button>
+                    <button type="button" class="btn btn-sm" onclick="openQuoteDocPreview('contract','pdf')">PDF</button>
                 </div>
             </div>
         </div>
     </div>
 </div>
+{% include "partials/doc_preview_drawer.html" %}
 {% endblock %}
 
 {% block extra_scripts %}
@@ -1216,24 +1217,32 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeDocsRegistry();
 });
 
-async function downloadDoc(kind) {
+async function openQuoteDocPreview(docType, mode) {
     closeDocsRegistry();
     const id = await saveQuote(true);
     if (!id) return;
-    if ((kind === 'contract' || kind === 'contract_pdf') && !document.getElementById('companySelect').value) {
+    if (docType === 'contract' && !document.getElementById('companySelect').value) {
         alert('Для договора выберите клиента (арендатора)');
         return;
     }
-    let url = `/api/deals/${id}/estimate?mode=internal`;
-    if (kind === 'contract') url = `/api/deals/${id}/contract`;
-    else if (kind === 'contract_pdf') url = `/api/deals/${id}/contract.pdf`;
-    else if (kind === 'client') url = `/api/deals/${id}/estimate?mode=client`;
-    else if (kind === 'client_pdf') url = `/api/deals/${id}/estimate.pdf?mode=client`;
-    else if (kind === 'client_priced') url = `/api/deals/${id}/estimate?mode=client_priced`;
-    else if (kind === 'client_priced_pdf') url = `/api/deals/${id}/estimate.pdf?mode=client_priced`;
-    else if (kind === 'internal') url = `/api/deals/${id}/estimate?mode=internal`;
-    else if (kind === 'internal_pdf') url = `/api/deals/${id}/estimate.pdf?mode=internal`;
-    window.location.href = url;
+    DocPreview.open({ docType, dealId: id, mode: mode === 'pdf' ? 'pdf' : 'html' });
+}
+
+/** Совместимость со старыми вызовами */
+async function downloadDoc(kind) {
+    const map = {
+        internal: 'estimate_internal',
+        internal_pdf: 'estimate_internal',
+        client: 'estimate_client',
+        client_pdf: 'estimate_client',
+        client_priced: 'estimate_client_priced',
+        client_priced_pdf: 'estimate_client_priced',
+        contract: 'contract',
+        contract_pdf: 'contract',
+    };
+    const docType = map[kind] || 'estimate_internal';
+    const mode = String(kind).endsWith('_pdf') ? 'pdf' : 'html';
+    return openQuoteDocPreview(docType, mode);
 }
 
 document.getElementById('qDate').value = new Date().toISOString().slice(0, 10);

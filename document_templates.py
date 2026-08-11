@@ -427,12 +427,149 @@ def apply_template_to_context(
     return ctx
 
 
+ALLOWED_CONTEXT_OVERRIDE_KEYS = frozenset({
+    "event_name",
+    "project_name",
+    "company_name",
+    "manager_name",
+    "project_manager_name",
+    "sales_manager_name",
+    "contact_name",
+    "city",
+    "event_address",
+    "event_date",
+    "departure_date",
+    "return_date",
+    "rent_period",
+    "shifts",
+    "shifts_label",
+    "number",
+    "date",
+    "contract_number",
+    "contract_date",
+})
+
+
+def _parse_num(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().replace("\u00a0", " ").replace(" ", "").replace(",", ".")
+    if not s or s in ("—", "-", "–"):
+        return default
+    try:
+        return float(s)
+    except ValueError:
+        return default
+
+
+def apply_preview_data_overrides(
+    context: Dict[str, Any],
+    context_overrides: Optional[Dict[str, Any]] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    Сессионные правки превью: поля шапки + позиции.
+    Пересчитывает суммы строк и итог на сервере при изменении items.
+    """
+    ctx = dict(context or {})
+    overrides = context_overrides or {}
+    if overrides:
+        for key, val in overrides.items():
+            if key in ALLOWED_CONTEXT_OVERRIDE_KEYS and val is not None:
+                ctx[key] = val
+        if "event_name" in overrides and "project_name" not in overrides:
+            ctx["project_name"] = overrides["event_name"]
+        if "project_name" in overrides and "event_name" not in overrides:
+            ctx["event_name"] = overrides["project_name"]
+        if "manager_name" in overrides and "project_manager_name" not in overrides:
+            ctx["project_manager_name"] = overrides["manager_name"]
+        if "shifts" in overrides and "shifts_label" not in overrides:
+            try:
+                sh = float(overrides["shifts"])
+                ctx["shifts"] = sh
+                ctx["shifts_label"] = str(int(sh)) if sh == int(sh) else str(sh)
+            except (TypeError, ValueError):
+                ctx["shifts_label"] = str(overrides["shifts"])
+        elif "shifts_label" in overrides and "shifts" not in overrides:
+            try:
+                ctx["shifts"] = float(str(overrides["shifts_label"]).replace(",", "."))
+            except (TypeError, ValueError):
+                pass
+        dep = ctx.get("departure_date") or ""
+        ret = ctx.get("return_date") or ctx.get("event_date") or ""
+        if dep or ret:
+            ctx["rent_period"] = f"{dep or '—'} — {ret or '—'}"
+
+    if items is not None:
+        base_items = list(ctx.get("items") or [])
+        merged: List[Dict[str, Any]] = []
+        for i, patch in enumerate(items):
+            patch = patch or {}
+            base = dict(base_items[i]) if i < len(base_items) else {}
+            if "name" in patch and patch["name"] is not None:
+                base["name"] = str(patch["name"])
+            if "quantity" in patch or "qty" in patch:
+                raw_q = patch["quantity"] if "quantity" in patch else patch.get("qty")
+                base["quantity"] = max(1, int(_parse_num(raw_q, 1)))
+            if "days" in patch and patch["days"] is not None:
+                base["days"] = max(1, int(_parse_num(patch["days"], 1)))
+            if "price" in patch and patch["price"] is not None:
+                base["price"] = _parse_num(patch["price"], 0)
+            if not base.get("category_type"):
+                base["category_type"] = "equipment"
+            if not base.get("warehouse_type"):
+                base["warehouse_type"] = "own"
+            merged.append(base)
+
+        from calculator import calculate_estimate
+
+        discount = float(ctx.get("discount_percentage") or 0)
+        tax = ctx.get("tax_percentage")
+        result = calculate_estimate(merged, discount, tax)
+        ctx["items"] = result["items"]
+        ctx["equipment_base"] = result.get("equipment_base", 0)
+        ctx["equipment_total"] = result.get("equipment_total", 0)
+        ctx["fixed_total"] = result.get("fixed_total", 0)
+        ctx["discount_amount"] = result.get("discount_amount", 0)
+        ctx["after_discount"] = result.get("after_discount", 0)
+        ctx["tax_percentage"] = result.get("tax_percentage", tax)
+        ctx["tax_amount"] = result.get("tax_amount", 0)
+        ctx["grand_total"] = result.get("grand_total", 0)
+        ctx["cost_total"] = result.get("cost_total", 0)
+        ctx["margin"] = result.get("margin", 0)
+        try:
+            from document_generator import get_rubles_text
+
+            ctx["grand_total_text"] = get_rubles_text(float(ctx.get("grand_total") or 0))
+        except Exception:
+            ctx["grand_total_text"] = str(ctx.get("grand_total") or "")
+
+    return ctx
+
+
 def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
-    """Структурированный HTML-превью документа (без скачивания)."""
+    """Структурированный HTML-превью с contenteditable-зонами (data-field)."""
     import html as html_mod
 
     def esc(v: Any) -> str:
         return html_mod.escape(str(v if v is not None else ""))
+
+    def ed(field: str, value: Any, extra_class: str = "") -> str:
+        cls = f"pv-ed {extra_class}".strip()
+        return (
+            f'<span class="{cls}" contenteditable="true" data-field="{esc(field)}" '
+            f'spellcheck="false">{esc(value)}</span>'
+        )
+
+    def ed_block(field: str, value: Any, extra_class: str = "") -> str:
+        cls = f"pv-ed pv-ed-block {extra_class}".strip()
+        text = esc(value).replace("\n", "<br>")
+        return (
+            f'<div class="{cls}" contenteditable="true" data-field="{esc(field)}" '
+            f'spellcheck="false">{text}</div>'
+        )
 
     title = (
         context.get("tpl_custom_title")
@@ -450,8 +587,15 @@ def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
     number = context.get("number") or context.get("contract_number") or ""
     date = context.get("date") or context.get("contract_date") or ""
     city = context.get("city") or ""
+    address = context.get("event_address") or ""
     event_date = context.get("event_date") or ""
+    departure = context.get("departure_date") or ""
+    return_date = context.get("return_date") or ""
     manager = context.get("manager_name") or ""
+    shifts = context.get("shifts_label")
+    if shifts is None or shifts == "":
+        shifts = context.get("shifts")
+        shifts = "" if shifts is None else str(shifts)
     body_notes = context.get("tpl_body_notes") or ""
     footer_notes = context.get("tpl_footer_notes") or ""
     show_company = context.get("tpl_show_company_block", True)
@@ -459,49 +603,64 @@ def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
     show_totals = context.get("tpl_include_totals", True)
     show_contacts = context.get("tpl_include_company_contacts", True)
 
-    meta_rows = []
-    if number:
-        meta_rows.append(f"<div><span>№</span> {esc(number)}</div>")
-    if date:
-        meta_rows.append(f"<div><span>Дата</span> {esc(date)}</div>")
-    if project:
-        meta_rows.append(f"<div><span>Проект</span> {esc(project)}</div>")
-    if client:
-        meta_rows.append(f"<div><span>Клиент</span> {esc(client)}</div>")
-    if city:
-        meta_rows.append(f"<div><span>Город</span> {esc(city)}</div>")
-    if event_date:
-        meta_rows.append(f"<div><span>Мероприятие</span> {esc(event_date)}</div>")
-    if manager:
-        meta_rows.append(f"<div><span>Менеджер</span> {esc(manager)}</div>")
+    num_field = "contract_number" if doc_type == "contract" else "number"
+    date_field = "contract_date" if doc_type == "contract" else "date"
+
+    meta_rows = [
+        f"<div><span>№</span> {ed(num_field, number)}</div>",
+        f"<div><span>Дата</span> {ed(date_field, date)}</div>",
+        f"<div><span>Проект</span> {ed('event_name', project)}</div>",
+        f"<div><span>Клиент</span> {ed('company_name', client)}</div>",
+        f"<div><span>Менеджер</span> {ed('manager_name', manager)}</div>",
+        f"<div><span>Город</span> {ed('city', city)}</div>",
+        f"<div><span>Адрес</span> {ed('event_address', address)}</div>",
+        f"<div><span>Мероприятие</span> {ed('event_date', event_date)}</div>",
+        f"<div><span>Выезд</span> {ed('departure_date', departure)}</div>",
+        f"<div><span>Возврат</span> {ed('return_date', return_date)}</div>",
+        f"<div><span>Смены</span> {ed('shifts_label', shifts)}</div>",
+    ]
+
+    def fmt_money(v: Any) -> str:
+        if v is None:
+            return ""
+        try:
+            return f"{float(v):,.0f}".replace(",", " ")
+        except (TypeError, ValueError):
+            return str(v)
 
     items_html = ""
     if show_items:
         rows = []
-        for i, it in enumerate(context.get("items") or [], 1):
-            name = esc(it.get("name") or "")
-            qty = esc(it.get("quantity") if it.get("quantity") is not None else "")
-            days = esc(it.get("days") if it.get("days") is not None else "")
+        for i, it in enumerate(context.get("items") or []):
+            idx = i  # 0-based for data-field
+            name = it.get("name") or ""
+            qty = it.get("quantity") if it.get("quantity") is not None else ""
+            days = it.get("days") if it.get("days") is not None else ""
             price = it.get("price")
             line = it.get("line_total_discounted")
             if line is None:
                 line = it.get("line_total_base")
-            price_s = f"{float(price):,.0f}".replace(",", " ") if price is not None else "—"
-            line_s = f"{float(line):,.0f}".replace(",", " ") if line is not None else "—"
+            name_ed = ed(f"items.{idx}.name", name)
+            qty_ed = ed(f"items.{idx}.quantity", qty, "num")
+            days_ed = ed(f"items.{idx}.days", days, "num")
+            price_ed = ed(f"items.{idx}.price", fmt_money(price), "num")
+            line_ed = ed(f"items.{idx}.line_sum", fmt_money(line), "num")
             if doc_type == "technichka":
                 rows.append(
-                    f"<tr><td>{i}</td><td>{name}</td><td class='num'>{qty}</td></tr>"
+                    f"<tr data-item-index='{idx}'><td>{idx + 1}</td><td>{name_ed}</td>"
+                    f"<td class='num'>{qty_ed}</td></tr>"
                 )
             elif doc_type == "estimate_client":
                 rows.append(
-                    f"<tr><td>{i}</td><td>{name}</td><td class='num'>{qty}</td>"
-                    f"<td class='num'>{days}</td><td class='num'>{line_s}</td></tr>"
+                    f"<tr data-item-index='{idx}'><td>{idx + 1}</td><td>{name_ed}</td>"
+                    f"<td class='num'>{qty_ed}</td><td class='num'>{days_ed}</td>"
+                    f"<td class='num'>{line_ed}</td></tr>"
                 )
             else:
                 rows.append(
-                    f"<tr><td>{i}</td><td>{name}</td><td class='num'>{qty}</td>"
-                    f"<td class='num'>{days}</td><td class='num'>{price_s}</td>"
-                    f"<td class='num'>{line_s}</td></tr>"
+                    f"<tr data-item-index='{idx}'><td>{idx + 1}</td><td>{name_ed}</td>"
+                    f"<td class='num'>{qty_ed}</td><td class='num'>{days_ed}</td>"
+                    f"<td class='num'>{price_ed}</td><td class='num'>{line_ed}</td></tr>"
                 )
         if doc_type == "technichka":
             head = "<tr><th>№</th><th>Наименование</th><th>Кол-во</th></tr>"
@@ -512,13 +671,19 @@ def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
                 "<tr><th>№</th><th>Наименование</th><th>Кол-во</th>"
                 "<th>Смены</th><th>Цена</th><th>Сумма</th></tr>"
             )
-        items_html = f"<table class='pv-items'><thead>{head}</thead><tbody>{''.join(rows)}</tbody></table>"
+        items_html = (
+            f"<table class='pv-items'><thead>{head}</thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
 
     totals_html = ""
     if show_totals and doc_type != "technichka":
         gt = context.get("grand_total")
-        gt_s = f"{float(gt):,.0f}".replace(",", " ") if gt is not None else "—"
-        totals_html = f"<div class='pv-totals'><strong>Итого:</strong> {esc(gt_s)} ₸</div>"
+        gt_s = fmt_money(gt) if gt is not None else "—"
+        totals_html = (
+            f"<div class='pv-totals' data-field='grand_total'>"
+            f"<strong>Итого:</strong> {esc(gt_s)} ₸</div>"
+        )
 
     contacts = ""
     if show_company or show_contacts:
@@ -531,12 +696,12 @@ def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
         )
 
     notes_body = (
-        f"<div class='pv-notes'>{esc(body_notes).replace(chr(10), '<br>')}</div>"
-        if body_notes else ""
+        f"<div class='pv-notes-label'>Примечания</div>"
+        f"{ed_block('body_notes', body_notes, 'pv-notes')}"
     )
     notes_footer = (
-        f"<div class='pv-footer-notes'>{esc(footer_notes).replace(chr(10), '<br>')}</div>"
-        if footer_notes else ""
+        f"<div class='pv-notes-label'>Футер</div>"
+        f"{ed_block('footer_notes', footer_notes, 'pv-footer-notes')}"
     )
 
     return f"""<!DOCTYPE html>
@@ -546,21 +711,51 @@ def build_html_preview(context: Dict[str, Any], doc_type: str) -> str:
 <style>
 body {{ margin:0; padding:24px; font-family: 'DM Sans', system-ui, sans-serif;
   color:#1a1a1a; background:#fff; font-size:14px; line-height:1.45; }}
-.pv-title {{ font-size:22px; font-weight:700; margin:0 0 12px; }}
-.pv-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-bottom:16px; }}
-.pv-meta span {{ color:#6b7280; font-size:12px; font-weight:600; margin-right:6px; }}
-.pv-notes, .pv-footer-notes {{ margin:14px 0; white-space:pre-wrap; color:#374151; }}
+.pv-hint-bar {{
+  font-size:12px; color:#6b7280; margin:0 0 14px; padding:8px 10px;
+  background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px;
+}}
+.pv-title {{ font-size:22px; font-weight:700; margin:0 0 12px; outline:none; }}
+.pv-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; margin-bottom:16px; }}
+.pv-meta > div > span:first-child {{
+  color:#6b7280; font-size:12px; font-weight:600; margin-right:6px; display:inline-block; min-width:72px;
+}}
+.pv-notes-label {{ font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase;
+  letter-spacing:.04em; margin:12px 0 4px; }}
+.pv-notes, .pv-footer-notes {{ margin:0 0 14px; white-space:pre-wrap; color:#374151; min-height:1.4em; }}
 .pv-items {{ width:100%; border-collapse:collapse; margin:12px 0; }}
-.pv-items th, .pv-items td {{ border-bottom:1px solid #e5e7eb; padding:8px 6px; text-align:left; }}
+.pv-items th, .pv-items td {{ border-bottom:1px solid #e5e7eb; padding:8px 6px; text-align:left; vertical-align:top; }}
 .pv-items th {{ font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }}
 .pv-items .num {{ text-align:right; white-space:nowrap; }}
 .pv-totals {{ margin-top:14px; font-size:16px; text-align:right; }}
 .pv-contacts {{ margin-top:24px; padding-top:14px; border-top:1px solid #e5e7eb; color:#4b5563; font-size:13px; }}
 .pv-brand {{ font-weight:700; color:#111; margin-bottom:4px; }}
+.pv-ed {{
+  display:inline-block; min-width:1.5em; min-height:1.2em; outline:none;
+  border:1px dashed transparent; border-radius:4px; padding:1px 4px; margin:-1px -4px;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  cursor:text;
+}}
+.pv-ed:hover {{ border-color:#cbd5e1; background:#f8fafc; }}
+.pv-ed:focus {{
+  border-color:#e25a3c; background:#fff7f5;
+  box-shadow:0 0 0 2px rgba(226,90,60,.18);
+}}
+.pv-ed-block {{
+  display:block; width:100%; box-sizing:border-box; padding:8px 10px; margin:0;
+  border:1px dashed #d1d5db; border-radius:8px; min-height:48px;
+}}
+.pv-ed-block:hover {{ border-color:#94a3b8; }}
+.pv-ed-block:focus {{
+  border-color:#e25a3c; background:#fff7f5;
+  box-shadow:0 0 0 2px rgba(226,90,60,.18);
+}}
+.pv-ed.num {{ min-width:3em; text-align:right; }}
 @media (max-width:640px) {{ .pv-meta {{ grid-template-columns:1fr; }} body {{ padding:14px; }} }}
 </style></head><body>
+<p class="pv-hint-bar">Кликните, чтобы изменить · правки сессионные, затем «Применить» или уход с поля</p>
 {contacts if show_company else ''}
-<h1 class="pv-title">{esc(title)}</h1>
+<h1 class="pv-title pv-ed" contenteditable="true" data-field="custom_title" spellcheck="false">{esc(title)}</h1>
 <div class="pv-meta">{''.join(meta_rows)}</div>
 {notes_body}
 {items_html}

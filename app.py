@@ -706,7 +706,17 @@ async def auth_middleware(request: Request, call_next):
 
         # Проверка доступа к разделу по правам сотрудника
         section = auth.section_for_path(path)
-        if section and not auth.user_can_access(user, section):
+        # Превью/генерация шаблонов: CRM и сметы могут вызывать API без раздела «Документы».
+        # Сам UI /documents и вкладка в карточке сделки — только при явном праве documents.
+        if section == "documents" and path.startswith("/api/document-templates"):
+            can_preview_api = (
+                auth.user_can_access(user, "documents")
+                or auth.user_can_access(user, "crm")
+                or auth.user_can_access(user, "quotes")
+            )
+            if not can_preview_api:
+                return JSONResponse(status_code=403, content={"error": "Нет доступа к разделу"})
+        elif section and not auth.user_can_access(user, section):
             if path.startswith("/api/"):
                 return JSONResponse(status_code=403, content={"error": "Нет доступа к разделу"})
             return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>Доступ к разделу запрещён. Обратитесь к администратору.</h3>", status_code=403)
@@ -2844,11 +2854,21 @@ async def read_equipment(request: Request, user: User = Depends(get_current_user
 
 @app.get("/crm", response_class=HTMLResponse)
 async def read_crm(request: Request, user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("crm.html", {"request": request, "active_page": "crm"})
+    return templates.TemplateResponse(
+        "crm.html",
+        {
+            "request": request,
+            "active_page": "crm",
+            "can_access_documents": auth.user_can_access(user, "documents"),
+            "hide_prices": _user_hide_prices(user),
+        },
+    )
 
 
 @app.get("/documents", response_class=HTMLResponse)
 async def read_documents(request: Request, user: User = Depends(get_current_user)):
+    if not auth.user_can_access(user, "documents"):
+        return HTMLResponse("Нет доступа к разделу «Документы»", status_code=403)
     can_edit = bool(
         user
         and (
@@ -3149,14 +3169,130 @@ class DocumentTemplatePreviewBody(BaseModel):
     show_company_block: Optional[bool] = None
     include_sections: Optional[Dict[str, bool]] = None
     deal_id: Optional[int] = None
+    context_overrides: Optional[Dict[str, Any]] = None
+    items: Optional[List[Dict[str, Any]]] = None
 
 
 def _template_preview_overrides(payload: Optional[DocumentTemplatePreviewBody]) -> Dict[str, Any]:
+    """Только настройки шаблона (title/notes/флаги) — без deal_id / context / items."""
     if not payload:
         return {}
     data = payload.dict(exclude_unset=True)
-    data.pop("deal_id", None)
+    for k in ("deal_id", "context_overrides", "items"):
+        data.pop(k, None)
     return data
+
+
+def _doc_type_to_estimate_mode(doc_type: str) -> Optional[str]:
+    base = (doc_type or "").replace("_pdf", "")
+    return {
+        "estimate_internal": "internal",
+        "estimate_client": "client",
+        "estimate_client_priced": "client_priced",
+    }.get(base)
+
+
+def _user_can_access_doc_type(user: User, doc_type: str) -> bool:
+    """hide_prices: только техничка и клиентская смета без цен."""
+    if user.role == "admin" or not _user_hide_prices(user):
+        return True
+    base = (doc_type or "").replace("_pdf", "")
+    return base in ("estimate_client", "technichka")
+
+
+def _build_deal_document_context(
+    db: Session,
+    deal_id: int,
+    doc_type: str,
+    user: Optional[User] = None,
+) -> Tuple[Optional[Tuple[Dict[str, Any], str, Deal]], Optional[JSONResponse]]:
+    """Контекст документа по сделке. (context, base, deal) или ошибка."""
+    base = (doc_type or "").replace("_pdf", "")
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return None, JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+    if user is not None and not _user_can_access_doc_type(user, base):
+        return None, JSONResponse(
+            status_code=403,
+            content={"error": "Нет доступа к этому типу документа (скрыты цены)"},
+        )
+
+    mode = _doc_type_to_estimate_mode(base)
+    if mode:
+        context = _build_estimate_context(d, mode, db=db)
+        return (context, base, d), None
+    if base == "technichka":
+        context = doc_templates.apply_template_to_context(
+            _build_technichka_context(d, db=db), db, "technichka"
+        )
+        return (context, base, d), None
+    if base == "contract":
+        comp = d.company
+        if not comp:
+            return None, JSONResponse(
+                status_code=400, content={"error": "Для договора выберите клиента"}
+            )
+        result = _calc_deal(d, exclude_subrental=True)
+        header = _estimate_header_fields(d)
+        letterhead = _get_company_letterhead(db)
+        logo_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "static", "img", "introshow_logo.png",
+        )
+        context = doc_templates.apply_template_to_context({
+            "contract_number": f"CRM-{d.id}",
+            "contract_date": datetime.today().strftime("%d.%m.%Y"),
+            "number": f"CRM-{d.id}",
+            "date": datetime.today().strftime("%d.%m.%Y"),
+            **header,
+            "company_name": comp.name,
+            "director_name": comp.director_name,
+            "iin_bin": comp.bin,
+            "iban": comp.requisites,
+            "event_name": d.title,
+            "event_date": d.event_date,
+            "event_address": d.event_address,
+            "our_company_name": letterhead.get("company_name") or "Intro Show",
+            "our_company_phone": letterhead.get("company_phone") or "",
+            "our_company_email": letterhead.get("company_email") or "",
+            "our_company_address": letterhead.get("company_address") or "",
+            "our_company_bin": letterhead.get("company_bin") or "",
+            "logo_path": logo_path if os.path.isfile(logo_path) else None,
+            "manager_phone": letterhead.get("company_phone") or "",
+            "items": result["items"],
+            "equipment_total": result["equipment_total"],
+            "fixed_total": result["fixed_total"],
+            "grand_total": result["grand_total"],
+            "discount_percentage": d.discount_percentage or 0,
+            "tax_percentage": result.get("tax_percentage", FIXED_TAX_PERCENTAGE),
+            "tax_amount": result.get("tax_amount", 0),
+        }, db, "contract")
+        return (context, base, d), None
+    return None, JSONResponse(status_code=404, content={"error": "Неизвестный тип документа"})
+
+
+def _apply_preview_payload(
+    context: Dict[str, Any],
+    db: Session,
+    base: str,
+    payload: Optional[DocumentTemplatePreviewBody],
+) -> Dict[str, Any]:
+    """Шаблонные overrides + context_overrides/items → готовый context."""
+    tpl_overrides = _template_preview_overrides(payload)
+    ctx = doc_templates.apply_template_to_context(context, db, base, overrides=tpl_overrides)
+    if payload:
+        data = payload.dict(exclude_unset=True)
+        ctx = doc_templates.apply_preview_data_overrides(
+            ctx,
+            context_overrides=data.get("context_overrides"),
+            items=data.get("items"),
+        )
+        # повторно применить notes/title если пришли вместе с data overrides
+        if any(k in data for k in ("custom_title", "body_notes", "footer_notes")):
+            ctx = doc_templates.apply_template_to_context(
+                ctx, db, base, overrides=_template_preview_overrides(payload)
+            )
+    return ctx
 
 
 def _build_sample_template_context(
@@ -3186,14 +3322,61 @@ def _build_sample_template_context(
     return (context, base), None
 
 
+def _resolve_preview_context(
+    db: Session,
+    doc_type: str,
+    payload: Optional[DocumentTemplatePreviewBody] = None,
+    user: Optional[User] = None,
+) -> Tuple[Optional[Tuple[Dict[str, Any], str]], Optional[JSONResponse]]:
+    """Sample или deal-контекст + сессионные правки превью."""
+    base = (doc_type or "").replace("_pdf", "")
+    deal_id = payload.deal_id if payload else None
+    if deal_id:
+        built, err = _build_deal_document_context(db, deal_id, base, user=user)
+        if err:
+            return None, err
+        context, base, _deal = built
+        context = _apply_preview_payload(context, db, base, payload)
+        return (context, base), None
+
+    tpl_overrides = _template_preview_overrides(payload)
+    result, err = _build_sample_template_context(db, base, overrides=tpl_overrides)
+    if err:
+        return None, err
+    context, base = result
+    if payload:
+        data = payload.dict(exclude_unset=True)
+        context = doc_templates.apply_preview_data_overrides(
+            context,
+            context_overrides=data.get("context_overrides"),
+            items=data.get("items"),
+        )
+        if any(k in data for k in ("custom_title", "body_notes", "footer_notes")):
+            context = doc_templates.apply_template_to_context(
+                context, db, base, overrides=tpl_overrides
+            )
+    return (context, base), None
+
+
 def _render_sample_document_file(context: Dict[str, Any], base: str, fmt: str) -> str:
     """Генерирует sample docx/pdf во временный файл, возвращает путь."""
+    return _render_preview_document_file(context, base, fmt, db=None)
+
+
+def _render_preview_document_file(
+    context: Dict[str, Any],
+    base: str,
+    fmt: str,
+    db: Session = None,
+) -> str:
+    """Генерирует docx/pdf превью (sample или сделка) во временный файл."""
     from document_generator import (
         generate_estimate_docx,
         generate_estimate_pdf,
         generate_technichka_docx,
         generate_technichka_pdf,
         generate_contract_pdf,
+        generate_contract,
     )
 
     fmt = (fmt or "docx").lower().strip()
@@ -3202,6 +3385,12 @@ def _render_sample_document_file(context: Dict[str, Any], base: str, fmt: str) -
     suffix = ".pdf" if fmt == "pdf" else ".docx"
     fd, temp_path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
+
+    # Синхронизация notes для Word-шаблона договора
+    context = dict(context)
+    context["body_notes"] = context.get("tpl_body_notes") or context.get("body_notes") or ""
+    context["footer_notes"] = context.get("tpl_footer_notes") or context.get("footer_notes") or ""
+    context["custom_title"] = context.get("tpl_custom_title") or context.get("custom_title") or ""
 
     if base == "technichka":
         if fmt == "pdf":
@@ -3212,8 +3401,14 @@ def _render_sample_document_file(context: Dict[str, Any], base: str, fmt: str) -
         if fmt == "pdf":
             generate_contract_pdf(context, temp_path)
         else:
-            # Word-договор требует .docx шаблон — для sample отдаём estimate-like DOCX.
-            generate_estimate_docx(context, temp_path, mode="client_priced")
+            template_path = CONTRACT_TEMPLATE_PATH
+            if template_path and os.path.isfile(template_path):
+                try:
+                    generate_contract(context, template_path, temp_path)
+                except Exception:
+                    generate_estimate_docx(context, temp_path, mode="client_priced")
+            else:
+                generate_estimate_docx(context, temp_path, mode="client_priced")
     elif base == "estimate_client":
         if fmt == "pdf":
             generate_estimate_pdf(context, temp_path, mode="client")
@@ -3328,9 +3523,8 @@ def api_preview_document_template_html_post(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """HTML-превью с сессионными правками title/notes (без сохранения шаблона)."""
-    overrides = _template_preview_overrides(payload)
-    result, err = _build_sample_template_context(db, doc_type, overrides=overrides)
+    """HTML-превью с сессионными правками (шапка, позиции, notes)."""
+    result, err = _resolve_preview_context(db, doc_type, payload=payload, user=user)
     if err:
         return err
     context, base = result
@@ -3347,17 +3541,17 @@ def api_preview_document_template_pdf_post(
     user: User = Depends(get_current_user),
 ):
     """PDF-превью с сессионными правками."""
-    overrides = _template_preview_overrides(payload)
-    result, err = _build_sample_template_context(db, doc_type, overrides=overrides)
+    result, err = _resolve_preview_context(db, doc_type, payload=payload, user=user)
     if err:
         return err
     context, base = result
-    temp_path = _render_sample_document_file(context, base, "pdf")
+    temp_path = _render_preview_document_file(context, base, "pdf", db=db)
+    deal_suffix = f"_CRM-{payload.deal_id}" if payload and payload.deal_id else ""
     return _file_response_with_cleanup(
         background_tasks,
         temp_path,
         "application/pdf",
-        f"Preview_{base}.pdf",
+        f"Preview_{base}{deal_suffix}.pdf",
         inline=bool(inline),
     )
 
@@ -3371,17 +3565,17 @@ def api_preview_document_template_docx_post(
     user: User = Depends(get_current_user),
 ):
     """Скачать Word с сессионными правками превью."""
-    overrides = _template_preview_overrides(payload)
-    result, err = _build_sample_template_context(db, doc_type, overrides=overrides)
+    result, err = _resolve_preview_context(db, doc_type, payload=payload, user=user)
     if err:
         return err
     context, base = result
-    temp_path = _render_sample_document_file(context, base, "docx")
+    temp_path = _render_preview_document_file(context, base, "docx", db=db)
+    deal_suffix = f"_CRM-{payload.deal_id}" if payload and payload.deal_id else ""
     return _file_response_with_cleanup(
         background_tasks,
         temp_path,
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        f"Sample_{base}.docx",
+        f"{'Deal' if payload and payload.deal_id else 'Sample'}_{base}{deal_suffix}.docx",
         inline=False,
     )
 
@@ -3389,25 +3583,105 @@ def api_preview_document_template_docx_post(
 @app.get("/api/document-templates/{doc_type}/preview-meta")
 def api_preview_document_template_meta(
     doc_type: str,
+    deal_id: Optional[int] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """Метаданные для формы превью/редактирования (сырые notes + ссылки)."""
-    result, err = _build_sample_template_context(db, doc_type)
+    payload = DocumentTemplatePreviewBody(deal_id=deal_id) if deal_id else None
+    result, err = _resolve_preview_context(db, doc_type, payload=payload, user=user)
     if err:
         return err
     context, base = result
     row = doc_templates.get_template_row(db, base)
+    items_out = []
+    for it in context.get("items") or []:
+        items_out.append({
+            "name": it.get("name") or "",
+            "quantity": it.get("quantity"),
+            "days": it.get("days"),
+            "price": it.get("price"),
+            "line_total": it.get("line_total_discounted", it.get("line_total_base")),
+        })
     return {
         "doc_type": base,
-        "name": row.name if row else base,
-        "custom_title": context.get("tpl_custom_title_raw") or "",
-        "body_notes": context.get("tpl_body_notes_raw") or "",
-        "footer_notes": context.get("tpl_footer_notes_raw") or "",
+        "name": (row.name if row else base) + (f" · CRM-{deal_id}" if deal_id else ""),
+        "deal_id": deal_id,
+        "custom_title": context.get("tpl_custom_title_raw") or context.get("tpl_custom_title") or "",
+        "body_notes": context.get("tpl_body_notes_raw") or context.get("tpl_body_notes") or "",
+        "footer_notes": context.get("tpl_footer_notes_raw") or context.get("tpl_footer_notes") or "",
+        "context": {
+            "event_name": context.get("event_name") or context.get("project_name") or "",
+            "company_name": context.get("company_name") or "",
+            "manager_name": context.get("manager_name") or "",
+            "city": context.get("city") or "",
+            "event_address": context.get("event_address") or "",
+            "event_date": context.get("event_date") or "",
+            "departure_date": context.get("departure_date") or "",
+            "return_date": context.get("return_date") or "",
+            "shifts_label": context.get("shifts_label") or str(context.get("shifts") or ""),
+            "grand_total": context.get("grand_total"),
+        },
+        "items": items_out,
         "preview_html_url": f"/api/document-templates/{base}/preview.html",
         "preview_pdf_url": f"/api/document-templates/{base}/preview.pdf?inline=1",
         "sample_docx_url": f"/api/document-templates/{base}/sample?format=docx",
         "sample_pdf_url": f"/api/document-templates/{base}/sample?format=pdf",
+    }
+
+
+@app.get("/api/deals/{deal_id}/document-registry")
+def api_deal_document_registry(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Реестр документов сделки: доступные шаблоны + статус генерации."""
+    if not auth.user_can_access(user, "documents"):
+        return JSONResponse(status_code=403, content={"error": "Нет доступа к документам"})
+    d = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not d:
+        return JSONResponse(status_code=404, content={"error": "Сделка не найдена"})
+
+    existing = (
+        db.query(DealDocument)
+        .filter(DealDocument.deal_id == deal_id, DealDocument.deleted_at.is_(None))
+        .order_by(DealDocument.created_at.desc())
+        .all()
+    )
+    by_type = {}
+    for row in existing:
+        key = (row.doc_type or "").replace("_pdf", "")
+        if key not in by_type:
+            by_type[key] = row
+
+    catalog = [
+        ("estimate_internal", "Для нас (внутренняя)", True),
+        ("estimate_client_priced", "Клиенту с ценами", True),
+        ("estimate_client", "Клиенту без цен", True),
+        ("contract", "Договор", bool(d.company_id)),
+        ("technichka", "Техничка", True),
+    ]
+    items = []
+    for doc_type, label, available in catalog:
+        if not _user_can_access_doc_type(user, doc_type):
+            continue
+        row = by_type.get(doc_type)
+        items.append({
+            "doc_type": doc_type,
+            "label": label,
+            "available": available,
+            "reason": None if available else "Нужен выбранный клиент",
+            "generated": bool(row),
+            "last_filename": row.filename if row else None,
+            "last_created_at": row.created_at.isoformat() if row and row.created_at else None,
+            "preview_meta_url": f"/api/document-templates/{doc_type}/preview-meta?deal_id={deal_id}",
+        })
+    return {
+        "deal_id": deal_id,
+        "deal_title": d.title or f"CRM-{deal_id}",
+        "full_registry_url": f"/documents?deal_id={deal_id}",
+        "items": items,
     }
 
 

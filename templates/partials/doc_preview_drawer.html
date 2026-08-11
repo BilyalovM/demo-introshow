@@ -1,0 +1,127 @@
+{# Shared in-CRM document preview drawer #}
+<style>
+.pv-drawer-backdrop {
+    position:fixed; inset:0; background:rgba(15,15,20,.5);
+    z-index:1300; display:none; align-items:stretch; justify-content:flex-end;
+}
+.pv-drawer-backdrop.open { display:flex; }
+.pv-drawer {
+    width:min(1100px, 100%);
+    height:100%;
+    background:var(--surface, var(--background));
+    color:var(--text);
+    border-left:1px solid var(--border);
+    box-shadow:-12px 0 40px rgba(0,0,0,.18);
+    display:flex; flex-direction:column;
+    min-width:0;
+}
+.pv-drawer header {
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:12px 16px; border-bottom:1px solid var(--border);
+    flex-shrink:0; flex-wrap:wrap;
+}
+.pv-drawer header h2 { margin:0; font-size:17px; font-weight:700; }
+.pv-drawer-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.pv-drawer-body {
+    flex:1; min-height:0;
+    display:grid;
+    grid-template-columns:minmax(240px, 300px) 1fr;
+}
+.pv-edit-panel {
+    border-right:1px solid var(--border);
+    padding:14px 16px;
+    overflow:auto;
+    display:flex; flex-direction:column; gap:12px;
+    background:var(--bg-2, rgba(0,0,0,.02));
+}
+.pv-edit-panel label.field {
+    display:flex !important; flex-direction:column; gap:5px;
+    font-size:12px; font-weight:700; color:var(--muted); margin:0 !important;
+}
+.pv-edit-panel input[type=text],
+.pv-edit-panel textarea {
+    width:100%; box-sizing:border-box;
+    padding:0.55rem 0.7rem; border:1px solid var(--border); border-radius:8px;
+    background:var(--background); color:var(--text); font-size:13px;
+    font-family:inherit; resize:vertical;
+}
+.pv-edit-panel textarea { min-height:80px; }
+.pv-preview-panel {
+    min-width:0; min-height:0;
+    display:flex; flex-direction:column;
+    background:#e8e8ea;
+}
+.pv-mode-tabs {
+    display:flex; gap:4px; padding:8px 12px; background:var(--surface, var(--background));
+    border-bottom:1px solid var(--border); flex-shrink:0;
+}
+.pv-mode-tab {
+    appearance:none; border:1px solid var(--border); background:transparent;
+    padding:6px 12px; border-radius:8px; font-size:12.5px; font-weight:600;
+    color:var(--muted); cursor:pointer; font-family:inherit;
+}
+.pv-mode-tab.active {
+    background:rgba(226,90,60,.12); color:var(--coral, #e25a3c);
+    border-color:rgba(226,90,60,.35);
+}
+.pv-frame-wrap { flex:1; min-height:0; position:relative; }
+.pv-frame-wrap iframe {
+    position:absolute; inset:0; width:100%; height:100%; border:0; background:#fff;
+}
+.pv-hint { font-size:12px; color:var(--muted); line-height:1.4; margin:0; }
+.pv-toast {
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    background:#111; color:#fff; padding:10px 16px; border-radius:10px;
+    font-size:13px; z-index:1400; display:none; box-shadow:0 8px 24px rgba(0,0,0,.25);
+}
+.pv-toast.show { display:block; }
+@media (max-width:900px) {
+    .pv-drawer-body { grid-template-columns:1fr; grid-template-rows:auto 1fr; }
+    .pv-edit-panel {
+        border-right:none; border-bottom:1px solid var(--border);
+        max-height:36vh;
+    }
+    .pv-drawer { width:100%; }
+}
+</style>
+
+<div class="pv-drawer-backdrop" id="pv-drawer-backdrop" onclick="if(event.target===this)closePreview()">
+    <div class="pv-drawer" role="dialog" aria-modal="true" aria-labelledby="pv-title">
+        <header>
+            <h2 id="pv-title">Превью</h2>
+            <div class="pv-drawer-actions">
+                <button type="button" class="btn btn-sm" onclick="prepareForClient()">Подготовить для клиента</button>
+                <button type="button" class="btn btn-sm" id="pv-registry-btn" onclick="savePreviewToRegistry()" hidden>В реестр</button>
+                <button type="button" class="btn btn-sm" onclick="downloadPreview('docx')">Скачать Word</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="downloadPreview('pdf')">Скачать PDF</button>
+                <button type="button" class="btn btn-sm" onclick="closePreview()">Закрыть</button>
+            </div>
+        </header>
+        <div class="pv-drawer-body">
+            <aside class="pv-edit-panel">
+                <p class="pv-hint">Кликните поля в документе, чтобы изменить. Слева — быстрые примечания. «Применить» пересоберёт HTML/PDF.</p>
+                <label class="field">Заголовок
+                    <input type="text" id="pv-custom-title" autocomplete="off">
+                </label>
+                <label class="field">Примечания в теле
+                    <textarea id="pv-body-notes"></textarea>
+                </label>
+                <label class="field">Футер / примечания
+                    <textarea id="pv-footer-notes"></textarea>
+                </label>
+                <button type="button" class="btn btn-primary" id="pv-apply-btn" onclick="applyPreviewEdits()">Применить</button>
+            </aside>
+            <section class="pv-preview-panel">
+                <div class="pv-mode-tabs">
+                    <button type="button" class="pv-mode-tab active" id="pv-tab-html" onclick="setPreviewMode('html')">HTML</button>
+                    <button type="button" class="pv-mode-tab" id="pv-tab-pdf" onclick="setPreviewMode('pdf')">PDF</button>
+                </div>
+                <div class="pv-frame-wrap">
+                    <iframe id="pv-frame" title="Превью документа"></iframe>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+<div class="pv-toast" id="pv-toast"></div>
+<script src="/static/js/doc_preview.js"></script>

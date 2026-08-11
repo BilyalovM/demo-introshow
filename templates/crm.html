@@ -705,6 +705,12 @@
                             <polyline points="22,6 12,13 2,6"></polyline>
                         </svg>
                     </a>
+                    <button type="button" id="deal-docs-btn" class="slider-action-icon" title="Реестр документов" onclick="switchSliderTab('documents')" {% if not can_access_documents %}style="display:none"{% endif %}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M8 7h8M8 12h8M8 17h5"></path>
+                            <path d="M6 3h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path>
+                        </svg>
+                    </button>
                 </div>
                 <button class="close-slider-btn" onclick="closeDealSlider()">&times;</button>
             </div>
@@ -721,6 +727,7 @@
         <div id="tab-btn-team" class="slider-tab-item" onclick="switchSliderTab('team')">Команда</div>
         <div id="tab-btn-money" class="slider-tab-item" onclick="switchSliderTab('money')">Деньги</div>
         <div id="tab-btn-invoices" class="slider-tab-item" onclick="switchSliderTab('invoices')">Счета</div>
+        <div id="tab-btn-documents" class="slider-tab-item" onclick="switchSliderTab('documents')" {% if not can_access_documents %}style="display:none"{% endif %}>Документы</div>
         <div id="tab-btn-chat" class="slider-tab-item" onclick="switchSliderTab('chat')" style="display:none;">💬 Чат с клиентом</div>
     </div>
 
@@ -949,19 +956,9 @@
                         <span>Маржа: <strong id="modal-margin-total" style="color:var(--primary)">0</strong></span>
                     </div>
                 </div>
-                <div style="margin-top:10px; position:relative;" id="crmDocsDd">
-                    <button type="button" class="btn btn-sm" style="width:100%" onclick="toggleCrmDocsMenu(event)">Документы ▾</button>
-                    <div id="crmDocsMenu" hidden style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;display:flex;flex-direction:column;gap:2px;">
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('internal')">Для нас → Word</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('internal_pdf')">Для нас → PDF</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_priced')">Клиенту с ценами → Word</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_priced_pdf')">Клиенту с ценами → PDF</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client')">Клиенту без цен → Word</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('client_pdf')">Клиенту без цен → PDF</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract')">Договор → Word</button>
-                        <button type="button" class="btn btn-sm" style="justify-content:flex-start;border:none;background:transparent" onclick="crmDownloadDoc('contract_pdf')">Договор → PDF</button>
-                    </div>
-                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Два режима клиентской сметы: <strong>с ценами</strong> / <strong>без цен</strong> (только итог). Флаг сотрудника hide_prices скрывает суммы в CRM. Техничка — вкладка «Команда».</p>
+                <div style="margin-top:10px; position:relative;{% if not can_access_documents %}display:none{% endif %}" id="crmDocsDd">
+                    <button type="button" class="btn btn-sm" style="width:100%" onclick="switchSliderTab('documents')">Реестр документов</button>
+                    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Превью → правка в документе → Word/PDF. Техничка — вкладка «Команда».</p>
                 </div>
             </div>
 
@@ -1047,6 +1044,18 @@
                     <button class="btn btn-sm btn-green" onclick="createDealInvoice()">+ Счёт</button>
                 </div>
                 <div id="deal-invoices-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+            </div>
+
+            <!-- Tab Content: Documents registry (permission: documents) -->
+            <div id="tab-content-documents" class="tab-pane" {% if not can_access_documents %}style="display:none"{% endif %}>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                    <div>
+                        <div style="font-weight:700; font-size:14px; margin-bottom:4px;">Реестр документов</div>
+                        <p class="muted" style="font-size:12.5px;margin:0;">Откройте превью с данными сделки, отредактируйте в документе и скачайте Word/PDF.</p>
+                    </div>
+                    <a class="btn btn-sm" id="deal-docs-full-link" href="/documents" target="_blank">Все документы</a>
+                </div>
+                <div id="deal-docs-registry-list" style="display:flex; flex-direction:column; gap:8px;"></div>
             </div>
 
             <!-- Tab Content: Chat with client (messenger dialog linked to deal) -->
@@ -1218,10 +1227,14 @@
         </div>
     </div>
 </div>
+{% if can_access_documents %}
+{% include "partials/doc_preview_drawer.html" %}
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
+    const CAN_ACCESS_DOCUMENTS = {{ 'true' if can_access_documents else 'false' }};
     // Global error logger for diagnostics
     window.onerror = function(message, source, lineno, colno, error) {
         console.error("JS Error:", message, "at", lineno + ":" + colno);
@@ -1997,7 +2010,8 @@
 
     function switchSliderTab(tabName) {
         if (dealHidePrices && (tabName === 'money' || tabName === 'invoices')) tabName = 'team';
-        ['info', 'products', 'team', 'money', 'invoices', 'chat'].forEach(t => {
+        if (tabName === 'documents' && !CAN_ACCESS_DOCUMENTS) tabName = 'info';
+        ['info', 'products', 'team', 'money', 'invoices', 'documents', 'chat'].forEach(t => {
             const btn = document.getElementById('tab-btn-' + t);
             const pane = document.getElementById('tab-content-' + t);
             if (btn) btn.classList.toggle('active', tabName === t);
@@ -2007,6 +2021,57 @@
         if (tabName === 'invoices') renderDealInvoices();
         if (tabName === 'money') renderDealMoney();
         if (tabName === 'team') renderDealStaff();
+        if (tabName === 'documents') loadDealDocsRegistry();
+    }
+
+    async function loadDealDocsRegistry() {
+        const box = document.getElementById('deal-docs-registry-list');
+        const link = document.getElementById('deal-docs-full-link');
+        if (!box || !activeDealId || !CAN_ACCESS_DOCUMENTS) return;
+        if (link) link.href = '/documents?deal_id=' + encodeURIComponent(activeDealId);
+        box.innerHTML = '<div class="muted" style="font-size:13px;">Загрузка…</div>';
+        try {
+            const res = await fetch('/api/deals/' + activeDealId + '/document-registry');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Ошибка');
+            const items = data.items || [];
+            if (!items.length) {
+                box.innerHTML = '<div class="muted" style="font-size:13px;">Нет доступных документов для вашей роли.</div>';
+                return;
+            }
+            box.innerHTML = items.map(it => {
+                const status = it.generated
+                    ? `<span class="muted" style="font-size:11.5px;">Был сгенерирован${it.last_filename ? ': ' + escapeHtml(it.last_filename) : ''}</span>`
+                    : `<span class="muted" style="font-size:11.5px;">Ещё не выгружался</span>`;
+                const disabled = !it.available;
+                const reason = it.reason ? `<div class="muted" style="font-size:11.5px;color:var(--danger)">${escapeHtml(it.reason)}</div>` : '';
+                return `<div class="slider-info-card" style="margin:0;">
+                    <div class="slider-info-card-body" style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 14px;">
+                        <div style="min-width:160px;">
+                            <div style="font-weight:700;font-size:13.5px;">${escapeHtml(it.label)}</div>
+                            ${status}${reason}
+                        </div>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                            <button type="button" class="btn btn-sm btn-primary" ${disabled ? 'disabled' : ''}
+                                onclick="openCrmDocPreview('${it.doc_type}')">Открыть превью</button>
+                            <button type="button" class="btn btn-sm" ${disabled ? 'disabled' : ''}
+                                onclick="openCrmDocPreview('${it.doc_type}','pdf')">PDF</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        } catch (e) {
+            box.innerHTML = `<div style="color:var(--danger);font-size:13px;">${escapeHtml(e.message || String(e))}</div>`;
+        }
+    }
+
+    function openCrmDocPreview(docType, mode) {
+        if (!activeDealId || !CAN_ACCESS_DOCUMENTS) return;
+        if (typeof DocPreview === 'undefined') {
+            alert('Превью недоступно');
+            return;
+        }
+        DocPreview.open({ docType, dealId: activeDealId, mode: mode === 'pdf' ? 'pdf' : 'html' });
     }
 
     function fillTeamUserSelect() {
@@ -3472,19 +3537,20 @@
     });
 
     async function crmDownloadDoc(kind) {
-        const menu = document.getElementById('crmDocsMenu');
-        if (menu) { menu.hidden = true; menu.style.display = 'none'; }
         if (!activeDealId) return;
-        await saveDealProducts();
-        let url = `/api/deals/${activeDealId}/estimate?mode=internal`;
-        if (kind === 'contract') url = `/api/deals/${activeDealId}/contract`;
-        else if (kind === 'contract_pdf') url = `/api/deals/${activeDealId}/contract.pdf`;
-        else if (kind === 'client') url = `/api/deals/${activeDealId}/estimate?mode=client`;
-        else if (kind === 'client_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=client`;
-        else if (kind === 'client_priced') url = `/api/deals/${activeDealId}/estimate?mode=client_priced`;
-        else if (kind === 'client_priced_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=client_priced`;
-        else if (kind === 'internal_pdf') url = `/api/deals/${activeDealId}/estimate.pdf?mode=internal`;
-        window.open(url, '_blank');
+        const map = {
+            internal: 'estimate_internal',
+            internal_pdf: 'estimate_internal',
+            client: 'estimate_client',
+            client_pdf: 'estimate_client',
+            client_priced: 'estimate_client_priced',
+            client_priced_pdf: 'estimate_client_priced',
+            contract: 'contract',
+            contract_pdf: 'contract',
+        };
+        const docType = map[kind] || 'estimate_internal';
+        const mode = String(kind).endsWith('_pdf') ? 'pdf' : 'html';
+        openCrmDocPreview(docType, mode);
     }
 
     // Submit products update to backend

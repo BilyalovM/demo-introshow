@@ -216,9 +216,8 @@ def user_can_access(user, section: str) -> bool:
     # Календарь доступен всем, у кого есть CRM или сметы (даже без отдельной галочки)
     if section == "calendar" and ("crm" in section_perms or "quotes" in section_perms):
         return True
-    # Документооборот — тем, у кого CRM или сметы
-    if section == "documents" and ("crm" in section_perms or "quotes" in section_perms):
-        return True
+    # Документы — только явный раздел «documents» (или admin / пустые права = полный доступ выше).
+    # Не выдаём автоматически через CRM/сметы: техникам без флага реестр скрыт.
     # «Сегодня» — операционный экран для CRM / задач / дашборда
     if section == "today" and any(s in section_perms for s in ("dashboard", "crm", "tasks", "calendar")):
         return True
