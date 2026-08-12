@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Регистрация сотрудника — Intro Show CRM</title>
+    <meta name="theme-color" content="#e25a3c">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="icon" type="image/png" href="/static/img/icon-192.png">
+    <link rel="apple-touch-icon" href="/static/img/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Outfit:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: "DM Sans", sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f4f3f1;
+            background-image:
+                radial-gradient(900px 500px at 90% -10%, rgba(247, 133, 97, 0.18), transparent 58%),
+                radial-gradient(700px 420px at -5% 100%, rgba(210, 35, 42, 0.08), transparent 55%),
+                repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(51, 54, 63, 0.02) 2px, rgba(51, 54, 63, 0.02) 3px);
+            color: #33363f;
+            padding: 24px;
+        }
+        .card {
+            width: 100%;
+            max-width: 440px;
+            background: #fff;
+            border: 1px solid #e2ddd6;
+            border-radius: 14px;
+            padding: 36px 32px;
+            box-shadow: 0 10px 28px rgba(51, 54, 63, 0.08);
+            animation: modalIn 0.22s ease;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: none; }
+        }
+        .logo {
+            display: flex;
+            justify-content: center;
+            margin: 0 auto 22px;
+        }
+        .logo img {
+            height: 48px;
+            width: auto;
+            max-width: 220px;
+            object-fit: contain;
+        }
+        h1 {
+            font-family: "Outfit", "DM Sans", sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            text-align: center;
+            letter-spacing: -0.02em;
+        }
+        .subtitle { text-align: center; color: #8b909a; font-size: 14px; margin: 6px 0 26px; }
+        label { display: block; font-size: 13px; font-weight: 600; color: #5c616c; margin-bottom: 7px; }
+        input {
+            width: 100%;
+            padding: 11px 13px;
+            background: #faf9f7;
+            border: 1px solid #e2ddd6;
+            border-radius: 9px;
+            color: #33363f;
+            font-size: 14.5px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        input:focus { border-color: #e25a3c; box-shadow: 0 0 0 3px rgba(226, 90, 60, 0.18); }
+        .field { margin-bottom: 14px; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 480px) { .row { grid-template-columns: 1fr; } }
+        .error {
+            display: none;
+            background: #fde8e8;
+            border: 1px solid rgba(210, 35, 42, 0.28);
+            color: #b91c1c;
+            font-size: 13.5px;
+            padding: 10px 14px;
+            border-radius: 9px;
+            margin-bottom: 16px;
+        }
+        .error.show { display: block; }
+        .hint { font-size: 12.5px; color: #8b909a; margin-top: 6px; }
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 9px;
+            background: #e25a3c;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.15s;
+            margin-top: 4px;
+        }
+        button:hover { background: #c9442a; }
+        button:disabled { opacity: 0.6; cursor: wait; }
+        .footer { text-align: center; color: #8b909a; font-size: 12.5px; margin-top: 22px; }
+        .footer a { color: #e25a3c; text-decoration: none; font-weight: 600; }
+        .blocked { text-align: center; padding: 8px 0 4px; }
+        .blocked p { color: #5c616c; font-size: 14.5px; line-height: 1.5; margin-bottom: 18px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <img src="/static/img/introshow_logo.png" alt="Intro Show">
+        </div>
+        <h1>Регистрация сотрудника</h1>
+        <p class="subtitle">Intro Show CRM — доступ по приглашению</p>
+
+        {% if not invite_ok %}
+        <div class="blocked">
+            <p id="blocked-msg">
+                {% if invite_status == 'used' %}
+                Эта ссылка уже использована.
+                {% elif invite_status == 'expired' %}
+                Срок действия ссылки истёк. Попросите администратора создать новую.
+                {% elif invite_status == 'revoked' %}
+                Ссылка отозвана администратором.
+                {% else %}
+                Ссылка недействительна.
+                {% endif %}
+            </p>
+            <a href="/login" style="display:inline-block;padding:12px 20px;border-radius:9px;background:#e25a3c;color:#fff;font-weight:600;text-decoration:none;">Перейти ко входу</a>
+        </div>
+        {% else %}
+        <form id="register-form">
+            <div class="row">
+                <div class="field">
+                    <label for="first_name">Имя</label>
+                    <input type="text" id="first_name" name="first_name" autocomplete="given-name" required autofocus>
+                </div>
+                <div class="field">
+                    <label for="last_name">Фамилия</label>
+                    <input type="text" id="last_name" name="last_name" autocomplete="family-name" required>
+                </div>
+            </div>
+            <div class="field">
+                <label for="phone">Телефон</label>
+                <input type="tel" id="phone" name="phone" autocomplete="tel" placeholder="+7 …">
+            </div>
+            <div class="field">
+                <label for="email">Почта</label>
+                <input type="email" id="email" name="email" autocomplete="email" required>
+                <p class="hint">Почта станет логином для входа в CRM</p>
+            </div>
+            <div class="field">
+                <label for="password">Пароль</label>
+                <input type="password" id="password" name="password" autocomplete="new-password" required minlength="6">
+            </div>
+            <div class="field">
+                <label for="password_confirm">Подтверждение пароля</label>
+                <input type="password" id="password_confirm" name="password_confirm" autocomplete="new-password" required minlength="6">
+            </div>
+            <div id="error-message" class="error"></div>
+            <button type="submit" id="submit-btn">Зарегистрироваться</button>
+        </form>
+        <p class="footer">Уже есть аккаунт? <a href="/login">Войти</a></p>
+        {% endif %}
+    </div>
+
+    {% if invite_ok %}
+    <script>
+        const TOKEN = {{ token|tojson }};
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('submit-btn');
+            const err = document.getElementById('error-message');
+            btn.disabled = true;
+            err.classList.remove('show');
+            const body = {
+                token: TOKEN,
+                first_name: document.getElementById('first_name').value.trim(),
+                last_name: document.getElementById('last_name').value.trim(),
+                phone: document.getElementById('phone').value.trim(),
+                email: document.getElementById('email').value.trim(),
+                password: document.getElementById('password').value,
+                password_confirm: document.getElementById('password_confirm').value,
+            };
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await response.json();
+                if (response.ok && data.status === 'success') {
+                    window.location.href = data.redirect || '/login';
+                } else {
+                    err.textContent = data.error || 'Не удалось зарегистрироваться';
+                    err.classList.add('show');
+                }
+            } catch {
+                err.textContent = 'Сервер недоступен. Попробуйте ещё раз.';
+                err.classList.add('show');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    </script>
+    {% endif %}
+</body>
+</html>

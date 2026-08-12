@@ -63,6 +63,12 @@ def limit_public_leads(request) -> Optional[JSONResponse]:
     return check_rate_limit(f"leads:{ip}", limit=20, window_sec=60 * 60)
 
 
+def limit_register(request) -> Optional[JSONResponse]:
+    # 8 попыток регистрации / 15 минут на IP (защита от перебора токенов / спама)
+    ip = _client_ip(request)
+    return check_rate_limit(f"register:{ip}", limit=8, window_sec=15 * 60)
+
+
 def peek_stats(prefix: str = "") -> Dict[str, int]:
     """Для отладки: размер активных окон."""
     now = time.time()
