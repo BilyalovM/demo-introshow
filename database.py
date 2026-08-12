@@ -91,12 +91,24 @@ class City(Base):
     sort_order = Column(Integer, default=0)
 
 
+class Role(Base):
+    """Именованный набор прав для сотрудников (не путать с User.role admin/user)."""
+    __tablename__ = "roles"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    description = Column(String, nullable=True)
+    permissions = Column(JSON, nullable=True)  # список ключей разделов/флагов
+    is_system = Column(Boolean, default=False)  # системные — нельзя удалить
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     role = Column(String, default="user") # admin / manager / user
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
     full_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     # Список разделов, доступных пользователю (JSON-массив ключей).
@@ -111,6 +123,7 @@ class User(Base):
     dismissed_at = Column(DateTime, nullable=True)
 
     home_city = relationship("City", foreign_keys=[city_id])
+    access_role = relationship("Role", foreign_keys=[role_id])
 
 
 class UserInvite(Base):
@@ -120,6 +133,7 @@ class UserInvite(Base):
     token = Column(String, unique=True, index=True, nullable=False)
     permissions = Column(JSON, nullable=True)
     role = Column(String, default="user")
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -131,6 +145,7 @@ class UserInvite(Base):
     created_by = relationship("User", foreign_keys=[created_by_id])
     used_by = relationship("User", foreign_keys=[used_by_user_id])
     city = relationship("City", foreign_keys=[city_id])
+    access_role = relationship("Role", foreign_keys=[role_id])
 
 class Folder(Base):
     __tablename__ = "folders"
