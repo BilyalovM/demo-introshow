@@ -78,6 +78,24 @@
             <p style="font-size:14px;margin-bottom:10px;">Cookie: HttpOnly + SameSite=Lax; на HTTPS — Secure. Срок сессии — 7 дней. «Выйти везде» завершает все устройства (инкремент версии сессии).</p>
             <button type="button" onclick="logoutAllSessions()" style="background:#b91c1c;">Выйти со всех устройств</button>
             <p id="logout-all-msg" style="display:none;margin-top:8px;font-size:13px;"></p>
+            <hr style="border:none;border-top:1px solid var(--border);margin:1.2rem 0;">
+            <h4 style="margin:0 0 8px;">Сменить пароль</h4>
+            <p style="font-size:13.5px;margin:0 0 10px;color:var(--text-light);">Смена своего пароля. Другие устройства потребуют повторный вход.</p>
+            <form id="change-password-form" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:560px;">
+                <label style="display:block;font-size:13px;font-weight:600;grid-column:1 / -1;">Текущий пароль
+                    <input id="pw-current" type="password" required autocomplete="current-password" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <label style="display:block;font-size:13px;font-weight:600;">Новый пароль
+                    <input id="pw-new" type="password" required minlength="8" autocomplete="new-password" placeholder="минимум 8 символов" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <label style="display:block;font-size:13px;font-weight:600;">Повтор нового
+                    <input id="pw-new2" type="password" required minlength="8" autocomplete="new-password" style="width:100%;box-sizing:border-box;margin-top:4px;padding:0.65rem;border:1px solid var(--border);border-radius:8px;background:var(--background);color:var(--text);">
+                </label>
+                <div style="grid-column:1 / -1;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                    <button type="submit">Сменить пароль</button>
+                    <p id="pw-msg" style="display:none;margin:0;font-size:13px;"></p>
+                </div>
+            </form>
         </div>
 
         {% if request.state.user and request.state.user.role == 'admin' %}
@@ -586,9 +604,10 @@
                 ].join('');
                 if (data.warning_ru && banner) {
                     banner.style.display = 'block';
-                    banner.style.background = data.ephemeral_warning ? '#fef2f2' : '#fff7ed';
-                    banner.style.border = data.ephemeral_warning ? '1px solid #fecaca' : '1px solid #fed7aa';
-                    banner.style.color = data.ephemeral_warning ? '#991b1b' : '#9a3412';
+                    const critical = data.ephemeral_warning || (data.security_warnings && data.security_warnings.length);
+                    banner.style.background = critical ? '#fef2f2' : '#fff7ed';
+                    banner.style.border = critical ? '1px solid #fecaca' : '1px solid #fed7aa';
+                    banner.style.color = critical ? '#991b1b' : '#9a3412';
                     banner.textContent = data.warning_ru;
                 } else if (banner) {
                     banner.style.display = 'none';
@@ -783,6 +802,39 @@
             }
         }
 
+        const pwForm = document.getElementById('change-password-form');
+        if (pwForm) {
+            pwForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const msg = document.getElementById('pw-msg');
+                const cur = document.getElementById('pw-current').value;
+                const n1 = document.getElementById('pw-new').value;
+                const n2 = document.getElementById('pw-new2').value;
+                msg.style.display = 'block';
+                if (n1 !== n2) {
+                    msg.style.color = '#dc2626';
+                    msg.textContent = 'Новые пароли не совпадают';
+                    return;
+                }
+                msg.style.color = 'var(--muted)';
+                msg.textContent = 'Сохранение…';
+                try {
+                    const res = await fetch('/api/me/change-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ current_password: cur, new_password: n1 }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    msg.style.color = res.ok ? '#16a34a' : '#dc2626';
+                    msg.textContent = data.message || data.error || (res.ok ? 'Пароль изменён' : 'Ошибка');
+                    if (res.ok) pwForm.reset();
+                } catch (err) {
+                    msg.style.color = '#dc2626';
+                    msg.textContent = 'Ошибка соединения';
+                }
+            });
+        }
+
         function initWaHookHint() {
             const origin = window.location.origin;
             const webHook = origin + '/api/webhooks/whatsapp-web';
@@ -931,6 +983,7 @@
             loadAuditLog();
             loadCitiesAdmin();
             initWaHookHint();
+            loadDbHealth();
             const filt = document.getElementById('audit-entity-filter');
             if (filt) filt.addEventListener('change', loadAuditLog);
         };

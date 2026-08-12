@@ -157,10 +157,12 @@ def _add_items(db: Session, deal: Deal, lines: list, eq_map: dict) -> float:
     return total
 
 
-def seed_demo_deals(db: Session, *, only_if_empty: bool = False) -> dict:
+def seed_demo_deals(db: Session, *, only_if_empty: bool = True) -> dict:
     """
     Создаёт недостающие демо-сделки с префиксом DEMO:.
-    only_if_empty=True — выйти, если в БД уже есть любые сделки (cold start).
+    only_if_empty=True (по умолчанию) — выйти, если в БД уже есть любые сделки (cold start / прод).
+    На проде полностью отключить автосид: SEED_DEMO_DEALS=0.
+    Для принудительного досева (админ UI) вызывайте only_if_empty=False.
     """
     # Считаем только «живые» сделки — корзина не должна блокировать демо-seed
     try:

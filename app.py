@@ -101,7 +101,10 @@ with Session(engine) as session:
         session.commit()
         
     # 3. Update existing deals to the default pipeline if they are null
-    session.execute(text(f"UPDATE deals SET pipeline_id = {default_pipeline.id} WHERE pipeline_id IS NULL"))
+    session.execute(
+        text("UPDATE deals SET pipeline_id = :pid WHERE pipeline_id IS NULL"),
+        {"pid": default_pipeline.id},
+    )
     session.commit()
 
     try:
@@ -459,12 +462,16 @@ with Session(engine) as session:
     except Exception:
         session.rollback()
 
-    # 4b5. Демо-сделки: только если CRM пустая (cold start /tmp на Vercel)
-    try:
-        demo_seed.seed_demo_deals(session, only_if_empty=True)
-    except Exception as e:
-        session.rollback()
-        print("demo_seed error:", e)
+    # 4b5. Демо-сделки: только если CRM пустая (cold start /tmp на Vercel).
+    # На проде отключить: SEED_DEMO_DEALS=0
+    if os.environ.get("SEED_DEMO_DEALS", "1").strip() != "0":
+        try:
+            demo_seed.seed_demo_deals(session, only_if_empty=True)
+        except Exception as e:
+            session.rollback()
+            print("demo_seed error:", e)
+    else:
+        print("demo_seed: skipped (SEED_DEMO_DEALS=0)")
 
     # 4c. Стадии «в работе» для проверки брони оборудования:
     # если ни одна стадия не помечена, помечаем стандартные.
@@ -478,14 +485,58 @@ with Session(engine) as session:
     except Exception:
         session.rollback()
 
-    # 5. Create default admin user
+    # 5. Create default admin user (пароль из ADMIN_PASSWORD или "admin")
     try:
         if session.query(User).count() == 0:
-            admin_user = User(username="admin", hashed_password=auth.get_password_hash("admin"), role="admin", full_name="Администратор")
+            admin_pw = (os.environ.get("ADMIN_PASSWORD") or "admin").strip() or "admin"
+            admin_user = User(
+                username="admin",
+                hashed_password=auth.get_password_hash(admin_pw),
+                role="admin",
+                full_name="Администратор",
+            )
             session.add(admin_user)
             session.commit()
+            if admin_pw == "admin":
+                print(
+                    "⚠️  SECURITY: создан admin с паролем по умолчанию «admin». "
+                    "Смените пароль сразу после входа или задайте ADMIN_PASSWORD."
+                )
     except Exception:
         session.rollback()
+
+    # 6. Громкие предупреждения готовности к проду (лог при старте)
+    try:
+        _prod_warns = []
+        _info = database_backend_info()
+        if _info.get("is_sqlite"):
+            _prod_warns.append(
+                "SQLite вместо Postgres — для боя сотрудников обязателен DATABASE_URL=postgresql+psycopg2://…"
+            )
+        if not os.environ.get("SESSION_SECRET"):
+            _prod_warns.append(
+                "SESSION_SECRET не задан в env — секрет берётся из файла/.session_secret; для прода задайте ≥64 символов"
+            )
+        _admin = session.query(User).filter(User.username == "admin").first()
+        if _admin and auth.verify_password("admin", _admin.hashed_password):
+            _prod_warns.append(
+                "Пароль пользователя admin всё ещё «admin» — смените в Настройках или через ADMIN_PASSWORD на чистой БД"
+            )
+        if os.environ.get("FORCE_SECURE_COOKIE") != "1" and not os.environ.get("VERCEL"):
+            if os.environ.get("ENV", "").lower() in ("production", "prod") or _info.get("is_postgres"):
+                _prod_warns.append(
+                    "FORCE_SECURE_COOKIE не =1 — на HTTPS за nginx рекомендуется FORCE_SECURE_COOKIE=1"
+                )
+        for _w in _prod_warns:
+            print(f"⚠️  PROD-READY: {_w}")
+        if _prod_warns and (
+            os.environ.get("ENV", "").lower() in ("production", "prod")
+            or os.environ.get("FORCE_SECURE_COOKIE") == "1"
+            or _info.get("is_postgres")
+        ):
+            print("⚠️  PROD-READY: исправьте пункты выше до запуска сотрудников (см. docs/prod-readiness-2026-08-14.md)")
+    except Exception as e:
+        print("prod-ready check error:", e)
 
 app = FastAPI(title="Rental Business Automation")
 
@@ -974,6 +1025,67 @@ async def logout_all(request: Request, db: Session = Depends(get_db), user: User
     return response
 
 
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+def _change_own_password(
+    body: ChangePasswordIn,
+    request: Request,
+    db: Session,
+    user: User,
+):
+    """Смена собственного пароля (текущий + новый). Инвалидирует прочие сессии."""
+    cur = (body.current_password or "").strip()
+    new = (body.new_password or "").strip()
+    if not cur or not new:
+        return JSONResponse(status_code=400, content={"error": "Укажите текущий и новый пароль"})
+    if len(new) < 8:
+        return JSONResponse(status_code=400, content={"error": "Новый пароль не короче 8 символов"})
+    if new == cur:
+        return JSONResponse(status_code=400, content={"error": "Новый пароль должен отличаться от текущего"})
+    if not verify_password(cur, user.hashed_password):
+        return JSONResponse(status_code=400, content={"error": "Неверный текущий пароль"})
+    user.hashed_password = get_password_hash(new)
+    user.session_version = int(getattr(user, "session_version", 0) or 0) + 1
+    audit.write_audit(
+        db, user_id=user.id, entity_type="user", entity_id=user.id,
+        action="password_change", diff={"password": "changed"},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    # Обновляем cookie текущей сессии под новую session_version
+    token = auth.create_session_token(user.username, session_version=user.session_version)
+    response = JSONResponse(content={
+        "status": "success",
+        "message": "Пароль изменён. Другие устройства нужно заново авторизовать.",
+    })
+    response.set_cookie("session_token", token, **auth.session_cookie_kwargs(request))
+    return response
+
+
+@app.post("/api/me/change-password")
+async def api_me_change_password(
+    body: ChangePasswordIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return _change_own_password(body, request, db, user)
+
+
+@app.post("/api/admin/change-password")
+async def api_admin_change_password(
+    body: ChangePasswordIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Алиас: смена собственного пароля (не чужого)."""
+    return _change_own_password(body, request, db, user)
+
+
 # -- Рабочий день (учёт смен + геолокация) --
 
 def _almaty_now() -> datetime:
@@ -1098,10 +1210,11 @@ def _restore_entity(entity):
         entity.deleted_by_id = None
 
 
-def _user_display_name(u: Optional[User]) -> Optional[str]:
+def _user_display_name(u: Optional[User]) -> str:
+    """Единое безопасное отображаемое имя; пустой user → \"\"."""
     if not u:
-        return None
-    return u.full_name or u.username
+        return ""
+    return (u.full_name or u.username or "").strip()
 
 
 def _sync_deal_city_text(db: Session, deal: Deal):
@@ -2638,7 +2751,7 @@ async def read_trash(request: Request, user: User = Depends(get_current_user)):
 
 @app.get("/api/admin/db-health")
 def api_db_health(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Проверка БД: счётчики + путь + предупреждение SQLite на Vercel."""
+    """Проверка БД: счётчики + путь + предупреждение SQLite на Vercel / безопасность прода."""
     if user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Только администратор"})
     info = database_backend_info()
@@ -2648,6 +2761,46 @@ def api_db_health(db: Session = Depends(get_db), user: User = Depends(get_curren
     tasks_trash = db.query(Task).filter(Task.deleted_at.isnot(None)).count()
     work_sessions = db.query(WorkSession).count()
     companies_alive = _not_deleted(db.query(Company), Company).count()
+
+    security_warnings = []
+    if info.get("is_sqlite"):
+        security_warnings.append(
+            "SQLite вместо Postgres — для боя сотрудников обязателен DATABASE_URL (postgresql+psycopg2://…)."
+        )
+    session_secret = os.environ.get("SESSION_SECRET") or ""
+    if not session_secret:
+        security_warnings.append(
+            "SESSION_SECRET не задан в окружении — задайте случайную строку ≥64 символов."
+        )
+    elif len(session_secret) < 64:
+        security_warnings.append(
+            f"SESSION_SECRET короткий ({len(session_secret)} символов) — рекомендуется ≥64."
+        )
+    admin_row = db.query(User).filter(User.username == "admin").first()
+    if admin_row and verify_password("admin", admin_row.hashed_password):
+        security_warnings.append(
+            "Пароль admin всё ещё «admin» — смените в блоке «Сменить пароль» ниже."
+        )
+    if os.environ.get("FORCE_SECURE_COOKIE") != "1" and not info.get("on_vercel"):
+        security_warnings.append(
+            "FORCE_SECURE_COOKIE≠1 — на HTTPS за nginx включите FORCE_SECURE_COOKIE=1."
+        )
+    if (os.environ.get("ONEC_API_KEY") or "").strip() in ("", "test-onec-key-123"):
+        security_warnings.append(
+            "ONEC_API_KEY не задан или тестовый — смените перед интеграцией с 1С."
+        )
+
+    warning_ru = None
+    if info.get("ephemeral_warning"):
+        warning_ru = (
+            "На Vercel используется эфемерный SQLite (/tmp). Данные могут пропасть при cold start. "
+            "Для постоянной работы нужен VPS + Postgres (DATABASE_URL)."
+        )
+    elif security_warnings:
+        warning_ru = " · ".join(security_warnings)
+    elif info.get("is_sqlite"):
+        warning_ru = "SQLite без Postgres — ок для локальной проверки, не для боевых сотрудников."
+
     return {
         **info,
         "counts": {
@@ -2659,16 +2812,8 @@ def api_db_health(db: Session = Depends(get_db), user: User = Depends(get_curren
             "companies": companies_alive,
         },
         "db_path": info.get("sqlite_path") or ("DATABASE_URL (Postgres)" if info.get("is_postgres") else str(DATABASE_URL)[:80]),
-        "warning_ru": (
-            "На Vercel используется эфемерный SQLite (/tmp). Данные могут пропасть при cold start. "
-            "Для постоянной работы нужен VPS + Postgres (DATABASE_URL)."
-            if info.get("ephemeral_warning")
-            else (
-                "SQLite без Postgres — ок для локальной проверки, не для боевых сотрудников."
-                if info.get("is_sqlite")
-                else None
-            )
-        ),
+        "security_warnings": security_warnings,
+        "warning_ru": warning_ru,
     }
 
 
@@ -5302,12 +5447,6 @@ SUBRENTAL_STATUSES = [
 SUBRENTAL_STATUS_LABELS = {k: v for k, v in SUBRENTAL_STATUSES}
 
 
-def _user_display_name(u: Optional[User]) -> str:
-    if not u:
-        return ""
-    return (u.full_name or u.username or "").strip()
-
-
 def _fmt_dt(dt) -> str:
     if not dt:
         return ""
@@ -5738,12 +5877,6 @@ def _lost_stage_for_pipeline(db: Session, pipeline_id: Optional[int]) -> Optiona
         if _stage_is_lost(st):
             return st
     return None
-
-
-def _user_display_name(u: Optional[User]) -> str:
-    if not u:
-        return "—"
-    return u.full_name or u.username or "—"
 
 
 def _get_company_letterhead(db: Session) -> dict:
@@ -6812,10 +6945,10 @@ def update_deal(
         hist_bits.append(f"Квалификация: {QUALIFICATION_LABELS.get(q_to or '', q_to or '—')}")
     if "sales_manager_id" in changed:
         sm = db.query(User).filter(User.id == data.get("sales_manager_id")).first() if data.get("sales_manager_id") else None
-        hist_bits.append(f"Менеджер продаж: {_user_display_name(sm)}")
+        hist_bits.append(f"Менеджер продаж: {_user_display_name(sm) or '—'}")
     if "project_manager_id" in changed:
         pm = db.query(User).filter(User.id == data.get("project_manager_id")).first() if data.get("project_manager_id") else None
-        hist_bits.append(f"Менеджер проекта: {_user_display_name(pm)}")
+        hist_bits.append(f"Менеджер проекта: {_user_display_name(pm) or '—'}")
     for bit in hist_bits:
         db.add(DealHistory(deal_id=deal_id, action_text=bit))
 

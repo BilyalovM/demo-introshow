@@ -73,7 +73,8 @@ PATH_SECTIONS = {
 
 
 def _get_secret() -> bytes:
-    env_secret = os.getenv("SESSION_SECRET")
+    # Сначала SESSION_SECRET, затем опциональный алиас SECRET_KEY
+    env_secret = (os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY") or "").strip()
     if env_secret:
         return env_secret.encode()
     if os.path.exists(SECRET_FILE):

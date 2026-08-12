@@ -1,0 +1,32 @@
+# systemd unit для Intro Show CRM (uvicorn)
+# Установка:
+#   sudo cp deploy/introshow.service /etc/systemd/system/introshow.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now introshow
+#   sudo systemctl status introshow
+#
+# Перед запуском: /opt/introshow-crm/.env с DATABASE_URL, SESSION_SECRET,
+# FORCE_SECURE_COOKIE=1, SEED_DEMO_DEALS=0 и т.д. (см. .env.example).
+
+[Unit]
+Description=Intro Show CRM (uvicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/introshow-crm
+EnvironmentFile=/opt/introshow-crm/.env
+ExecStart=/opt/introshow-crm/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=3
+# Логи: journalctl -u introshow -f
+
+# Безопасность (мягкие defaults; при необходимости ослабьте)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
