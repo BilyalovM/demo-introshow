@@ -3408,6 +3408,12 @@ def api_db_health(db: Session = Depends(get_db), user: User = Depends(get_curren
     tasks_trash = db.query(Task).filter(Task.deleted_at.isnot(None)).count()
     work_sessions = db.query(WorkSession).count()
     companies_alive = _not_deleted(db.query(Company), Company).count()
+    invites_total = db.query(UserInvite).count()
+    invites_pending = db.query(UserInvite).filter(
+        UserInvite.used_at.is_(None),
+        UserInvite.revoked_at.is_(None),
+        UserInvite.expires_at >= datetime.utcnow(),
+    ).count()
 
     security_warnings = []
     if info.get("is_sqlite"):
@@ -3457,6 +3463,8 @@ def api_db_health(db: Session = Depends(get_db), user: User = Depends(get_curren
             "tasks_in_trash": tasks_trash,
             "work_sessions": work_sessions,
             "companies": companies_alive,
+            "invites": invites_total,
+            "invites_pending": invites_pending,
         },
         "db_path": info.get("sqlite_path") or ("DATABASE_URL (Postgres)" if info.get("is_postgres") else str(DATABASE_URL)[:80]),
         "security_warnings": security_warnings,

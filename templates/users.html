@@ -153,6 +153,10 @@
         </div>
     </div>
 
+    <div id="ephemeral-db-banner" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:10px;background:#fef3c7;color:#92400e;font-size:13.5px;line-height:1.45;">
+        Демо на Vercel хранит данные в эфемерном SQLite (<code>/tmp</code>). После деплоя или cold start ссылки на регистрацию и другие записи могут пропасть — это не сбой списка. Для постоянных приглашений нужен VPS + Postgres.
+    </div>
+
     <div class="card">
         <h3 style="margin-top:0;">Ссылки на регистрацию</h3>
         <p class="muted" style="font-size:13px; margin-top:0;">Одноразовые приглашения. Неиспользованную ссылку можно отозвать.</p>
@@ -324,6 +328,7 @@
     let flags = {};
     let usersCache = [];
     let invitesCache = [];
+    let ephemeralDb = false;
     let rolesCache = [];
 
     const systemRoleNames = { admin: 'Администратор', manager: 'Менеджер', user: 'Сотрудник' };
@@ -532,6 +537,17 @@
         });
     }
 
+    async function loadDbHint() {
+        try {
+            const res = await fetch('/api/admin/db-health');
+            if (!res.ok) return;
+            const data = await res.json();
+            ephemeralDb = !!data.ephemeral_warning;
+            const banner = document.getElementById('ephemeral-db-banner');
+            if (banner) banner.style.display = ephemeralDb ? 'block' : 'none';
+        } catch (_) { /* ignore */ }
+    }
+
     async function loadInvites() {
         const res = await fetch('/api/invites');
         if (!res.ok) return;
@@ -539,7 +555,10 @@
         const tbody = document.getElementById('invites-table-body');
         tbody.innerHTML = '';
         if (!invitesCache.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="muted">Пока нет ссылок</td></tr>';
+            const emptyMsg = ephemeralDb
+                ? 'Пока нет ссылок. На демо Vercel список мог обнулиться после деплоя — создайте ссылку заново.'
+                : 'Пока нет ссылок';
+            tbody.innerHTML = `<tr><td colspan="5" class="muted">${emptyMsg}</td></tr>`;
             return;
         }
         invitesCache.forEach(inv => {
@@ -850,6 +869,7 @@
         await loadSections();
         await loadCityOptions();
         await loadRoles();
+        await loadDbHint();
         loadUsers();
         loadInvites();
     };
