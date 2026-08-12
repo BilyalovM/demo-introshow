@@ -32,7 +32,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, UserInvite, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, DocumentTemplate, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, UserInvite, Role, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, DocumentTemplate, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
 import secrets
 from sqlalchemy import text, func, or_
 
@@ -342,6 +342,8 @@ with Session(engine) as session:
         "ALTER TABLE users ADD COLUMN phone VARCHAR",
         "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1",
         "ALTER TABLE users ADD COLUMN dismissed_at DATETIME",
+        "ALTER TABLE users ADD COLUMN role_id INTEGER",
+        "ALTER TABLE user_invites ADD COLUMN role_id INTEGER",
         "ALTER TABLE deals ADD COLUMN city_id INTEGER",
         "ALTER TABLE work_sessions ADD COLUMN city_id INTEGER",
         "ALTER TABLE work_sessions ADD COLUMN start_place VARCHAR",
@@ -399,6 +401,56 @@ with Session(engine) as session:
     except Exception as e:
         session.rollback()
         print("cities seed error:", e)
+
+    # Системные роли доступа (права сотрудников)
+    try:
+        default_roles = [
+            (
+                "Менеджер продаж",
+                "CRM, сметы, клиенты и коммуникации. Свои сделки и флаг менеджера продаж.",
+                [
+                    "dashboard", "today", "inbox", "chats", "crm", "quotes",
+                    "calendar", "companies", "tasks", "analytics",
+                    "crm_own_only", "role_sales",
+                ],
+            ),
+            (
+                "Менеджер проекта",
+                "Ведение проектов: CRM, документы, склад, календарь и задачи.",
+                [
+                    "dashboard", "today", "crm", "quotes", "documents",
+                    "calendar", "equipment", "companies", "tasks",
+                    "role_project", "hide_margin",
+                ],
+            ),
+            (
+                "Техник / Склад",
+                "Склад, календарь и задачи. Цены, маржа и ФОТ скрыты.",
+                [
+                    "today", "equipment", "calendar", "tasks",
+                    "hide_prices", "hide_margin", "hide_payroll", "hide_subrental_cost",
+                ],
+            ),
+            (
+                "Админ-помощник",
+                "Почти полный доступ к разделам без роли администратора системы.",
+                list(auth.SECTIONS.keys()),
+            ),
+        ]
+        for name, desc, perms in default_roles:
+            existing = session.query(Role).filter(Role.name == name).first()
+            if not existing:
+                session.add(Role(
+                    name=name,
+                    description=desc,
+                    permissions=perms,
+                    is_system=True,
+                    created_at=datetime.utcnow(),
+                ))
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        print("roles seed error:", e)
 
     # Seed реквизитов компании для шапки сметы (если ещё пусто)
     try:
@@ -2650,6 +2702,52 @@ def _add_user_to_company_chat(db: Session, user_id: int) -> None:
         db.rollback()
 
 
+def _role_to_dict(r: Role) -> dict:
+    return {
+        "id": r.id,
+        "name": r.name,
+        "description": r.description or "",
+        "permissions": r.permissions or [],
+        "is_system": bool(r.is_system),
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+
+
+def _resolve_access_role(
+    db: Session,
+    *,
+    role_id: Optional[int],
+    role_str: Optional[str],
+    permissions: Optional[List[str]],
+    allow_admin: bool = True,
+) -> tuple:
+    """Вернуть (user.role string, role_id, permissions) с копией прав из Role."""
+    if role_str == "admin":
+        if not allow_admin:
+            return None
+        return "admin", None, []
+
+    access_role = None
+    if role_id is not None:
+        access_role = db.query(Role).filter(Role.id == role_id).first()
+        if not access_role:
+            return None
+
+    # Кастомная роль → user.role = user (manager оставляем только как legacy без role_id)
+    system_role = "user"
+    if role_str in ("user", "manager") and access_role is None:
+        system_role = role_str
+
+    if permissions is not None:
+        perms = list(permissions)
+    elif access_role is not None:
+        perms = list(access_role.permissions or [])
+    else:
+        perms = []
+
+    return system_role, (access_role.id if access_role else None), perms
+
+
 @app.get("/api/users")
 def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != "admin":
@@ -2661,6 +2759,8 @@ def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_us
         "full_name": u.full_name,
         "phone": getattr(u, "phone", None),
         "role": u.role,
+        "role_id": getattr(u, "role_id", None),
+        "role_name": (u.access_role.name if getattr(u, "access_role", None) else None),
         "permissions": u.permissions,
         "city_id": getattr(u, "city_id", None),
         "city_name": (u.home_city.name if getattr(u, "home_city", None) else None),
@@ -2687,6 +2787,7 @@ class UserCreate(BaseModel):
     username: str
     password: str
     role: str = "user"
+    role_id: Optional[int] = None
     full_name: Optional[str] = None
     phone: Optional[str] = None
     permissions: Optional[List[str]] = None
@@ -2695,6 +2796,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
+    role_id: Optional[int] = None
     full_name: Optional[str] = None
     phone: Optional[str] = None
     permissions: Optional[List[str]] = None
@@ -2704,8 +2806,21 @@ class UserUpdate(BaseModel):
 class InviteCreate(BaseModel):
     permissions: Optional[List[str]] = None
     role: str = "user"
+    role_id: Optional[int] = None
     city_id: Optional[int] = None
     expires_days: Optional[int] = 7
+
+
+class RoleCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    permissions: Optional[List[str]] = None
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permissions: Optional[List[str]] = None
 
 
 class RegisterIn(BaseModel):
@@ -2737,13 +2852,21 @@ def create_user(
     if existing:
         return JSONResponse(status_code=400, content={"error": "Пользователь уже существует"})
 
+    resolved = _resolve_access_role(
+        db, role_id=u.role_id, role_str=u.role, permissions=u.permissions, allow_admin=True,
+    )
+    if resolved is None:
+        return JSONResponse(status_code=400, content={"error": "Роль не найдена или недопустима"})
+    system_role, access_role_id, perms = resolved
+
     new_user = User(
         username=username,
         hashed_password=get_password_hash(u.password),
-        role=u.role,
+        role=system_role,
+        role_id=access_role_id,
         full_name=u.full_name,
         phone=(u.phone or "").strip() or None,
-        permissions=u.permissions,
+        permissions=perms,
         city_id=u.city_id,
         is_active=True,
     )
@@ -2753,7 +2876,12 @@ def create_user(
     audit.write_audit(
         db, user_id=current_user.id, entity_type="user", entity_id=new_user.id,
         action="user_create",
-        diff={"username": new_user.username, "role": new_user.role, "permissions": new_user.permissions},
+        diff={
+            "username": new_user.username,
+            "role": new_user.role,
+            "role_id": new_user.role_id,
+            "permissions": new_user.permissions,
+        },
         ip=audit.request_ip(request), commit=True,
     )
     _add_user_to_company_chat(db, new_user.id)
@@ -2778,13 +2906,37 @@ def update_user(
         diff["password"] = "changed"
         # Смена пароля — инвалидируем чужие сессии
         target.session_version = int(getattr(target, "session_version", 0) or 0) + 1
-    if u.role is not None:
-        # Нельзя снять роль админа с самого себя (чтобы не потерять доступ)
-        if target.id == current_user.id and u.role != "admin":
+    unset = u.dict(exclude_unset=True)
+    if "role" in unset or "role_id" in unset or "permissions" in unset:
+        next_role_str = u.role if "role" in unset else target.role
+        next_role_id = u.role_id if "role_id" in unset else getattr(target, "role_id", None)
+        # Явный сброс role_id при выборе администратора
+        if next_role_str == "admin":
+            next_role_id = None
+        next_perms = u.permissions if "permissions" in unset else target.permissions
+        resolved = _resolve_access_role(
+            db,
+            role_id=next_role_id,
+            role_str=next_role_str,
+            permissions=next_perms if "permissions" in unset else (
+                list(next_perms) if next_perms is not None else None
+            ),
+            allow_admin=True,
+        )
+        if resolved is None:
+            return JSONResponse(status_code=400, content={"error": "Роль не найдена или недопустима"})
+        system_role, access_role_id, perms = resolved
+        if target.id == current_user.id and system_role != "admin":
             return JSONResponse(status_code=400, content={"error": "Нельзя снять роль администратора с самого себя"})
-        if target.role != u.role:
-            diff["role"] = {"from": target.role, "to": u.role}
-        target.role = u.role
+        if target.role != system_role:
+            diff["role"] = {"from": target.role, "to": system_role}
+        if getattr(target, "role_id", None) != access_role_id:
+            diff["role_id"] = {"from": getattr(target, "role_id", None), "to": access_role_id}
+        if target.permissions != perms:
+            diff["permissions"] = {"from": target.permissions, "to": perms}
+        target.role = system_role
+        target.role_id = access_role_id
+        target.permissions = perms
     if u.full_name is not None:
         if target.full_name != u.full_name:
             diff["full_name"] = {"from": target.full_name, "to": u.full_name}
@@ -2794,11 +2946,7 @@ def update_user(
         if target.phone != phone:
             diff["phone"] = {"from": target.phone, "to": phone}
         target.phone = phone
-    if u.permissions is not None:
-        if target.permissions != u.permissions:
-            diff["permissions"] = {"from": target.permissions, "to": u.permissions}
-        target.permissions = u.permissions
-    if "city_id" in u.dict(exclude_unset=True):
+    if "city_id" in unset:
         new_cid = u.city_id
         if new_cid is not None and not db.query(City).filter(City.id == new_cid).first():
             return JSONResponse(status_code=400, content={"error": "Город не найден"})
@@ -2894,6 +3042,123 @@ def delete_user(
     return {"status": "success"}
 
 
+@app.get("/api/roles")
+def list_roles(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    rows = db.query(Role).order_by(Role.is_system.desc(), Role.name.asc()).all()
+    return [_role_to_dict(r) for r in rows]
+
+
+@app.post("/api/roles")
+def create_role(
+    payload: RoleCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    name = (payload.name or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Укажите название роли"})
+    if db.query(Role).filter(Role.name == name).first():
+        return JSONResponse(status_code=400, content={"error": "Роль с таким названием уже есть"})
+    role = Role(
+        name=name,
+        description=(payload.description or "").strip() or None,
+        permissions=list(payload.permissions or []),
+        is_system=False,
+        created_at=datetime.utcnow(),
+    )
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="role", entity_id=role.id,
+        action="role_create",
+        diff={"name": role.name, "permissions": role.permissions},
+        ip=audit.request_ip(request), commit=True,
+    )
+    return {"status": "success", "role": _role_to_dict(role)}
+
+
+@app.put("/api/roles/{role_id}")
+def update_role(
+    role_id: int,
+    payload: RoleUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        return JSONResponse(status_code=404, content={"error": "Роль не найдена"})
+    unset = payload.dict(exclude_unset=True)
+    diff = {}
+    if "name" in unset:
+        name = (payload.name or "").strip()
+        if not name:
+            return JSONResponse(status_code=400, content={"error": "Укажите название роли"})
+        clash = db.query(Role).filter(Role.name == name, Role.id != role.id).first()
+        if clash:
+            return JSONResponse(status_code=400, content={"error": "Роль с таким названием уже есть"})
+        if role.name != name:
+            diff["name"] = {"from": role.name, "to": name}
+        role.name = name
+    if "description" in unset:
+        desc = (payload.description or "").strip() or None
+        if role.description != desc:
+            diff["description"] = {"from": role.description, "to": desc}
+        role.description = desc
+    if "permissions" in unset:
+        perms = list(payload.permissions or [])
+        if role.permissions != perms:
+            diff["permissions"] = {"from": role.permissions, "to": perms}
+        role.permissions = perms
+    if diff:
+        audit.write_audit(
+            db, user_id=current_user.id, entity_type="role", entity_id=role.id,
+            action="role_update", diff=diff, ip=audit.request_ip(request),
+        )
+    db.commit()
+    db.refresh(role)
+    return {"status": "success", "role": _role_to_dict(role)}
+
+
+@app.delete("/api/roles/{role_id}")
+def delete_role(
+    role_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        return JSONResponse(status_code=404, content={"error": "Роль не найдена"})
+    if role.is_system:
+        return JSONResponse(status_code=400, content={"error": "Системную роль нельзя удалить"})
+    users_cnt = db.query(User).filter(User.role_id == role.id).count()
+    invites_cnt = db.query(UserInvite).filter(UserInvite.role_id == role.id).count()
+    if users_cnt or invites_cnt:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Роль используется сотрудниками или приглашениями. Сначала смените роль у них."},
+        )
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="role", entity_id=role.id,
+        action="role_delete", diff={"name": role.name},
+        ip=audit.request_ip(request),
+    )
+    db.delete(role)
+    db.commit()
+    return {"status": "success"}
+
+
 @app.get("/api/invites")
 def list_invites(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != "admin":
@@ -2907,6 +3172,8 @@ def list_invites(db: Session = Depends(get_db), user: User = Depends(get_current
             "token": inv.token,
             "permissions": inv.permissions or [],
             "role": inv.role or "user",
+            "role_id": getattr(inv, "role_id", None),
+            "role_name": (inv.access_role.name if getattr(inv, "access_role", None) else None),
             "city_id": inv.city_id,
             "city_name": (inv.city.name if inv.city else None),
             "created_at": inv.created_at.isoformat() if inv.created_at else None,
@@ -2934,13 +3201,24 @@ def create_invite(
         return JSONResponse(status_code=400, content={"error": "Нельзя создать ссылку с ролью администратора"})
     if payload.city_id is not None and not db.query(City).filter(City.id == payload.city_id).first():
         return JSONResponse(status_code=400, content={"error": "Город не найден"})
+    resolved = _resolve_access_role(
+        db,
+        role_id=payload.role_id,
+        role_str=role,
+        permissions=payload.permissions,
+        allow_admin=False,
+    )
+    if resolved is None:
+        return JSONResponse(status_code=400, content={"error": "Роль не найдена или недопустима"})
+    system_role, access_role_id, perms = resolved
     days = payload.expires_days if payload.expires_days and payload.expires_days > 0 else 7
     days = min(int(days), 30)
     token = secrets.token_urlsafe(32)
     inv = UserInvite(
         token=token,
-        permissions=payload.permissions or [],
-        role=role,
+        permissions=perms,
+        role=system_role,
+        role_id=access_role_id,
         city_id=payload.city_id,
         created_by_id=current_user.id,
         created_at=datetime.utcnow(),
@@ -2952,7 +3230,12 @@ def create_invite(
     audit.write_audit(
         db, user_id=current_user.id, entity_type="invite", entity_id=inv.id,
         action="invite_create",
-        diff={"role": inv.role, "permissions": inv.permissions, "expires_at": inv.expires_at.isoformat()},
+        diff={
+            "role": inv.role,
+            "role_id": inv.role_id,
+            "permissions": inv.permissions,
+            "expires_at": inv.expires_at.isoformat(),
+        },
         ip=audit.request_ip(request), commit=True,
     )
     url = _invite_public_url(request, inv.token)
@@ -2964,6 +3247,7 @@ def create_invite(
         "expires_at": inv.expires_at.isoformat(),
         "permissions": inv.permissions or [],
         "role": inv.role,
+        "role_id": inv.role_id,
     }
 
 
@@ -3058,10 +3342,19 @@ def api_register(payload: RegisterIn, request: Request, db: Session = Depends(ge
         return JSONResponse(status_code=400, content={"error": "Пользователь с такой почтой уже есть"})
 
     full_name = f"{first} {last}".strip()
+    # Права: снимок с invite; role_id сохраняем. Если у роли обновили права позже —
+    # уже зарегистрированный сотрудник остаётся со снимком.
+    access_role_id = getattr(inv, "role_id", None)
+    if access_role_id and not db.query(Role).filter(Role.id == access_role_id).first():
+        access_role_id = None
+    system_role = inv.role or "user"
+    if system_role == "admin":
+        system_role = "user"
     new_user = User(
         username=email,
         hashed_password=get_password_hash(password),
-        role=inv.role or "user",
+        role=system_role,
+        role_id=access_role_id,
         full_name=full_name,
         phone=phone,
         permissions=inv.permissions or [],
@@ -3077,7 +3370,12 @@ def api_register(payload: RegisterIn, request: Request, db: Session = Depends(ge
     audit.write_audit(
         db, user_id=new_user.id, entity_type="user", entity_id=new_user.id,
         action="user_register_invite",
-        diff={"username": new_user.username, "invite_id": inv.id, "permissions": new_user.permissions},
+        diff={
+            "username": new_user.username,
+            "invite_id": inv.id,
+            "role_id": new_user.role_id,
+            "permissions": new_user.permissions,
+        },
         ip=audit.request_ip(request), commit=True,
     )
     _add_user_to_company_chat(db, new_user.id)
