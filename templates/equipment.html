@@ -1,48 +1,102 @@
 {% extends "base.html" %}
 
-{% block title %}Equipment - Intro Show{% endblock %}
+{% block title %}Склад - Intro Show{% endblock %}
 
 {% block extra_head %}
 <style>
-    .folders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .folders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
     .folder-card {
-        background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 1.5rem;
-        cursor: pointer; display: flex; align-items: center; gap: 1rem; transition: transform 0.1s, box-shadow 0.1s;
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 1.25rem;
+        cursor: pointer; display: flex; align-items: center; gap: 0.75rem; transition: transform 0.1s, box-shadow 0.1s;
+        min-height: 56px;
     }
     .folder-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); border-color: var(--primary); }
-    .folder-icon { font-size: 2rem; color: #fbbf24; }
+    .folder-icon { font-size: 1.75rem; color: #fbbf24; }
     .folder-name { font-weight: 500; word-break: break-all; }
 
-    .breadcrumbs { font-size: 1.2rem; font-weight: bold; margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; }
+    .breadcrumbs { font-size: 1.15rem; font-weight: bold; margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
     .breadcrumb-item { cursor: pointer; color: var(--primary); }
     .breadcrumb-item:hover { text-decoration: underline; }
     .breadcrumb-separator { color: var(--text-2); }
 
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 100; }
-    .modal-content { background: var(--surface); padding: 2rem; border-radius: var(--r-md); width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
-    .modal-content.large { width: 800px; display: grid; grid-template-columns: 1fr 1.5fr; gap: 2rem; }
-    
-    .photo-preview { width: 100%; height: 250px; background: var(--bg-2); border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 1rem; border: 1px dashed var(--border); }
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 100; padding: 12px; box-sizing: border-box; }
+    .modal-content { background: var(--surface); padding: 1.5rem; border-radius: var(--r-md); width: 500px; max-width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+    .modal-content.large { width: 800px; display: grid; grid-template-columns: 1fr 1.5fr; gap: 1.5rem; }
+
+    .photo-preview { width: 100%; height: 220px; background: var(--bg-2); border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 0.75rem; border: 1px dashed var(--border); }
     .photo-preview img { width: 100%; height: 100%; object-fit: contain; }
+
+    .photo-actions { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .photo-actions .btn { min-height: 48px; font-size: 1rem; width: 100%; justify-content: center; }
+
+    .cond-badge {
+        display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+        white-space: nowrap;
+    }
+    .cond-good { background: #dcfce7; color: #166534; }
+    .cond-medium { background: #fef9c3; color: #854d0e; }
+    .cond-needs_repair { background: #fee2e2; color: #991b1b; }
+
+    .eq-filters { display: flex; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .eq-filters .input, .eq-filters select {
+        min-height: 44px; font-size: 16px; max-width: 100%;
+    }
+    #searchInput { flex: 1; min-width: 160px; max-width: 320px; }
+    #conditionFilter { min-width: 160px; }
+
+    .equip-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 10px; }
+    .equip-toolbar .btn { min-height: 44px; }
+
+    .mobile-eq-cards { display: none; }
+    .eq-card {
+        border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px;
+        display: grid; grid-template-columns: 72px 1fr; gap: 12px; margin-bottom: 10px;
+        background: var(--surface); cursor: pointer;
+    }
+    .eq-card-photo {
+        width: 72px; height: 72px; border-radius: 8px; background: var(--bg-2);
+        display: flex; align-items: center; justify-content: center; overflow: hidden;
+        font-size: 1.5rem;
+    }
+    .eq-card-photo img { width: 100%; height: 100%; object-fit: cover; }
+    .eq-card-title { font-weight: 700; margin-bottom: 4px; line-height: 1.25; }
+    .eq-card-meta { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .eq-card-actions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 4px; }
+    .eq-card-actions .btn { flex: 1; min-height: 44px; }
+
+    #equipForm .form-group label { font-size: 0.95rem; margin-bottom: 0.35rem; }
+    #equipForm input, #equipForm select, #equipForm textarea {
+        min-height: 46px; font-size: 16px; width: 100%; box-sizing: border-box;
+    }
+    #equipForm textarea { min-height: 88px; }
+    #equipForm .btn, #equipForm button[type="submit"] { min-height: 48px; font-size: 1rem; }
+
+    @media (max-width: 768px) {
+        .modal { padding: 0; align-items: stretch; }
+        .modal-content, .modal-content.large {
+            width: 100%; max-width: 100%; height: 100%; max-height: 100%;
+            border-radius: 0; display: block; padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+        }
+        .equip-desktop-table { display: none; }
+        .mobile-eq-cards { display: block; }
+        .folders-grid { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+        .equip-toolbar { position: sticky; top: 0; z-index: 5; background: var(--surface); padding-bottom: 8px; }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 
-    
-
-    <div class="card" style="padding: 1.5rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap:wrap; gap:10px;">
-            <div class="breadcrumbs" id="breadcrumbs">
-                <!-- Injected via JS -->
-            </div>
+    <div class="card" style="padding: 1.25rem;">
+        <div class="equip-toolbar">
+            <div class="breadcrumbs" id="breadcrumbs"></div>
             <div style="display: flex; gap: 0.5rem; flex-wrap:wrap;">
                 {% if request.state.user and request.state.user.role == 'admin' %}
                 <button class="btn btn-sm" type="button" onclick="document.getElementById('catalogXlsxInput').click()">⬆ Импорт Excel</button>
                 <input type="file" id="catalogXlsxInput" accept=".xlsx,.xlsm" style="display:none" onchange="importCatalogXlsx(this)">
                 {% endif %}
-                <button class="btn btn-sm" onclick="openFolderModal()">+ Новая папка</button>
-                <button class="btn btn-sm btn-primary" onclick="openEquipModal()">+ Добавить позицию</button>
+                <button class="btn btn-sm" onclick="openFolderModal()">+ Папка</button>
+                <button class="btn btn-sm btn-primary" onclick="openEquipModal()">+ Добавить</button>
             </div>
         </div>
 
@@ -56,15 +110,19 @@
         </div>
         <p class="muted" id="whHint" style="font-size:13px;margin:0 0 1rem;">Своё оборудование. Для субаренды укажите поставщика и себестоимость.</p>
 
-        <div style="margin-bottom: 1.5rem;">
-            <input type="text" class="input" id="searchInput" placeholder="Поиск оборудования..." onkeyup="renderView()" style="max-width: 300px;">
+        <div class="eq-filters">
+            <input type="text" class="input" id="searchInput" placeholder="Поиск оборудования..." onkeyup="renderView()">
+            <select class="input" id="conditionFilter" onchange="renderView()" aria-label="Фильтр по состоянию">
+                <option value="">Все состояния</option>
+                <option value="good">Хорошее</option>
+                <option value="medium">Среднее</option>
+                <option value="needs_repair">Требует ремонта</option>
+            </select>
         </div>
 
-        <!-- Folders -->
         <div class="folders-grid" id="foldersGrid"></div>
 
-        <!-- Equipment -->
-        <div style="overflow-x: auto;">
+        <div class="equip-desktop-table" style="overflow-x: auto;">
             <table class="data" id="equipTable">
                 <thead>
                     <tr>
@@ -77,16 +135,16 @@
                         <th>Всего</th>
                         <th>В аренде</th>
                         <th>Доступно</th>
+                        <th>Состояние</th>
                         <th>Статус</th>
                         <th>Описание</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <!-- Injected via JS -->
-                </tbody>
+                <tbody></tbody>
             </table>
         </div>
+        <div class="mobile-eq-cards" id="equipCards"></div>
     </div>
 
     <!-- Modal: New Folder -->
@@ -109,29 +167,33 @@
     <!-- Modal: Edit Equipment -->
     <div id="equipModal" class="modal">
         <div class="modal-content large" id="equipModalContent">
-            <!-- Left: Photo -->
             <div>
                 <h3 style="margin-top:0;">Фотография</h3>
                 <div class="photo-preview" id="eq_photo_preview">
                     <span style="color:var(--text-light)">Нет фото</span>
                 </div>
-                <input type="file" id="eq_photo_input" accept="image/*" style="margin-bottom:1rem;" onchange="uploadPhoto()">
+                <div class="photo-actions">
+                    <button type="button" class="btn btn-primary" onclick="document.getElementById('eq_photo_camera').click()">📷 Сфотографировать</button>
+                    <button type="button" class="btn btn-outline" onclick="document.getElementById('eq_photo_gallery').click()">🖼 Из галереи</button>
+                </div>
+                <input type="file" id="eq_photo_camera" accept="image/*" capture="environment" style="display:none" onchange="onPhotoPicked(this)">
+                <input type="file" id="eq_photo_gallery" accept="image/*" style="display:none" onchange="onPhotoPicked(this)">
                 <div id="upload_status" style="font-size: 0.85rem; color: var(--primary); display:none;">Загрузка...</div>
+                <p class="muted" id="photo_hint" style="font-size:12px;margin:0.5rem 0 0;">Можно добавить фото до сохранения — оно загрузится после создания позиции.</p>
             </div>
-            
-            <!-- Right: Details -->
+
             <div>
                 <h2 style="margin-top:0;" id="eq_modal_title">Добавить оборудование</h2>
                 <form id="equipForm" onsubmit="saveEquipment(event)">
                     <input type="hidden" id="eq_id">
-                    
+
                     <div class="form-group">
                         <label>Название</label>
-                        <input type="text" id="eq_name" required>
+                        <input type="text" id="eq_name" required autocomplete="off">
                     </div>
-                    
-                    <div style="display: flex; gap: 1rem;">
-                        <div class="form-group" style="flex: 1;">
+
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 140px;">
                             <label>Категория</label>
                             <select id="eq_category" required>
                                 <option value="Звук">Звук</option>
@@ -143,24 +205,23 @@
                                 <option value="Расходники">Расходники</option>
                             </select>
                         </div>
-                        <div class="form-group" style="flex: 1;">
+                        <div class="form-group" style="flex: 1; min-width: 140px;">
                             <label>Папка</label>
                             <select id="eq_folder_id">
                                 <option value="">-- Корень --</option>
-                                <!-- Folders injected here -->
                             </select>
                         </div>
                     </div>
-                    
-                    <div style="display: flex; gap: 1rem;">
-                        <div class="form-group" style="flex: 1;">
+
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 140px;">
                             <label>Склад</label>
                             <select id="eq_warehouse_type" onchange="toggleSubrentalFields()">
                                 <option value="own">Свой склад</option>
                                 <option value="subrental">Субаренда</option>
                             </select>
                         </div>
-                        <div class="form-group" style="flex: 1;">
+                        <div class="form-group" style="flex: 1; min-width: 140px;">
                             <label>Статус</label>
                             <select id="eq_status">
                                 <option value="Доступно">Доступно</option>
@@ -169,50 +230,56 @@
                         </div>
                     </div>
 
-                    <div style="display: flex; gap: 1rem;">
-                        <div class="form-group" style="flex: 1;">
+                    <div class="form-group">
+                        <label>Состояние товара <span class="muted" style="font-weight:400">(только склад)</span></label>
+                        <select id="eq_condition">
+                            <option value="good">Хорошее</option>
+                            <option value="medium">Среднее</option>
+                            <option value="needs_repair">Требует ремонта</option>
+                        </select>
+                    </div>
+
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 140px;">
                             <label>Цена клиенту (₸)</label>
-                            <input type="number" id="eq_price" min="0" required>
+                            <input type="number" id="eq_price" min="0" inputmode="decimal" required>
                         </div>
-                        <div class="form-group" style="flex: 1;">
+                        <div class="form-group" style="flex: 1; min-width: 140px;">
                             <label>Кол-во</label>
-                            <input type="number" id="eq_qty" min="0" required>
+                            <input type="number" id="eq_qty" min="0" inputmode="numeric" required>
                         </div>
                     </div>
 
                     <div id="subrentalFields" style="display:none;">
-                        <div style="display: flex; gap: 1rem;">
-                            <div class="form-group" style="flex: 1;">
+                        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                            <div class="form-group" style="flex: 1; min-width: 140px;">
                                 <label>Себестоимость / цена у поставщика (₸)</label>
-                                <input type="number" id="eq_cost" min="0" value="0">
+                                <input type="number" id="eq_cost" min="0" value="0" inputmode="decimal">
                             </div>
-                            <div class="form-group" style="flex: 1;">
+                            <div class="form-group" style="flex: 1; min-width: 140px;">
                                 <label>Поставщик</label>
                                 <input type="text" id="eq_supplier" placeholder="Компания / контакт">
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="form-group">
                         <label>Описание (для приложения к договору)</label>
                         <textarea id="eq_desc" rows="3"></textarea>
                     </div>
 
                     <h4 style="margin-bottom: 0.5rem; margin-top: 1.5rem; color: var(--primary);">Дополнительные поля</h4>
-                    <div id="customFieldsContainer" style="display: flex; flex-direction: column; gap: 0.5rem;">
-                    </div>
+                    <div id="customFieldsContainer" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
                     <button type="button" onclick="addCustomField()" class="btn-outline" style="margin-top: 0.5rem; font-size: 0.9rem;">+ Добавить поле</button>
-                
-                    <div style="display: flex; gap: 1rem; margin-top: 2rem;">
-                        <button type="submit" style="flex:1;">Сохранить</button>
-                        <button type="button" onclick="closeModal('equipModal')" class="btn-outline" style="flex:1;">Закрыть</button>
+
+                    <div style="display: flex; gap: 1rem; margin-top: 2rem; flex-wrap: wrap;">
+                        <button type="submit" class="btn btn-primary" style="flex:1;">Сохранить</button>
+                        <button type="button" onclick="closeModal('equipModal')" class="btn btn-outline" style="flex:1;">Закрыть</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-
-    
 
 {% endblock %}
 
@@ -223,10 +290,21 @@
 </style>
 <script>
         const IS_ADMIN = {{ 'true' if request.state.user and request.state.user.role == 'admin' else 'false' }};
+        const CONDITION_LABELS = {
+            good: 'Хорошее',
+            medium: 'Среднее',
+            needs_repair: 'Требует ремонта',
+        };
         let equipmentData = [];
         let foldersData = [];
         let currentFolderId = null;
         let warehouseTab = 'own';
+        let pendingPhotoFile = null;
+
+        function conditionBadge(cond) {
+            const c = CONDITION_LABELS[cond] ? cond : 'good';
+            return `<span class="cond-badge cond-${c}">${CONDITION_LABELS[c]}</span>`;
+        }
 
         function setWarehouseTab(tab) {
             warehouseTab = tab;
@@ -291,7 +369,7 @@
         async function loadData() {
             try {
                 const [eqRes, fRes] = await Promise.all([
-                    fetch('/api/equipment?t=' + new Date().getTime()), 
+                    fetch('/api/equipment?t=' + new Date().getTime()),
                     fetch('/api/folders?t=' + new Date().getTime())
                 ]);
                 if (!eqRes.ok || !fRes.ok) {
@@ -302,9 +380,9 @@
                 foldersData = await fRes.json();
                 setWarehouseTab(warehouseTab);
                 populateFolderSelect();
-            } catch (err) { 
+            } catch (err) {
                 alert("Ошибка загрузки данных: " + err.message);
-                console.error("Failed to load data", err); 
+                console.error("Failed to load data", err);
             }
         }
 
@@ -327,6 +405,19 @@
 
         function navigateTo(folderId) { currentFolderId = folderId; renderView(); }
 
+        function filteredRows() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const condFilter = document.getElementById('conditionFilter').value;
+            return equipmentData.filter(e => {
+                const w = e.warehouse_type || 'own';
+                if (w !== warehouseTab) return false;
+                const cond = e.condition || 'good';
+                if (condFilter && cond !== condFilter) return false;
+                if (search) return e.name.toLowerCase().includes(search);
+                return e.folder_id === currentFolderId;
+            });
+        }
+
         function renderView() {
             renderBreadcrumbs();
             const search = document.getElementById('searchInput').value.toLowerCase();
@@ -337,41 +428,43 @@
             });
 
             const tbody = document.querySelector('#equipTable tbody');
+            const cards = document.getElementById('equipCards');
             tbody.innerHTML = '';
+            cards.innerHTML = '';
             const isSub = warehouseTab === 'subrental';
-            const rows = equipmentData.filter(e => {
-                const w = e.warehouse_type || 'own';
-                if (w !== warehouseTab) return false;
-                if (search) return e.name.toLowerCase().includes(search);
-                return e.folder_id === currentFolderId;
-            });
+            const rows = filteredRows();
+
             if (!rows.length) {
-                const tr = document.createElement('tr');
-                const cols = isSub ? 12 : 10;
-                tr.innerHTML = `<td colspan="${cols}" style="text-align:center;padding:28px 16px;">
-                    <div style="font-weight:700;margin-bottom:6px">${isSub ? 'Склад субаренды пуст' : 'Нет позиций'}</div>
-                    <div class="muted" style="font-size:13px;max-width:420px;margin:0 auto 12px;line-height:1.45">
-                        ${isSub
-                            ? 'Добавьте позицию кнопкой «+ Добавить» (склад = Субаренда), импортируйте Excel (admin) или продублируйте товар со своего склада в смете («в субаренду»). На демо SQLite эфемерен — после «холодного» рестарта Vercel каталог пересоздаётся из seed.'
-                            : 'Создайте папку или добавьте оборудование.'}
-                    </div>
-                    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+                const emptyHtml = `
+                    <div style="text-align:center;padding:28px 16px;">
+                        <div style="font-weight:700;margin-bottom:6px">${isSub ? 'Склад субаренды пуст' : 'Нет позиций'}</div>
+                        <div class="muted" style="font-size:13px;max-width:420px;margin:0 auto 12px;line-height:1.45">
+                            ${isSub
+                                ? 'Добавьте позицию кнопкой «+ Добавить» или импортируйте Excel (admin).'
+                                : 'Создайте папку или добавьте оборудование.'}
+                        </div>
                         <button type="button" class="btn btn-sm btn-primary" onclick="openEquipModal()">+ Добавить позицию</button>
-                        ${isSub && IS_ADMIN ? '<button type="button" class="btn btn-sm" onclick="document.getElementById(\'catalogXlsxInput\').click()">⬆ Импорт Excel</button>' : ''}
-                        ${!isSub ? '<button type="button" class="btn btn-sm" onclick="setWarehouseTab(\'subrental\')">Открыть субаренду</button>' : ''}
-                    </div>
-                </td>`;
+                    </div>`;
+                const tr = document.createElement('tr');
+                const cols = isSub ? 13 : 11;
+                tr.innerHTML = `<td colspan="${cols}">${emptyHtml}</td>`;
                 tbody.appendChild(tr);
+                cards.innerHTML = emptyHtml;
                 return;
             }
+
             rows.forEach(item => {
-                const tr = document.createElement('tr');
-                let img = item.photo_url ? `<img src="${item.photo_url}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">` : '📷';
+                const cond = item.condition || 'good';
+                let img = item.photo_url
+                    ? `<img src="${item.photo_url}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;" alt="">`
+                    : '📷';
                 let statusBadge = `<span style="color: ${item.status === 'Доступно' ? 'green' : 'red'}">${item.status}</span>`;
                 let customFieldsHtml = '';
                 if (item.custom_fields && Object.keys(item.custom_fields).length > 0) {
                     customFieldsHtml = '<div style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-light);">';
-                    for (const [k, v] of Object.entries(item.custom_fields)) customFieldsHtml += `<span style="display:inline-block; background: var(--bg); padding: 0.2rem 0.5rem; border-radius: 4px; margin-right: 0.5rem; margin-bottom: 0.2rem;"><b>${k}:</b> ${v}</span>`;
+                    for (const [k, v] of Object.entries(item.custom_fields)) {
+                        customFieldsHtml += `<span style="display:inline-block; background: var(--bg); padding: 0.2rem 0.5rem; border-radius: 4px; margin-right: 0.5rem; margin-bottom: 0.2rem;"><b>${k}:</b> ${v}</span>`;
+                    }
                     customFieldsHtml += '</div>';
                 }
                 let availColor = item.available_quantity <= 0 ? 'color: var(--danger); font-weight: bold;' : '';
@@ -381,8 +474,31 @@
                 const dupBtn = !isSub
                     ? `<button class="btn btn-sm" type="button" title="Продублировать в субаренду" onclick="duplicateEquipToSubrental(${item.id})">→ субаренда</button>`
                     : '';
-                tr.innerHTML = `<td>${item.id}</td><td>${img}</td><td><strong>${item.name}</strong>${subBadge}<br><small style="color:var(--text-2)">Категория: ${item.category}</small></td><td>${Number(item.price).toLocaleString()} ₸</td>${costCell}${supCell}<td>${item.stock_quantity}</td><td>${item.rented_quantity}</td><td style="${availColor}">${item.available_quantity}</td><td>${statusBadge}</td><td><div style="font-size: 0.85rem;">${item.description || ''}</div>${customFieldsHtml}</td><td class="actions"><div style="display:flex;gap:0.5rem;flex-wrap:wrap;"><button class="btn btn-sm" onclick='openEquipModal(${JSON.stringify(item).replace(/'/g, "&apos;")})'>Редакт.</button> ${dupBtn} <button class="btn btn-sm btn-danger" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button></div></td>`;
+                const itemJson = JSON.stringify(item).replace(/'/g, "&apos;");
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.id}</td><td>${img}</td><td><strong>${item.name}</strong>${subBadge}<br><small style="color:var(--text-2)">Категория: ${item.category}</small></td><td>${Number(item.price).toLocaleString()} ₸</td>${costCell}${supCell}<td>${item.stock_quantity}</td><td>${item.rented_quantity}</td><td style="${availColor}">${item.available_quantity}</td><td>${conditionBadge(cond)}</td><td>${statusBadge}</td><td><div style="font-size: 0.85rem;">${item.description || ''}</div>${customFieldsHtml}</td><td class="actions"><div style="display:flex;gap:0.5rem;flex-wrap:wrap;"><button class="btn btn-sm" onclick='openEquipModal(${itemJson})'>Редакт.</button> ${dupBtn} <button class="btn btn-sm btn-danger" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button></div></td>`;
                 tbody.appendChild(tr);
+
+                const cardPhoto = item.photo_url
+                    ? `<img src="${item.photo_url}" alt="">`
+                    : '📷';
+                const card = document.createElement('div');
+                card.className = 'eq-card';
+                card.innerHTML = `
+                    <div class="eq-card-photo">${cardPhoto}</div>
+                    <div>
+                        <div class="eq-card-title">${item.name}${subBadge}</div>
+                        <div class="eq-card-meta">
+                            ${conditionBadge(cond)}
+                            <span>${Number(item.price).toLocaleString()} ₸</span>
+                            <span>дост. ${item.available_quantity}/${item.stock_quantity}</span>
+                        </div>
+                    </div>
+                    <div class="eq-card-actions">
+                        <button class="btn btn-sm btn-primary" type="button" onclick='openEquipModal(${itemJson})'>Редактировать</button>
+                        <button class="btn btn-sm btn-danger" type="button" style="background:var(--danger);color:white;border:none;" onclick="deleteEquipment(${item.id})">Удалить</button>
+                    </div>`;
+                cards.appendChild(card);
             });
         }
 
@@ -425,29 +541,43 @@
 
         function closeModal(id) {
             document.getElementById(id).style.display = 'none';
+            if (id === 'equipModal') {
+                pendingPhotoFile = null;
+                document.getElementById('eq_photo_camera').value = '';
+                document.getElementById('eq_photo_gallery').value = '';
+            }
         }
 
-        async function uploadPhoto() {
+        function onPhotoPicked(input) {
+            if (!input.files || !input.files.length) return;
+            const file = input.files[0];
+            pendingPhotoFile = file;
+            const url = URL.createObjectURL(file);
+            document.getElementById('eq_photo_preview').innerHTML = `<img src="${url}" alt="preview">`;
             const id = document.getElementById('eq_id').value;
-            const fileInput = document.getElementById('eq_photo_input');
-            if(!id || fileInput.files.length === 0) return;
-            
+            if (id) {
+                uploadPhotoFile(id, file);
+            } else {
+                document.getElementById('photo_hint').textContent = 'Фото выбрано — загрузится после сохранения позиции.';
+            }
+        }
+
+        async function uploadPhotoFile(equipId, file) {
             const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            
+            formData.append('file', file);
             document.getElementById('upload_status').style.display = 'block';
             try {
-                const res = await fetch(`/api/equipment/${id}/photo`, {
+                const res = await fetch(`/api/equipment/${equipId}/photo`, {
                     method: 'POST', body: formData
                 });
+                if (!res.ok) throw new Error('upload failed');
                 const data = await res.json();
-                
-                document.getElementById('eq_photo_preview').innerHTML = `<img src="${data.photo_url}">`;
-                
-                const item = equipmentData.find(e => e.id == id);
-                if(item) item.photo_url = data.photo_url;
+                document.getElementById('eq_photo_preview').innerHTML = `<img src="${data.photo_url}?t=${Date.now()}" alt="">`;
+                const item = equipmentData.find(e => e.id == equipId);
+                if (item) item.photo_url = data.photo_url;
+                pendingPhotoFile = null;
                 renderView();
-            } catch(e) {
+            } catch (e) {
                 alert("Ошибка загрузки фото");
             } finally {
                 document.getElementById('upload_status').style.display = 'none';
@@ -457,7 +587,11 @@
         function openEquipModal(item = null) {
             document.getElementById('equipForm').reset();
             document.getElementById('customFieldsContainer').innerHTML = '';
+            pendingPhotoFile = null;
+            document.getElementById('eq_photo_camera').value = '';
+            document.getElementById('eq_photo_gallery').value = '';
             const photoPreview = document.getElementById('eq_photo_preview');
+            document.getElementById('photo_hint').textContent = 'Можно добавить фото до сохранения — оно загрузится после создания позиции.';
             if (item) {
                 document.getElementById('eq_modal_title').innerText = "Редактировать оборудование";
                 document.getElementById('eq_id').value = item.id;
@@ -467,25 +601,28 @@
                 document.getElementById('eq_price').value = item.price;
                 document.getElementById('eq_qty').value = item.stock_quantity;
                 document.getElementById('eq_status').value = item.status;
+                document.getElementById('eq_condition').value = item.condition || 'good';
                 document.getElementById('eq_desc').value = item.description || '';
                 document.getElementById('eq_warehouse_type').value = item.warehouse_type || 'own';
                 document.getElementById('eq_cost').value = item.cost_price || 0;
                 document.getElementById('eq_supplier').value = item.supplier || '';
                 if (item.custom_fields) for (const [k, v] of Object.entries(item.custom_fields)) addCustomField(k, v);
-                photoPreview.innerHTML = item.photo_url ? `<img src="${item.photo_url}">` : '<span style="color:var(--text-light)">Нет фото</span>';
-                document.getElementById('eq_photo_input').style.display = 'block';
+                photoPreview.innerHTML = item.photo_url
+                    ? `<img src="${item.photo_url}" alt="">`
+                    : '<span style="color:var(--text-light)">Нет фото</span>';
             } else {
                 document.getElementById('eq_modal_title').innerText = "Добавить оборудование";
                 document.getElementById('eq_id').value = '';
                 document.getElementById('eq_folder_id').value = currentFolderId || '';
                 document.getElementById('eq_warehouse_type').value = warehouseTab;
+                document.getElementById('eq_condition').value = 'good';
                 document.getElementById('eq_cost').value = 0;
                 document.getElementById('eq_supplier').value = '';
-                photoPreview.innerHTML = `<span style="color:var(--text-light)">Сохраните позицию перед загрузкой фото</span>`;
-                document.getElementById('eq_photo_input').style.display = 'none';
+                photoPreview.innerHTML = `<span style="color:var(--text-light)">Нет фото</span>`;
             }
             toggleSubrentalFields();
             document.getElementById('equipModal').style.display = 'flex';
+            document.getElementById('eq_name').focus();
         }
 
         async function saveEquipment(e) {
@@ -503,6 +640,7 @@
                 price: parseFloat(document.getElementById('eq_price').value),
                 stock_quantity: parseInt(document.getElementById('eq_qty').value),
                 status: document.getElementById('eq_status').value,
+                condition: document.getElementById('eq_condition').value || 'good',
                 folder_id: document.getElementById('eq_folder_id').value || null,
                 description: document.getElementById('eq_desc').value,
                 warehouse_type: document.getElementById('eq_warehouse_type').value || 'own',
@@ -512,21 +650,30 @@
             };
 
             try {
+                let savedId = id ? parseInt(id, 10) : null;
                 if (id) {
-                    await fetch(`/api/equipment/${id}`, {
+                    const res = await fetch(`/api/equipment/${id}`, {
                         method: 'PUT', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
                     });
+                    if (!res.ok) throw new Error('save failed');
                 } else {
-                    await fetch('/api/equipment', {
+                    const res = await fetch('/api/equipment', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
                     });
+                    if (!res.ok) throw new Error('create failed');
+                    const created = await res.json();
+                    savedId = created.id;
+                }
+                if (pendingPhotoFile && savedId) {
+                    await uploadPhotoFile(savedId, pendingPhotoFile);
                 }
                 closeModal('equipModal');
                 loadData();
             } catch (err) {
                 console.error("Error saving", err);
+                alert('Не удалось сохранить позицию');
             }
         }
 
@@ -548,7 +695,7 @@
             row.innerHTML = `
                 <input type="text" placeholder="Поле (напр. Цвет)" class="cf-key" value="${key}" style="flex: 1;">
                 <input type="text" placeholder="Значение" class="cf-val" value="${value}" style="flex: 1;">
-                <button type="button" onclick="this.parentElement.remove()" style="padding: 0.5rem; background: var(--danger); color: white; border-radius: 4px; border: none; cursor: pointer;">✕</button>
+                <button type="button" onclick="this.parentElement.remove()" style="padding: 0.5rem; background: var(--danger); color: white; border-radius: 4px; border: none; cursor: pointer; min-height:46px;">✕</button>
             `;
             container.appendChild(row);
         }

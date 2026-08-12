@@ -128,6 +128,8 @@ class Equipment(Base):
     status = Column(String, default="Доступно") # Доступно / В ремонте
     warehouse_type = Column(String, default="own")  # own — свой склад / subrental — субаренда
     supplier = Column(String, nullable=True)  # поставщик субаренды
+    # Внутреннее состояние склада (не в сметах / документах клиенту)
+    condition = Column(String, default="good")  # good | medium | needs_repair
     folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
     description = Column(String, nullable=True)
     photo_url = Column(String, nullable=True)

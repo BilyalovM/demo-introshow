@@ -305,6 +305,7 @@ with Session(engine) as session:
         "ALTER TABLE equipment ADD COLUMN cost_price FLOAT DEFAULT 0",
         "ALTER TABLE equipment ADD COLUMN warehouse_type VARCHAR DEFAULT 'own'",
         "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
+        "ALTER TABLE equipment ADD COLUMN condition VARCHAR DEFAULT 'good'",
         # Налог в смете (%) — исторически DEFAULT 0; ниже принудительно 16
         "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 16",
         # Шапка сметы (как в Excel)
@@ -432,6 +433,15 @@ with Session(engine) as session:
     try:
         session.execute(
             text("UPDATE equipment SET warehouse_type = 'own' WHERE warehouse_type IS NULL OR TRIM(warehouse_type) = ''")
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    # 4b3b. Состояние товара на складе (внутреннее)
+    try:
+        session.execute(
+            text("UPDATE equipment SET condition = 'good' WHERE condition IS NULL OR TRIM(condition) = ''")
         )
         session.commit()
     except Exception:
@@ -574,6 +584,14 @@ class LayoutOptimizationRequest(BaseModel):
     length: float
 
 # Additional Pydantic models for DB operations
+EQUIPMENT_CONDITIONS = ("good", "medium", "needs_repair")
+
+
+def _normalize_equipment_condition(value: Optional[str]) -> str:
+    v = (value or "good").strip().lower()
+    return v if v in EQUIPMENT_CONDITIONS else "good"
+
+
 class EquipmentCreate(BaseModel):
     name: str
     category: str
@@ -590,6 +608,7 @@ class EquipmentCreate(BaseModel):
     cost_price: Optional[float] = 0.0
     warehouse_type: Optional[str] = "own"  # own | subrental
     supplier: Optional[str] = None
+    condition: Optional[str] = "good"  # good | medium | needs_repair (склад only)
 
 LEAD_SOURCES = {
     "manual": "Вручную",
@@ -4029,10 +4048,16 @@ def create_folder(f: FolderCreate, db: Session = Depends(get_db)):
 
 # -- Equipment --
 @app.get("/api/equipment")
-def get_equipment(warehouse_type: Optional[str] = None, db: Session = Depends(get_db)):
+def get_equipment(
+    warehouse_type: Optional[str] = None,
+    condition: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     q = db.query(Equipment)
     if warehouse_type in ("own", "subrental"):
         q = q.filter(Equipment.warehouse_type == warehouse_type)
+    if condition in EQUIPMENT_CONDITIONS:
+        q = q.filter(Equipment.condition == condition)
     equip_list = q.all()
     
     # Calculate rented quantities based on stages
@@ -4061,6 +4086,7 @@ def get_equipment(warehouse_type: Optional[str] = None, db: Session = Depends(ge
             "cost_price": getattr(eq, "cost_price", None) or 0,
             "warehouse_type": wtype,
             "supplier": getattr(eq, "supplier", None),
+            "condition": _normalize_equipment_condition(getattr(eq, "condition", None)),
             "stock_quantity": stock,
             "status": eq.status,
             "folder_id": eq.folder_id,
@@ -4199,6 +4225,7 @@ def create_equipment(item: EquipmentCreate, db: Session = Depends(get_db)):
     data["warehouse_type"] = "subrental" if wtype == "subrental" else "own"
     data["cost_price"] = float(data.get("cost_price") or 0)
     data["supplier"] = (data.get("supplier") or None) or None
+    data["condition"] = _normalize_equipment_condition(data.get("condition"))
     db_equip = Equipment(**data)
     db.add(db_equip)
     db.commit()
@@ -4240,6 +4267,7 @@ def duplicate_equipment_to_subrental(
         status=src.status or "Доступно",
         warehouse_type="subrental",
         supplier=src.supplier,
+        condition=_normalize_equipment_condition(getattr(src, "condition", None)),
         folder_id=src.folder_id,
         description=src.description,
         photo_url=src.photo_url,
@@ -4273,6 +4301,7 @@ def update_equipment(equip_id: int, item: EquipmentCreate, db: Session = Depends
         wtype = (data.get("warehouse_type") or "own").strip().lower()
         data["warehouse_type"] = "subrental" if wtype == "subrental" else "own"
         data["cost_price"] = float(data.get("cost_price") or 0)
+        data["condition"] = _normalize_equipment_condition(data.get("condition"))
         for k, v in data.items():
             setattr(db_equip, k, v)
         db.commit()
@@ -4341,13 +4370,24 @@ async def upload_equipment_photo(equip_id: int, file: UploadFile = File(...), db
     db_equip = db.query(Equipment).filter(Equipment.id == equip_id).first()
     if not db_equip:
         return JSONResponse(status_code=404, content={"error": "Not found"})
-        
-    ext = file.filename.split(".")[-1]
+
+    raw_name = (file.filename or "").strip()
+    ext = raw_name.rsplit(".", 1)[-1].lower() if "." in raw_name else ""
+    if ext not in ("jpg", "jpeg", "png", "webp", "gif", "heic", "heif"):
+        ctype = (file.content_type or "").lower()
+        if "png" in ctype:
+            ext = "png"
+        elif "webp" in ctype:
+            ext = "webp"
+        elif "gif" in ctype:
+            ext = "gif"
+        else:
+            ext = "jpg"
     filename = f"eq_{equip_id}.{ext}"
     filepath = os.path.join(UPLOADS_DIR, filename)
     with open(filepath, "wb") as buffer:
         buffer.write(await file.read())
-        
+
     db_equip.photo_url = f"/uploads/{filename}"
     db.commit()
     return {"photo_url": db_equip.photo_url}
