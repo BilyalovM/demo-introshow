@@ -98,6 +98,7 @@ class User(Base):
     hashed_password = Column(String)
     role = Column(String, default="user") # admin / manager / user
     full_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
     # Список разделов, доступных пользователю (JSON-массив ключей).
     # null или пустой список = доступ ко всем разделам (для admin всегда всё).
     permissions = Column(JSON, nullable=True)
@@ -105,8 +106,31 @@ class User(Base):
     session_version = Column(Integer, default=0)
     # Домашний город сотрудника (фильтр CRM / сегодня, если задан)
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
+    # Soft-revoke CRM access («Уволить»); история сделок/задач сохраняется
+    is_active = Column(Boolean, default=True)
+    dismissed_at = Column(DateTime, nullable=True)
 
     home_city = relationship("City", foreign_keys=[city_id])
+
+
+class UserInvite(Base):
+    """Одноразовая ссылка на регистрацию сотрудника с заранее заданными правами."""
+    __tablename__ = "user_invites"
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String, unique=True, index=True, nullable=False)
+    permissions = Column(JSON, nullable=True)
+    role = Column(String, default="user")
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    used_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    used_by = relationship("User", foreign_keys=[used_by_user_id])
+    city = relationship("City", foreign_keys=[city_id])
 
 class Folder(Base):
     __tablename__ = "folders"

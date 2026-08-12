@@ -32,7 +32,8 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 from sqlalchemy.orm import Session
-from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, DocumentTemplate, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
+from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, UserInvite, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, DocumentTemplate, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
+import secrets
 from sqlalchemy import text, func, or_
 
 from calculator import calculate_estimate, DEFAULT_TAX_PERCENTAGE
@@ -338,6 +339,9 @@ with Session(engine) as session:
         "ALTER TABLE deals ADD COLUMN margin_target_pct FLOAT DEFAULT 10",
         # Multi-city foundation
         "ALTER TABLE users ADD COLUMN city_id INTEGER",
+        "ALTER TABLE users ADD COLUMN phone VARCHAR",
+        "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN dismissed_at DATETIME",
         "ALTER TABLE deals ADD COLUMN city_id INTEGER",
         "ALTER TABLE work_sessions ADD COLUMN city_id INTEGER",
         "ALTER TABLE work_sessions ADD COLUMN start_place VARCHAR",
@@ -745,6 +749,7 @@ PUBLIC_PATH_PREFIXES = (
     "/openapi.json",
     "/roadmap",  # публичный статус/roadmap для клиента
     "/lead", "/api/leads",  # публичный захват лидов с сайта/карт
+    "/register", "/api/register",  # регистрация сотрудника по invite-ссылке
 )
 
 # Точные публичные пути (не префиксы) — чтобы /documents не совпал с /docs
@@ -773,6 +778,13 @@ async def auth_middleware(request: Request, call_next):
             if path.startswith("/api/"):
                 return JSONResponse(status_code=401, content={"error": "Не авторизован"})
             return RedirectResponse("/login")
+        if getattr(user, "is_active", True) is False:
+            if path.startswith("/api/"):
+                return JSONResponse(status_code=403, content={"error": "Доступ отозван. Обратитесь к администратору."})
+            return HTMLResponse(
+                "<h3 style='font-family:sans-serif;padding:40px'>Доступ отозван. Обратитесь к администратору.</h3>",
+                status_code=403,
+            )
 
         # Проверка доступа к разделу по правам сотрудника
         section = auth.section_for_path(path)
@@ -989,9 +1001,15 @@ async def login(
     limited = rate_limit.limit_login(request)
     if limited:
         return limited
-    user = db.query(User).filter(User.username == username).first()
+    login_name = (username or "").strip().lower()
+    user = db.query(User).filter(User.username == login_name).first()
+    if not user:
+        # совместимость со старыми логинами без нормализации регистра
+        user = db.query(User).filter(User.username == (username or "").strip()).first()
     if not user or not verify_password(password, user.hashed_password):
         return JSONResponse(status_code=400, content={"error": "Неверный логин или пароль"})
+    if getattr(user, "is_active", True) is False:
+        return JSONResponse(status_code=403, content={"error": "Доступ отозван. Обратитесь к администратору."})
 
     # Прозрачная миграция старых SHA-256 хэшей на PBKDF2
     if auth.is_legacy_hash(user.hashed_password):
@@ -2592,25 +2610,73 @@ async def read_users(request: Request, user: User = Depends(get_current_user)):
         return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>Доступ только для администратора.</h3>", status_code=403)
     return templates.TemplateResponse("users.html", {"request": request, "active_page": "users"})
 
+def _active_users_count(db: Session) -> int:
+    q = db.query(User)
+    # is_active может отсутствовать на очень старых строках — считаем None как True
+    return q.filter(or_(User.is_active == True, User.is_active.is_(None))).count()  # noqa: E712
+
+
+def _normalize_username(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _invite_status(inv: UserInvite) -> str:
+    if inv.revoked_at:
+        return "revoked"
+    if inv.used_at:
+        return "used"
+    if inv.expires_at and inv.expires_at < datetime.utcnow():
+        return "expired"
+    return "pending"
+
+
+def _invite_public_url(request: Request, token: str) -> str:
+    base = str(request.base_url).rstrip("/")
+    return f"{base}/register/{token}"
+
+
+def _add_user_to_company_chat(db: Session, user_id: int) -> None:
+    try:
+        company_chat = (
+            db.query(InternalChat)
+            .filter(InternalChat.chat_type == "company")
+            .order_by(InternalChat.id.asc())
+            .first()
+        )
+        if company_chat:
+            _ensure_chat_member(db, company_chat.id, user_id)
+            db.commit()
+    except Exception:
+        db.rollback()
+
+
 @app.get("/api/users")
 def get_users(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
-    users = db.query(User).all()
+    users = db.query(User).order_by(User.id.asc()).all()
     return [{
         "id": u.id,
         "username": u.username,
         "full_name": u.full_name,
+        "phone": getattr(u, "phone", None),
         "role": u.role,
         "permissions": u.permissions,
         "city_id": getattr(u, "city_id", None),
         "city_name": (u.home_city.name if getattr(u, "home_city", None) else None),
+        "is_active": bool(getattr(u, "is_active", True) is not False),
+        "dismissed_at": u.dismissed_at.isoformat() if getattr(u, "dismissed_at", None) else None,
     } for u in users]
 
 @app.get("/api/users/names")
 def get_user_names(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Список сотрудников (для выбора ответственного) — доступен всем авторизованным."""
-    return [{"id": u.id, "username": u.username, "full_name": u.full_name or u.username} for u in db.query(User).all()]
+    rows = (
+        db.query(User)
+        .filter(or_(User.is_active == True, User.is_active.is_(None)))  # noqa: E712
+        .all()
+    )
+    return [{"id": u.id, "username": u.username, "full_name": u.full_name or u.username} for u in rows]
 
 @app.get("/api/users/sections")
 def get_user_sections(user: User = Depends(get_current_user)):
@@ -2622,6 +2688,7 @@ class UserCreate(BaseModel):
     password: str
     role: str = "user"
     full_name: Optional[str] = None
+    phone: Optional[str] = None
     permissions: Optional[List[str]] = None
     city_id: Optional[int] = None
 
@@ -2629,8 +2696,27 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     full_name: Optional[str] = None
+    phone: Optional[str] = None
     permissions: Optional[List[str]] = None
     city_id: Optional[int] = None
+
+
+class InviteCreate(BaseModel):
+    permissions: Optional[List[str]] = None
+    role: str = "user"
+    city_id: Optional[int] = None
+    expires_days: Optional[int] = 7
+
+
+class RegisterIn(BaseModel):
+    token: str
+    first_name: str
+    last_name: str
+    phone: Optional[str] = None
+    email: str
+    password: str
+    password_confirm: str
+
 
 @app.post("/api/users")
 def create_user(
@@ -2641,20 +2727,25 @@ def create_user(
 ):
     if current_user.role != "admin":
         return JSONResponse(status_code=403, content={"error": "Access denied"})
-    if db.query(User).count() >= 10:
+    if _active_users_count(db) >= 10:
         return JSONResponse(status_code=400, content={"error": "Максимальное количество пользователей (10) достигнуто"})
-    
-    existing = db.query(User).filter(User.username == u.username).first()
+
+    username = _normalize_username(u.username)
+    if not username:
+        return JSONResponse(status_code=400, content={"error": "Укажите логин"})
+    existing = db.query(User).filter(User.username == username).first()
     if existing:
         return JSONResponse(status_code=400, content={"error": "Пользователь уже существует"})
-        
+
     new_user = User(
-        username=u.username,
+        username=username,
         hashed_password=get_password_hash(u.password),
         role=u.role,
         full_name=u.full_name,
+        phone=(u.phone or "").strip() or None,
         permissions=u.permissions,
         city_id=u.city_id,
+        is_active=True,
     )
     db.add(new_user)
     db.commit()
@@ -2665,19 +2756,7 @@ def create_user(
         diff={"username": new_user.username, "role": new_user.role, "permissions": new_user.permissions},
         ip=audit.request_ip(request), commit=True,
     )
-    # Новый сотрудник сразу попадает в «Чат компании»
-    try:
-        company_chat = (
-            db.query(InternalChat)
-            .filter(InternalChat.chat_type == "company")
-            .order_by(InternalChat.id.asc())
-            .first()
-        )
-        if company_chat:
-            _ensure_chat_member(db, company_chat.id, new_user.id)
-            db.commit()
-    except Exception:
-        db.rollback()
+    _add_user_to_company_chat(db, new_user.id)
     return {"status": "success"}
 
 @app.put("/api/users/{user_id}")
@@ -2710,6 +2789,11 @@ def update_user(
         if target.full_name != u.full_name:
             diff["full_name"] = {"from": target.full_name, "to": u.full_name}
         target.full_name = u.full_name
+    if u.phone is not None:
+        phone = (u.phone or "").strip() or None
+        if target.phone != phone:
+            diff["phone"] = {"from": target.phone, "to": phone}
+        target.phone = phone
     if u.permissions is not None:
         if target.permissions != u.permissions:
             diff["permissions"] = {"from": target.permissions, "to": u.permissions}
@@ -2730,6 +2814,62 @@ def update_user(
     db.commit()
     return {"status": "success"}
 
+
+@app.post("/api/users/{user_id}/dismiss")
+def dismiss_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Мягкое увольнение: отозвать доступ в CRM, историю сохранить."""
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if current_user.id == user_id:
+        return JSONResponse(status_code=400, content={"error": "Нельзя уволить самого себя"})
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        return JSONResponse(status_code=404, content={"error": "Пользователь не найден"})
+    if getattr(target, "is_active", True) is False:
+        return {"status": "success", "already": True}
+    target.is_active = False
+    target.dismissed_at = datetime.utcnow()
+    target.session_version = int(getattr(target, "session_version", 0) or 0) + 1
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="user", entity_id=target.id,
+        action="user_dismiss", diff={"username": target.username},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success"}
+
+
+@app.post("/api/users/{user_id}/restore")
+def restore_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Восстановить доступ уволенному сотруднику."""
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        return JSONResponse(status_code=404, content={"error": "Пользователь не найден"})
+    if _active_users_count(db) >= 10 and getattr(target, "is_active", True) is False:
+        return JSONResponse(status_code=400, content={"error": "Максимальное количество активных пользователей (10) достигнуто"})
+    target.is_active = True
+    target.dismissed_at = None
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="user", entity_id=target.id,
+        action="user_restore", diff={"username": target.username},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success"}
+
+
 @app.delete("/api/users/{user_id}")
 def delete_user(
     user_id: int,
@@ -2741,7 +2881,7 @@ def delete_user(
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     if current_user.id == user_id:
         return JSONResponse(status_code=400, content={"error": "Нельзя удалить самого себя"})
-        
+
     u = db.query(User).filter(User.id == user_id).first()
     if u:
         audit.write_audit(
@@ -2752,6 +2892,196 @@ def delete_user(
         db.delete(u)
         db.commit()
     return {"status": "success"}
+
+
+@app.get("/api/invites")
+def list_invites(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    rows = db.query(UserInvite).order_by(UserInvite.id.desc()).limit(50).all()
+    out = []
+    for inv in rows:
+        status = _invite_status(inv)
+        out.append({
+            "id": inv.id,
+            "token": inv.token,
+            "permissions": inv.permissions or [],
+            "role": inv.role or "user",
+            "city_id": inv.city_id,
+            "city_name": (inv.city.name if inv.city else None),
+            "created_at": inv.created_at.isoformat() if inv.created_at else None,
+            "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
+            "used_at": inv.used_at.isoformat() if inv.used_at else None,
+            "revoked_at": inv.revoked_at.isoformat() if inv.revoked_at else None,
+            "used_by_user_id": inv.used_by_user_id,
+            "status": status,
+            "url": None,  # URL собираем на клиенте; для pending отдаём ниже
+        })
+    return out
+
+
+@app.post("/api/invites")
+def create_invite(
+    payload: InviteCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    role = (payload.role or "user").strip() or "user"
+    if role == "admin":
+        return JSONResponse(status_code=400, content={"error": "Нельзя создать ссылку с ролью администратора"})
+    if payload.city_id is not None and not db.query(City).filter(City.id == payload.city_id).first():
+        return JSONResponse(status_code=400, content={"error": "Город не найден"})
+    days = payload.expires_days if payload.expires_days and payload.expires_days > 0 else 7
+    days = min(int(days), 30)
+    token = secrets.token_urlsafe(32)
+    inv = UserInvite(
+        token=token,
+        permissions=payload.permissions or [],
+        role=role,
+        city_id=payload.city_id,
+        created_by_id=current_user.id,
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(days=days),
+    )
+    db.add(inv)
+    db.commit()
+    db.refresh(inv)
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="invite", entity_id=inv.id,
+        action="invite_create",
+        diff={"role": inv.role, "permissions": inv.permissions, "expires_at": inv.expires_at.isoformat()},
+        ip=audit.request_ip(request), commit=True,
+    )
+    url = _invite_public_url(request, inv.token)
+    return {
+        "status": "success",
+        "id": inv.id,
+        "token": inv.token,
+        "url": url,
+        "expires_at": inv.expires_at.isoformat(),
+        "permissions": inv.permissions or [],
+        "role": inv.role,
+    }
+
+
+@app.post("/api/invites/{invite_id}/revoke")
+def revoke_invite(
+    invite_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    inv = db.query(UserInvite).filter(UserInvite.id == invite_id).first()
+    if not inv:
+        return JSONResponse(status_code=404, content={"error": "Ссылка не найдена"})
+    if inv.used_at:
+        return JSONResponse(status_code=400, content={"error": "Ссылка уже использована"})
+    if inv.revoked_at:
+        return {"status": "success", "already": True}
+    inv.revoked_at = datetime.utcnow()
+    audit.write_audit(
+        db, user_id=current_user.id, entity_type="invite", entity_id=inv.id,
+        action="invite_revoke", diff={"token_prefix": inv.token[:8]},
+        ip=audit.request_ip(request),
+    )
+    db.commit()
+    return {"status": "success"}
+
+
+@app.get("/register/{token}", response_class=HTMLResponse)
+async def read_register(request: Request, token: str, db: Session = Depends(get_db)):
+    inv = db.query(UserInvite).filter(UserInvite.token == token).first()
+    status = _invite_status(inv) if inv else "invalid"
+    return templates.TemplateResponse(
+        "register.html",
+        {
+            "request": request,
+            "token": token,
+            "invite_ok": status == "pending",
+            "invite_status": status,
+        },
+    )
+
+
+@app.get("/api/register/{token}")
+def api_register_info(token: str, request: Request, db: Session = Depends(get_db)):
+    limited = rate_limit.limit_register(request)
+    if limited:
+        return limited
+    inv = db.query(UserInvite).filter(UserInvite.token == token).first()
+    if not inv:
+        return JSONResponse(status_code=404, content={"error": "Ссылка недействительна", "status": "invalid"})
+    status = _invite_status(inv)
+    if status != "pending":
+        messages = {
+            "used": "Ссылка уже использована",
+            "expired": "Срок действия ссылки истёк",
+            "revoked": "Ссылка отозвана администратором",
+        }
+        return JSONResponse(
+            status_code=400,
+            content={"error": messages.get(status, "Ссылка недоступна"), "status": status},
+        )
+    return {"status": "ok", "role": inv.role or "user", "expires_at": inv.expires_at.isoformat() if inv.expires_at else None}
+
+
+@app.post("/api/register")
+def api_register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
+    limited = rate_limit.limit_register(request)
+    if limited:
+        return limited
+    inv = db.query(UserInvite).filter(UserInvite.token == (payload.token or "").strip()).first()
+    if not inv or _invite_status(inv) != "pending":
+        return JSONResponse(status_code=400, content={"error": "Ссылка недействительна или уже использована"})
+
+    first = (payload.first_name or "").strip()
+    last = (payload.last_name or "").strip()
+    email = _normalize_username(payload.email)
+    phone = (payload.phone or "").strip() or None
+    password = payload.password or ""
+    if not first or not last:
+        return JSONResponse(status_code=400, content={"error": "Укажите имя и фамилию"})
+    if not email or "@" not in email:
+        return JSONResponse(status_code=400, content={"error": "Укажите корректную почту — она будет логином"})
+    if len(password) < 6:
+        return JSONResponse(status_code=400, content={"error": "Пароль должен быть не короче 6 символов"})
+    if password != (payload.password_confirm or ""):
+        return JSONResponse(status_code=400, content={"error": "Пароли не совпадают"})
+    if _active_users_count(db) >= 10:
+        return JSONResponse(status_code=400, content={"error": "Достигнут лимит сотрудников. Обратитесь к администратору."})
+    if db.query(User).filter(User.username == email).first():
+        return JSONResponse(status_code=400, content={"error": "Пользователь с такой почтой уже есть"})
+
+    full_name = f"{first} {last}".strip()
+    new_user = User(
+        username=email,
+        hashed_password=get_password_hash(password),
+        role=inv.role or "user",
+        full_name=full_name,
+        phone=phone,
+        permissions=inv.permissions or [],
+        city_id=inv.city_id,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.flush()
+    inv.used_at = datetime.utcnow()
+    inv.used_by_user_id = new_user.id
+    db.commit()
+    db.refresh(new_user)
+    audit.write_audit(
+        db, user_id=new_user.id, entity_type="user", entity_id=new_user.id,
+        action="user_register_invite",
+        diff={"username": new_user.username, "invite_id": inv.id, "permissions": new_user.permissions},
+        ip=audit.request_ip(request), commit=True,
+    )
+    _add_user_to_company_chat(db, new_user.id)
+    return {"status": "success", "redirect": "/login"}
 
 @app.get("/settings", response_class=HTMLResponse)
 async def read_settings(request: Request, user: User = Depends(get_current_user)):
