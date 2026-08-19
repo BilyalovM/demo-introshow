@@ -3031,6 +3031,63 @@ def restore_user(
     return {"status": "success"}
 
 
+def _purge_user_dependencies(db: Session, user_id: int) -> None:
+    """Снять FK-ссылки перед жёстким удалением сотрудника (Postgres + SQLite)."""
+    # Приглашения
+    db.query(UserInvite).filter(UserInvite.used_by_user_id == user_id).update(
+        {UserInvite.used_by_user_id: None}, synchronize_session=False
+    )
+    db.query(UserInvite).filter(UserInvite.created_by_id == user_id).update(
+        {UserInvite.created_by_id: None}, synchronize_session=False
+    )
+    # Обязательные связи — удаляем строки
+    for model, col in (
+        (InternalChatMember, InternalChatMember.user_id),
+        (InternalMessage, InternalMessage.sender_id),
+        (AppNotification, AppNotification.user_id),
+        (WorkSession, WorkSession.user_id),
+        (DealStaffAssignment, DealStaffAssignment.user_id),
+        (DealAdvance, DealAdvance.user_id),
+    ):
+        db.query(model).filter(col == user_id).delete(synchronize_session=False)
+    # Nullable — обнуляем
+    db.query(TaskAssignee).filter(TaskAssignee.user_id == user_id).update(
+        {TaskAssignee.user_id: None}, synchronize_session=False
+    )
+    db.query(TaskObserver).filter(TaskObserver.user_id == user_id).update(
+        {TaskObserver.user_id: None}, synchronize_session=False
+    )
+    db.query(TaskComment).filter(TaskComment.user_id == user_id).update(
+        {TaskComment.user_id: None}, synchronize_session=False
+    )
+    db.query(Deal).filter(Deal.assignee_id == user_id).update({Deal.assignee_id: None}, synchronize_session=False)
+    db.query(Deal).filter(Deal.sales_manager_id == user_id).update({Deal.sales_manager_id: None}, synchronize_session=False)
+    db.query(Deal).filter(Deal.project_manager_id == user_id).update({Deal.project_manager_id: None}, synchronize_session=False)
+    db.query(Deal).filter(Deal.deleted_by_id == user_id).update({Deal.deleted_by_id: None}, synchronize_session=False)
+    db.query(Task).filter(Task.creator_id == user_id).update({Task.creator_id: None}, synchronize_session=False)
+    db.query(Task).filter(Task.deleted_by_id == user_id).update({Task.deleted_by_id: None}, synchronize_session=False)
+    db.query(Activity).filter(Activity.assignee_id == user_id).update({Activity.assignee_id: None}, synchronize_session=False)
+    db.query(DealPayrollLine).filter(DealPayrollLine.user_id == user_id).update(
+        {DealPayrollLine.user_id: None}, synchronize_session=False
+    )
+    db.query(InternalChat).filter(InternalChat.created_by_id == user_id).update(
+        {InternalChat.created_by_id: None}, synchronize_session=False
+    )
+    db.query(AuditLog).filter(AuditLog.user_id == user_id).update({AuditLog.user_id: None}, synchronize_session=False)
+    db.query(Company).filter(Company.deleted_by_id == user_id).update(
+        {Company.deleted_by_id: None}, synchronize_session=False
+    )
+    db.query(DealDocument).filter(DealDocument.deleted_by_id == user_id).update(
+        {DealDocument.deleted_by_id: None}, synchronize_session=False
+    )
+    db.query(DealItem).filter(DealItem.issued_by_id == user_id).update(
+        {DealItem.issued_by_id: None}, synchronize_session=False
+    )
+    db.query(DealItem).filter(DealItem.returned_by_id == user_id).update(
+        {DealItem.returned_by_id: None}, synchronize_session=False
+    )
+
+
 @app.delete("/api/users/{user_id}")
 def delete_user(
     user_id: int,
@@ -3044,14 +3101,26 @@ def delete_user(
         return JSONResponse(status_code=400, content={"error": "Нельзя удалить самого себя"})
 
     u = db.query(User).filter(User.id == user_id).first()
-    if u:
+    if not u:
+        return {"status": "success"}
+    if u.username == "admin" or u.role == "admin":
+        return JSONResponse(status_code=400, content={"error": "Нельзя удалить администратора"})
+
+    try:
         audit.write_audit(
             db, user_id=current_user.id, entity_type="user", entity_id=u.id,
             action="user_delete", diff={"username": u.username},
             ip=audit.request_ip(request),
         )
+        _purge_user_dependencies(db, u.id)
         db.delete(u)
         db.commit()
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Не удалось удалить сотрудника: {type(e).__name__}"},
+        )
     return {"status": "success"}
 
 
