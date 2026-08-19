@@ -853,6 +853,12 @@ async def auth_middleware(request: Request, call_next):
         elif section and not auth.user_can_access(user, section):
             if path.startswith("/api/"):
                 return JSONResponse(status_code=403, content={"error": "Нет доступа к разделу"})
+            # После логина браузер всегда идёт на «/». Если дашборда нет в правах —
+            # мягко ведём в первый доступный раздел вместо «запрещено» / ощущения кика.
+            if path == "/" or path == "":
+                home = auth.first_accessible_path(user)
+                if home and home != "/":
+                    return RedirectResponse(home, status_code=302)
             return HTMLResponse("<h3 style='font-family:sans-serif;padding:40px'>Доступ к разделу запрещён. Обратитесь к администратору.</h3>", status_code=403)
 
         request.state.user = user
@@ -1059,8 +1065,10 @@ async def login(
         # совместимость со старыми логинами без нормализации регистра
         user = db.query(User).filter(User.username == (username or "").strip()).first()
     if not user or not verify_password(password, user.hashed_password):
+        rate_limit.record_login_failure(request)
         return JSONResponse(status_code=400, content={"error": "Неверный логин или пароль"})
     if getattr(user, "is_active", True) is False:
+        rate_limit.record_login_failure(request)
         return JSONResponse(status_code=403, content={"error": "Доступ отозван. Обратитесь к администратору."})
 
     # Прозрачная миграция старых SHA-256 хэшей на PBKDF2
@@ -1070,7 +1078,12 @@ async def login(
 
     ver = int(getattr(user, "session_version", 0) or 0)
     token = auth.create_session_token(user.username, session_version=ver)
-    response = JSONResponse(content={"status": "success", "session_days": round(auth.SESSION_MAX_AGE / 86400, 1)})
+    redirect = auth.first_accessible_path(user)
+    response = JSONResponse(content={
+        "status": "success",
+        "session_days": round(auth.SESSION_MAX_AGE / 86400, 1),
+        "redirect": redirect,
+    })
     response.set_cookie(
         key="session_token",
         value=token,
@@ -3205,7 +3218,14 @@ def create_invite(
         db,
         role_id=payload.role_id,
         role_str=role,
-        permissions=payload.permissions,
+        # None = взять права роли; явный [] с фронта = полный доступ (см. user_can_access).
+        # Для invite с role_id предпочитаем права роли, если чекбоксы пустые —
+        # иначе сотрудник регистрируется без разделов и «вылетает» с дашборда.
+        permissions=(
+            None
+            if payload.role_id and not (payload.permissions or [])
+            else payload.permissions
+        ),
         allow_admin=False,
     )
     if resolved is None:
@@ -3342,14 +3362,19 @@ def api_register(payload: RegisterIn, request: Request, db: Session = Depends(ge
         return JSONResponse(status_code=400, content={"error": "Пользователь с такой почтой уже есть"})
 
     full_name = f"{first} {last}".strip()
-    # Права: снимок с invite; role_id сохраняем. Если у роли обновили права позже —
-    # уже зарегистрированный сотрудник остаётся со снимком.
+    # Права: снимок с invite; если пусто — копируем из роли. role_id сохраняем.
     access_role_id = getattr(inv, "role_id", None)
-    if access_role_id and not db.query(Role).filter(Role.id == access_role_id).first():
-        access_role_id = None
+    access_role = None
+    if access_role_id:
+        access_role = db.query(Role).filter(Role.id == access_role_id).first()
+        if not access_role:
+            access_role_id = None
     system_role = inv.role or "user"
     if system_role == "admin":
         system_role = "user"
+    invite_perms = list(inv.permissions or [])
+    if not invite_perms and access_role is not None:
+        invite_perms = list(access_role.permissions or [])
     new_user = User(
         username=email,
         hashed_password=get_password_hash(password),
@@ -3357,9 +3382,10 @@ def api_register(payload: RegisterIn, request: Request, db: Session = Depends(ge
         role_id=access_role_id,
         full_name=full_name,
         phone=phone,
-        permissions=inv.permissions or [],
+        permissions=invite_perms,
         city_id=inv.city_id,
         is_active=True,
+        session_version=0,
     )
     db.add(new_user)
     db.flush()
@@ -3379,7 +3405,17 @@ def api_register(payload: RegisterIn, request: Request, db: Session = Depends(ge
         ip=audit.request_ip(request), commit=True,
     )
     _add_user_to_company_chat(db, new_user.id)
-    return {"status": "success", "redirect": "/login"}
+    # Сразу выдаём сессию — без лишнего круга /login (особенно важно на мобильном PWA).
+    ver = int(getattr(new_user, "session_version", 0) or 0)
+    token = auth.create_session_token(new_user.username, session_version=ver)
+    redirect = auth.first_accessible_path(new_user)
+    response = JSONResponse(content={"status": "success", "redirect": redirect})
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        **auth.session_cookie_kwargs(request),
+    )
+    return response
 
 @app.get("/settings", response_class=HTMLResponse)
 async def read_settings(request: Request, user: User = Depends(get_current_user)):
@@ -7112,6 +7148,7 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
     )
     db.commit()
 
+    items_warning = None
     if deal.items_json:
         try:
             items_list = json.loads(deal.items_json)
@@ -7127,10 +7164,16 @@ def create_deal(deal: DealCreate, request: Request, db: Session = Depends(get_db
                 db.add(db_item)
             db.commit()
             _recalc_deal_sum(db, db_deal)
-        except Exception:
-            pass
+        except Exception as exc:
+            db.rollback()
+            items_warning = f"Сделка создана, но позиции не сохранены: {exc}"
+            import traceback
+            traceback.print_exc()
 
-    return {"id": db_deal.id}
+    result = {"id": db_deal.id}
+    if items_warning:
+        result["warning"] = items_warning
+    return result
 
 @app.put("/api/deals/{deal_id}/stage")
 def update_deal_stage(

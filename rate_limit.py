@@ -29,8 +29,12 @@ def check_rate_limit(
     *,
     limit: int,
     window_sec: int,
+    record: bool = True,
 ) -> Optional[JSONResponse]:
-    """Вернуть JSONResponse 429 при превышении, иначе None."""
+    """Вернуть JSONResponse 429 при превышении, иначе None.
+
+    record=False — только проверка лимита без записи (для успешного логина).
+    """
     now = time.time()
     cutoff = now - window_sec
     with _lock:
@@ -47,14 +51,21 @@ def check_rate_limit(
                 },
                 headers={"Retry-After": str(retry_after)},
             )
-        q.append(now)
+        if record:
+            q.append(now)
     return None
 
 
 def limit_login(request) -> Optional[JSONResponse]:
-    # 10 попыток / 15 минут на IP
+    """Проверка лимита логина (без записи). Писать только неудачи — см. record_login_failure."""
     ip = _client_ip(request)
-    return check_rate_limit(f"login:{ip}", limit=10, window_sec=15 * 60)
+    return check_rate_limit(f"login:{ip}", limit=20, window_sec=15 * 60, record=False)
+
+
+def record_login_failure(request) -> None:
+    """Учесть неудачную попытку входа (успешные логины лимит не сжигают)."""
+    ip = _client_ip(request)
+    check_rate_limit(f"login:{ip}", limit=20, window_sec=15 * 60, record=True)
 
 
 def limit_public_leads(request) -> Optional[JSONResponse]:
