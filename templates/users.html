@@ -137,6 +137,60 @@
         display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px;
     }
     .role-card h4 { margin: 0 0 4px; font-size: 15px; }
+
+    .perm-summary {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+        max-width: 160px; white-space: normal;
+    }
+    .perm-summary-label { font-size: 12.5px; color: var(--text-muted, #888); line-height: 1.3; }
+    .perm-view-btn {
+        appearance: none; background: transparent; border: none; padding: 0;
+        color: var(--coral, #e25a3c); font-size: 12.5px; font-weight: 650;
+        cursor: pointer; font-family: inherit; text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+    .perm-view-btn:hover { opacity: 0.85; }
+
+    .perm-drawer-backdrop {
+        display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
+        z-index: 1300; align-items: stretch; justify-content: flex-end;
+    }
+    .perm-drawer-backdrop.open { display: flex; }
+    .perm-drawer {
+        width: min(420px, 100%); height: 100%;
+        background: var(--surface); color: var(--text);
+        border-left: 1px solid var(--border);
+        box-shadow: -12px 0 40px rgba(0,0,0,0.18);
+        display: flex; flex-direction: column; min-width: 0;
+        animation: permDrawerIn 0.2s ease;
+    }
+    @keyframes permDrawerIn {
+        from { transform: translateX(16px); opacity: 0.6; }
+        to { transform: none; opacity: 1; }
+    }
+    .perm-drawer header {
+        display: flex; align-items: flex-start; justify-content: space-between;
+        gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .perm-drawer header h3 { margin: 0; font-size: 16px; font-weight: 700; }
+    .perm-drawer-sub { margin: 4px 0 0; font-size: 12.5px; color: var(--text-muted, #888); }
+    .perm-drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+    .perm-drawer-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .perm-drawer-list li {
+        display: flex; align-items: flex-start; gap: 10px;
+        border: 1px solid var(--border); border-radius: 10px;
+        padding: 10px 12px; font-size: 13.5px; line-height: 1.35; background: var(--background);
+    }
+    .perm-drawer-list li.flag { border-color: rgba(226, 90, 60, 0.35); }
+    .perm-drawer-dot {
+        width: 8px; height: 8px; border-radius: 99px; margin-top: 5px; flex-shrink: 0;
+        background: var(--coral, #e25a3c);
+    }
+    .perm-drawer-empty { font-size: 13.5px; color: var(--text-muted, #888); margin: 0; }
+    @media (max-width: 640px) {
+        .perm-drawer { width: 100%; }
+        .perm-summary { max-width: 140px; }
+    }
 </style>
 {% endblock %}
 
@@ -289,6 +343,23 @@
             <button type="button" class="ghost" style="padding:0.7rem 1.2rem;" onclick="closeInviteModal()">Закрыть</button>
         </div>
     </div>
+</div>
+
+<!-- Выездная панель: права сотрудника -->
+<div class="perm-drawer-backdrop" id="perm-drawer-backdrop" onclick="if (event.target === this) closePermDrawer()">
+    <aside class="perm-drawer" role="dialog" aria-modal="true" aria-labelledby="perm-drawer-title">
+        <header>
+            <div>
+                <h3 id="perm-drawer-title">Права доступа</h3>
+                <p class="perm-drawer-sub" id="perm-drawer-sub"></p>
+            </div>
+            <button type="button" class="ghost" style="padding:0.45rem 0.85rem;" onclick="closePermDrawer()">Закрыть</button>
+        </header>
+        <div class="perm-drawer-body">
+            <ul class="perm-drawer-list" id="perm-drawer-list"></ul>
+            <p class="perm-drawer-empty" id="perm-drawer-empty" style="display:none;">Доступ ко всем разделам.</p>
+        </div>
+    </aside>
 </div>
 
 <!-- Модал: роль -->
@@ -454,6 +525,74 @@
         return list.map(p => labels[p] || p).join(', ');
     }
 
+    function sectionPermCount(list) {
+        const sectionKeys = new Set(Object.keys(sections));
+        return (list || []).filter(p => sectionKeys.has(p)).length;
+    }
+
+    function permsShortLabel(list, role) {
+        if (role === 'admin') return 'Все разделы';
+        if (!list || list.length === 0) return 'Все разделы';
+        const n = sectionPermCount(list);
+        const total = Object.keys(sections).length;
+        if (n >= total && total > 0) return 'Все разделы';
+        if (n === 0) {
+            const flagCount = (list || []).length;
+            return flagCount ? `${flagCount} флаг.` : 'Нет разделов';
+        }
+        return `${n} ${pluralSections(n)}`;
+    }
+
+    function pluralSections(n) {
+        const mod10 = n % 10;
+        const mod100 = n % 100;
+        if (mod10 === 1 && mod100 !== 11) return 'раздел';
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'раздела';
+        return 'разделов';
+    }
+
+    function openPermDrawer(userId) {
+        const u = usersCache.find(x => x.id === userId);
+        if (!u) return;
+        const title = document.getElementById('perm-drawer-title');
+        const sub = document.getElementById('perm-drawer-sub');
+        const listEl = document.getElementById('perm-drawer-list');
+        const emptyEl = document.getElementById('perm-drawer-empty');
+        const roleInfo = displayRoleLabel(u);
+        title.textContent = 'Права доступа';
+        sub.textContent = `${u.full_name || u.username} · ${roleInfo.text}`;
+
+        const allAccess = u.role === 'admin' || !u.permissions || u.permissions.length === 0;
+        listEl.innerHTML = '';
+        if (allAccess) {
+            emptyEl.style.display = 'block';
+            emptyEl.textContent = u.role === 'admin'
+                ? 'Администратор — полный доступ ко всем разделам.'
+                : 'Доступ ко всем разделам (права не ограничены).';
+        } else {
+            emptyEl.style.display = 'none';
+            const labels = { ...sections, ...flags };
+            const flagKeys = new Set(Object.keys(flags));
+            u.permissions.forEach(key => {
+                const li = document.createElement('li');
+                if (flagKeys.has(key)) li.classList.add('flag');
+                li.innerHTML = `<span class="perm-drawer-dot" aria-hidden="true"></span><span>${escapeHtml(labels[key] || key)}</span>`;
+                listEl.appendChild(li);
+            });
+        }
+        document.getElementById('perm-drawer-backdrop').classList.add('open');
+    }
+
+    function closePermDrawer() {
+        document.getElementById('perm-drawer-backdrop').classList.remove('open');
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('perm-drawer-backdrop')?.classList.contains('open')) {
+            closePermDrawer();
+        }
+    });
+
     function formatDate(iso) {
         if (!iso) return '—';
         try {
@@ -530,7 +669,12 @@
                 <td>${escapeHtml(u.full_name || '—')}</td>
                 <td>${escapeHtml(u.city_name || '—')}</td>
                 <td><span class="role-badge ${roleInfo.cls}">${escapeHtml(roleInfo.text)}</span></td>
-                <td class="muted" style="font-size:12px; max-width:280px;">${escapeHtml(permsSummary(u.permissions, u.role))}</td>
+                <td>
+                    <div class="perm-summary">
+                        <span class="perm-summary-label">${escapeHtml(permsShortLabel(u.permissions, u.role))}</span>
+                        <button type="button" class="perm-view-btn" onclick="openPermDrawer(${u.id})">Смотреть права</button>
+                    </div>
+                </td>
                 <td><div class="actions-cell">${actions}</div></td>
             `;
             tbody.appendChild(tr);
