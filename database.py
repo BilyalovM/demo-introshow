@@ -52,6 +52,10 @@ def _make_engine(url: str):
         url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
         url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    # Vercel serverless: короткий цикл жизни процесса — без постоянного пула соединений.
+    if os.environ.get("VERCEL"):
+        from sqlalchemy.pool import NullPool
+        return create_engine(url, pool_pre_ping=True, poolclass=NullPool)
     return create_engine(url, pool_pre_ping=True)
 
 
@@ -816,5 +820,8 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

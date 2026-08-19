@@ -141,7 +141,7 @@
                 });
                 const data = await response.json();
                 if (response.ok && data.status === 'success') {
-                    window.location.href = '/';
+                    window.location.href = data.redirect || '/';
                 } else {
                     err.textContent = data.error || 'Неверный логин или пароль';
                     err.classList.add('show');

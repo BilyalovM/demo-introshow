@@ -234,6 +234,52 @@ def section_for_path(path: str):
     return None
 
 
+# Порядок «домашних» разделов после логина (первый доступный).
+HOME_SECTION_ORDER = (
+    "dashboard",
+    "today",
+    "crm",
+    "tasks",
+    "equipment",
+    "companies",
+    "quotes",
+    "calendar",
+    "documents",
+    "inbox",
+    "chats",
+    "analytics",
+    "assistant",
+    "settings",
+)
+
+SECTION_HOME_PATH = {
+    "dashboard": "/",
+    "today": "/today",
+    "inbox": "/inbox",
+    "chats": "/chats",
+    "crm": "/crm",
+    "quotes": "/quotes",
+    "documents": "/documents",
+    "calendar": "/calendar",
+    "equipment": "/equipment",
+    "companies": "/companies",
+    "tasks": "/tasks",
+    "analytics": "/analytics",
+    "assistant": "/assistant",
+    "settings": "/settings",
+}
+
+
+def first_accessible_path(user) -> str:
+    """Куда вести после логина/регистрации: первый доступный раздел, не обязательно дашборд."""
+    if user is None:
+        return "/login"
+    for key in HOME_SECTION_ORDER:
+        if user_can_access(user, key):
+            return SECTION_HOME_PATH.get(key, "/")
+    return "/settings" if user_can_access(user, "settings") else "/"
+
+
 def user_has_flag(user, flag: str) -> bool:
     if not user or user.role == "admin":
         return False
