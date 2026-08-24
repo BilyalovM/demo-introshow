@@ -17,13 +17,38 @@ body:has(.quote-layout) .content,
 body:has(.quote-layout) .main,
 body:has(.quote-layout) .quote-layout,
 body:has(.quote-layout) .quote-main,
-body:has(.quote-layout) .quote-side,
-body:has(.quote-layout) .quote-layout .card {
+body:has(.quote-layout) .quote-side {
     height: auto !important;
     max-height: none !important;
     min-height: 0 !important;
     overflow-x: visible !important;
     overflow-y: visible !important;
+}
+
+/* Верхняя статусная строка как на макете */
+.quote-top-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    background: var(--bg-2, #f8fafc);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 12px;
+    margin-bottom: 14px;
+    font-size: 14px;
+    color: var(--text, #0f172a);
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.quote-top-summary strong {
+    font-weight: 700;
+}
+.qts-title {
+    font-size: 14px;
+}
+.qts-meta {
+    font-size: 14px;
+    white-space: nowrap;
 }
 
 .quote-layout {
@@ -43,115 +68,137 @@ body:has(.quote-layout) .quote-layout .card {
     gap: 16px;
 }
 
-/* --- Каталог позиций --- */
-.cat-group {
-    margin-bottom: 16px;
+/* --- Карточки категорий в каталоге (как на скриншоте) --- */
+.cat-group-card {
+    background: var(--surface, #ffffff);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 16px;
+    margin-bottom: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.cat-group:last-child {
-    margin-bottom: 0;
-}
-.cat-head {
-    font-weight: 700;
-    font-size: 13.5px;
+.cat-group-head {
+    font-weight: 800;
+    font-size: 14.5px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-2, #64748b);
-    padding: 8px 12px;
-    background: var(--bg-2, #f1f5f9);
-    border-radius: 8px;
-    margin-bottom: 8px;
+    color: var(--text, #0f172a);
+    padding: 12px 16px;
+    background: var(--bg-2, #f8fafc);
+    border-bottom: 1px solid var(--border, #e2e8f0);
 }
 .cat-item-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
 }
-.cat-item {
+.cat-item-row {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    gap: 12px;
-    transition: background 0.15s, border-color 0.15s;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-soft, #f1f5f9);
+    gap: 14px;
+    transition: background 0.15s;
 }
-.cat-item:hover {
-    border-color: var(--primary);
+.cat-item-row:last-child {
+    border-bottom: none;
 }
-.cat-item.is-conflict {
+.cat-item-row:hover {
+    background: var(--bg-2, #fbfcfd);
+}
+.cat-item-row.is-conflict {
     background: var(--danger-soft, #fee2e2) !important;
-    border-color: var(--danger, #ef4444) !important;
 }
-.cat-item-main {
+.cat-item-info {
     flex: 1;
     min-width: 0;
 }
-.cat-item-title {
+.cat-item-name {
     font-weight: 600;
-    font-size: 14.5px;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    font-size: 15.5px;
+    color: var(--text, #0f172a);
     line-height: 1.35;
+    word-break: break-word;
 }
-.cat-item-meta {
-    font-size: 12px;
+.cat-item-name .sub-label {
+    display: block;
+    font-weight: 500;
+    font-size: 14px;
     color: var(--text-2, #64748b);
-    margin-top: 2px;
+    margin-top: 1px;
+}
+.cat-item-cost {
+    font-size: 12.5px;
+    color: var(--text-2, #64748b);
+    margin-top: 3px;
     display: flex;
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
 }
-.cat-item-price {
-    font-weight: 700;
-    font-size: 15px;
-    color: var(--text);
-    white-space: nowrap;
-    text-align: right;
-    width: 120px;
-}
-.cat-item-actions {
+
+/* Правая колонка строки: цена + степпер ровно под ней */
+.cat-item-right {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-end;
     gap: 6px;
-    justify-content: flex-end;
-    width: 120px;
     flex-shrink: 0;
 }
+.cat-item-price {
+    font-weight: 800;
+    font-size: 16px;
+    color: var(--text, #0f172a);
+    white-space: nowrap;
+    text-align: right;
+}
 
-.cat-qty-badge {
+/* Степпер [ —  1  + ] в стиле макета */
+.stepper-pill {
     display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 106px;
+    height: 36px;
+    border: 1px solid var(--border, #cbd5e1);
+    border-radius: 8px;
+    background: var(--surface, #ffffff);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.stepper-btn {
+    border: none;
+    background: transparent;
+    width: 36px;
+    height: 100%;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text, #334155);
+    cursor: pointer;
+    display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 28px;
-    height: 26px;
-    padding: 0 6px;
-    border-radius: 7px;
-    background: var(--primary);
-    color: #fff;
-    font-size: 12px;
+    padding: 0;
+    line-height: 1;
+    -webkit-tap-highlight-color: transparent;
+}
+.stepper-btn:active {
+    background: var(--bg-2, #f1f5f9);
+}
+.stepper-val {
+    font-size: 15px;
     font-weight: 700;
+    color: var(--text-2, #94a3b8);
+    text-align: center;
+    flex: 1;
+    user-select: none;
 }
-.cat-stepper {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+.stepper-val.active {
+    color: var(--text, #0f172a);
+    font-weight: 800;
 }
-.badge-sub {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 6px;
-    background: #fff7ed;
-    color: #c2410c;
-    border: 1px solid #fdba74;
-}
+
 .btn-sub-dup {
     font-size: 11px;
     font-weight: 700;
@@ -163,7 +210,6 @@ body:has(.quote-layout) .quote-layout .card {
     cursor: pointer;
     white-space: nowrap;
 }
-.btn-sub-dup:hover { background: #ffedd5; }
 .conflict-icon {
     color: #fff;
     font-weight: 800;
@@ -173,65 +219,43 @@ body:has(.quote-layout) .quote-layout .card {
     justify-content: center;
     width: 20px;
     height: 20px;
-    background: var(--danger);
+    background: var(--danger, #ef4444);
     border-radius: 50%;
     font-size: 12px;
     border: none;
     padding: 0;
     line-height: 1;
+    margin-left: 6px;
 }
 
 /* --- Корзина (Позиции сметы) --- */
 .cart-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 .cart-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 16px;
-    display: grid;
-    grid-template-columns: 1fr auto auto auto auto 36px;
-    align-items: center;
-    gap: 12px;
+    background: var(--surface, #ffffff);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.cart-card-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
 }
 .cart-card-title {
-    font-weight: 600;
-    font-size: 14.5px;
-    color: var(--text);
-    line-height: 1.35;
-}
-.cart-card-field {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 13px;
-    color: var(--text-2);
-}
-.cart-card-input {
-    width: 64px;
-    padding: 6px 8px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 600;
-    text-align: center;
-    background: var(--bg-2, #f8fafc);
-    box-sizing: border-box;
-}
-.cart-card-input.price-input {
-    width: 100px;
-    text-align: right;
-}
-.cart-card-sum {
     font-weight: 700;
     font-size: 15px;
-    color: var(--text);
-    white-space: nowrap;
-    text-align: right;
-    min-width: 90px;
+    color: var(--text, #0f172a);
+    flex: 1;
+    line-height: 1.35;
 }
 .cart-card-del {
     width: 32px;
@@ -240,17 +264,76 @@ body:has(.quote-layout) .quote-layout .card {
     border: none;
     background: var(--danger-soft, #fee2e2);
     color: var(--danger, #dc2626);
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 0.15s;
+    flex-shrink: 0;
 }
-.cart-card-del:hover { opacity: 0.8; }
+.cart-card-inputs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.3fr;
+    gap: 8px;
+}
+.cart-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.cart-input-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-2, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.cart-input-box {
+    display: flex;
+    align-items: center;
+    background: var(--bg-2, #f8fafc);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 8px;
+    height: 42px;
+    padding: 0 8px;
+}
+.cart-input-box input {
+    border: none !important;
+    background: transparent !important;
+    width: 100% !important;
+    height: 100% !important;
+    font-size: 15px !important;
+    font-weight: 700;
+    text-align: center;
+    padding: 0;
+    box-shadow: none !important;
+    color: var(--text, #0f172a);
+}
+.cart-input-unit {
+    font-size: 12px;
+    color: var(--text-2, #64748b);
+    font-weight: 500;
+    margin-left: 2px;
+}
+.cart-card-bottom-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border, #e2e8f0);
+}
+.cart-card-sum-label {
+    font-size: 13px;
+    color: var(--text-2, #64748b);
+}
+.cart-card-sum {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--text, #0f172a);
+}
 
-/* Мобильная прилипающая панель */
+/* Мобильная прилипающая нижняя плашка */
 .mobile-quote-bar {
     display: none;
 }
@@ -268,7 +351,7 @@ body:has(.quote-layout) .quote-layout .card {
     }
     .quote-layout .card {
         padding: 14px !important;
-        border-radius: 14px;
+        border-radius: 16px;
     }
 
     /* Шапка: 1 колонка */
@@ -284,154 +367,6 @@ body:has(.quote-layout) .quote-layout .card {
         font-size: 16px !important;
     }
 
-    /* Каталог: карточка для телефона */
-    .cat-item {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        padding: 14px;
-        gap: 10px;
-        border-radius: 12px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.03);
-    }
-    .cat-item-main {
-        width: 100%;
-    }
-    .cat-item-title {
-        font-size: 15px;
-        font-weight: 600;
-        line-height: 1.35;
-    }
-    .cat-item-bottom-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-top: 8px;
-        border-top: 1px solid var(--border-soft, #f1f5f9);
-        gap: 10px;
-    }
-    .cat-item-price {
-        font-size: 16px;
-        font-weight: 700;
-        color: var(--primary);
-        text-align: left;
-        width: auto;
-    }
-    .cat-item-actions {
-        width: auto;
-    }
-    .cat-item-actions .btn {
-        min-height: 44px;
-        min-width: 44px;
-        font-size: 20px;
-        font-weight: 700;
-        border-radius: 10px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .cat-stepper {
-        gap: 8px;
-    }
-    .cat-stepper .btn {
-        min-width: 44px;
-        min-height: 44px;
-        font-size: 20px;
-    }
-    .cat-qty-badge {
-        min-width: 32px;
-        height: 32px;
-        font-size: 14px;
-        border-radius: 8px;
-    }
-
-    /* Корзина: карточка для телефона */
-    .cart-card {
-        display: flex;
-        flex-direction: column;
-        padding: 14px;
-        gap: 10px;
-        border-radius: 12px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.03);
-    }
-    .cart-card-top-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 10px;
-    }
-    .cart-card-title {
-        font-size: 15px;
-        font-weight: 600;
-        flex: 1;
-    }
-    .cart-card-del {
-        width: 36px;
-        height: 36px;
-        font-size: 22px;
-        border-radius: 8px;
-        flex-shrink: 0;
-    }
-    .cart-card-inputs-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1.3fr;
-        gap: 8px;
-    }
-    .cart-input-group {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-    }
-    .cart-input-label {
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--text-2, #64748b);
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-    }
-    .cart-input-box {
-        display: flex;
-        align-items: center;
-        background: var(--bg-2, #f8fafc);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        height: 44px;
-        padding: 0 8px;
-    }
-    .cart-input-box input {
-        border: none !important;
-        background: transparent !important;
-        width: 100% !important;
-        height: 100% !important;
-        font-size: 16px !important;
-        font-weight: 600;
-        text-align: center;
-        padding: 0;
-        box-shadow: none !important;
-    }
-    .cart-input-unit {
-        font-size: 12px;
-        color: var(--text-2, #64748b);
-        font-weight: 500;
-        margin-left: 2px;
-    }
-    .cart-card-bottom-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-top: 8px;
-        border-top: 1px dashed var(--border);
-    }
-    .cart-card-sum-label {
-        font-size: 13px;
-        color: var(--text-2);
-    }
-    .cart-card-sum {
-        font-size: 17px;
-        font-weight: 800;
-        color: var(--text);
-    }
-
     /* Мобильная прилипающая нижняя плашка */
     .mobile-quote-bar {
         display: flex;
@@ -439,11 +374,11 @@ body:has(.quote-layout) .quote-layout .card {
         left: 0;
         right: 0;
         bottom: var(--bottom-nav-h, 60px);
-        background: var(--surface);
-        border-top: 1px solid var(--border);
+        background: var(--surface, #ffffff);
+        border-top: 1px solid var(--border, #e2e8f0);
         padding: 10px 16px;
         z-index: 95;
-        box-shadow: 0 -4px 16px rgba(0,0,0,0.12);
+        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
         align-items: center;
         justify-content: space-between;
         gap: 12px;
@@ -456,12 +391,12 @@ body:has(.quote-layout) .quote-layout .card {
     .mqb-sum {
         font-size: 18px;
         font-weight: 800;
-        color: var(--primary);
+        color: var(--primary, #e25a3c);
         line-height: 1.1;
     }
     .mqb-count {
         font-size: 12px;
-        color: var(--text-2);
+        color: var(--text-2, #64748b);
     }
     .mqb-save {
         min-height: 44px;
@@ -471,7 +406,7 @@ body:has(.quote-layout) .quote-layout .card {
         border-radius: 10px;
     }
 
-    /* Отступ снизу для мобильного контента, чтобы плашка не перекрывала кнопки */
+    /* Отступ снизу для мобильного контента */
     body:has(.quote-layout) .content {
         padding-bottom: 150px !important;
     }
@@ -480,12 +415,17 @@ body:has(.quote-layout) .quote-layout .card {
 {% endblock %}
 
 {% block content %}
-<div class="toolbar" style="margin-bottom:6px">
-    <h1 class="page-title" style="margin:0" id="pageTitle">Новая смета / договор</h1>
+<!-- Верхняя строка статуса как на макете -->
+<div class="quote-top-summary">
+    <div class="qts-title">Оценка: <strong id="topProjectName">Новый проект</strong></div>
+    <div class="qts-meta">Всего: <strong id="topGrandSum">0 ₸</strong> / <span id="topItemCount">0 позиций</span></div>
+</div>
+
+<div class="toolbar" style="margin-bottom:10px">
+    <h1 class="page-title" style="margin:0" id="pageTitle">Смета / договор</h1>
     <div class="spacer"></div>
     <a class="btn" href="/quotes">← К списку</a>
 </div>
-<p class="page-sub">Добавьте позиции, задайте даты и скидку — затем сохраните и выгрузите документы.</p>
 
 <div class="grid quote-layout">
     <div class="quote-main">
@@ -494,7 +434,7 @@ body:has(.quote-layout) .quote-layout .card {
             <h3 style="margin-top:0">Шапка сметы</h3>
             <div class="grid cols-2">
                 <label class="field"><span>Дата договора</span><input id="qDate" type="date"/></label>
-                <label class="field"><span>Наименование проекта</span><input id="qTitle" placeholder="Презентация / концерт / …"/></label>
+                <label class="field"><span>Наименование проекта</span><input id="qTitle" placeholder="Презентация / концерт / …" oninput="document.getElementById('topProjectName').textContent = this.value || 'Новый проект'"/></label>
             </div>
             <div class="grid cols-2">
                 <label class="field"><span>Город</span>
@@ -519,10 +459,10 @@ body:has(.quote-layout) .quote-layout .card {
             <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Смены считаются автоматически по датам (разница календарных дней, минимум 1). Выезд/возврат также проверяют занятость склада.</p>
         </div>
 
-        <!-- Каталог -->
+        <!-- Каталог оборудования (в стиле макета) -->
         <div class="card" id="catalogCard">
-            <h3 style="margin-top:0">Каталог — добавить позиции</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            <h3 style="margin-top:0">Каталог оборудования</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
                 <button type="button" class="btn btn-sm cat-wh active" data-wh="all" onclick="setCatWarehouse('all')">Все</button>
                 <button type="button" class="btn btn-sm cat-wh" data-wh="own" onclick="setCatWarehouse('own')">Свой склад</button>
                 <button type="button" class="btn btn-sm cat-wh" data-wh="subrental" onclick="setCatWarehouse('subrental')">Субаренда</button>
@@ -533,15 +473,15 @@ body:has(.quote-layout) .quote-layout .card {
                 <button type="button" class="btn btn-sm" onclick="applyEstimateTemplate()">Применить</button>
                 <button type="button" class="btn btn-sm" onclick="saveEstimateTemplate()">Сохранить как шаблон</button>
             </div>
-            <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:12px;font-size:16px;min-height:44px;" oninput="renderCatalog()"/>
+            <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:14px;font-size:16px;min-height:44px;" oninput="renderCatalog()"/>
             <div id="catalogContainer"></div>
         </div>
 
         <!-- Позиции сметы (Корзина) -->
         <div class="card" id="cartCard">
-            <h3 style="margin-top:0">Позиции сметы</h3>
-            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену можно менять прямо здесь — она сохранится в этой смете. В клиентской смете позиции субаренды идут как обычные.</p>
-            <p class="muted" id="cartEmpty" style="padding:16px 0;text-align:center;">Пока пусто — добавьте позиции из каталога выше.</p>
+            <h3 style="margin-top:0">Выбранные позиции сметы</h3>
+            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену и дни можно менять прямо здесь — они сохранятся в этой смете.</p>
+            <p class="muted" id="cartEmpty" style="padding:16px 0;text-align:center;">Пока пусто — добавьте позиции из каталога выше с помощью кнопок «+».</p>
             <div id="cartContainer"></div>
         </div>
     </div>
@@ -1019,8 +959,11 @@ async function loadQuote() {
     const deal = await res.json();
     savedDealId = deal.id;
 
-    document.getElementById('pageTitle').textContent = (deal.title || 'Смета') + ' (CRM-' + deal.id + ')';
+    const titleText = deal.title || 'Смета';
+    document.getElementById('pageTitle').textContent = titleText + ' (CRM-' + deal.id + ')';
     document.getElementById('qTitle').value = deal.title || '';
+    document.getElementById('topProjectName').textContent = deal.title || 'Проект';
+
     if (deal.created_at) {
         try { document.getElementById('qDate').value = deal.created_at.slice(0, 10); } catch(e){}
     }
@@ -1108,9 +1051,9 @@ function renderCatalog() {
     }
 
     for (const [fname, items] of Object.entries(grouped)) {
-        const groupDiv = document.createElement('div');
-        groupDiv.className = 'cat-group';
-        groupDiv.innerHTML = `<div class="cat-head"><span>${esc(fname)} (${items.length})</span></div>`;
+        const groupCard = document.createElement('div');
+        groupCard.className = 'cat-group-card';
+        groupCard.innerHTML = `<div class="cat-group-head">${esc(fname).toUpperCase()}</div>`;
 
         const list = document.createElement('div');
         list.className = 'cat-item-list';
@@ -1142,36 +1085,30 @@ function renderCatalog() {
             }
 
             const inCart = cartQtyForName(item.name);
-            const badgeHtml = inCart > 0
-                ? `<span class="cat-qty-badge" title="Уже в смете">${inCart}</span>`
-                : '';
-            const actionsHtml = inCart > 0
-                ? `<div class="cat-stepper">
-                        <button type="button" class="btn btn-sm" title="Убрать" onclick="removeOneFromCart(${item.id})">−</button>
-                        ${badgeHtml}
-                        <button type="button" class="btn btn-sm btn-primary" title="Добавить ещё" onclick="addToCart(${item.id})">+</button>
-                   </div>`
-                : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+ Добавить</button>`;
+            const costText = item.cost_price ? `себест: ${fmt(item.cost_price)} ₸` : '';
+            const costHtml = costText ? `<span>${costText}</span>` : '';
+            const subLabelHtml = isSub ? `<span class="sub-label">(субаренда)</span>` : '';
 
-            const costHint = isSub && item.cost_price ? `<span class="muted" style="font-size:12px">себест. ${fmt(item.cost_price)} ₸</span>` : '';
-            const subBadge = isSub ? `<span class="badge-sub">субаренда</span>` : '';
-
-            const itemDiv = document.createElement('div');
-            itemDiv.className = 'cat-item' + (hasConflict ? ' is-conflict' : '');
-            itemDiv.innerHTML = `
-                <div class="cat-item-main">
-                    <div class="cat-item-title">${esc(item.name)} ${subBadge} ${conflictHtml}</div>
-                    <div class="cat-item-meta">${costHint} ${subFromConflictBtn}</div>
+            const row = document.createElement('div');
+            row.className = 'cat-item-row' + (hasConflict ? ' is-conflict' : '');
+            row.innerHTML = `
+                <div class="cat-item-info">
+                    <div class="cat-item-name">${esc(item.name)} ${subLabelHtml} ${conflictHtml}</div>
+                    <div class="cat-item-cost">${costHtml} ${subFromConflictBtn}</div>
                 </div>
-                <div class="cat-item-bottom-row">
+                <div class="cat-item-right">
                     <div class="cat-item-price">${fmt(item.price)} ₸</div>
-                    <div class="cat-item-actions">${actionsHtml}</div>
+                    <div class="stepper-pill">
+                        <button type="button" class="stepper-btn minus" onclick="removeOneFromCart(${item.id})" title="Убрать">−</button>
+                        <span class="stepper-val ${inCart > 0 ? 'active' : ''}">${inCart}</span>
+                        <button type="button" class="stepper-btn plus" onclick="addToCart(${item.id})" title="Добавить">+</button>
+                    </div>
                 </div>`;
-            list.appendChild(itemDiv);
+            list.appendChild(row);
         });
 
-        groupDiv.appendChild(list);
-        container.appendChild(groupDiv);
+        groupCard.appendChild(list);
+        container.appendChild(groupCard);
     }
 }
 
@@ -1459,7 +1396,7 @@ function renderCart() {
                 </div>
             </div>
             <div class="cart-card-bottom-row">
-                <span class="cart-card-sum-label">Сумма по позиции:</span>
+                <span class="cart-card-sum-label">Сумма:</span>
                 <span class="cart-card-sum">${fmt(totalSum)} ₸</span>
             </div>`;
         list.appendChild(card);
@@ -1521,6 +1458,13 @@ function calculateTotals() {
         document.getElementById('tMargin').textContent = fmt(grand - costTotal) + ' ₸';
     }
 
+    // Обновляем верхнюю строку (как на макете)
+    const topGrand = document.getElementById('topGrandSum');
+    const topCount = document.getElementById('topItemCount');
+    if (topGrand) topGrand.textContent = fmt(grand) + ' ₸';
+    if (topCount) topCount.textContent = `${cart.length} позиций (${totalCount} шт.)`;
+
+    // Обновляем мобильную прилипающую плашку
     const mqbSum = document.getElementById('mqbSum');
     const mqbCount = document.getElementById('mqbCount');
     if (mqbSum) mqbSum.textContent = fmt(grand) + ' ₸';
