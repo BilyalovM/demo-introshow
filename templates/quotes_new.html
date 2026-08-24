@@ -4,11 +4,10 @@
 
 {% block extra_head %}
 <style>
-/* Смета: один скролл страницы (document). Без внутренних скроллеров
-   в колонках и каталоге — правая колонка тянется по контенту. */
+/* --- Базовые правила страницы сметы --- */
 html:has(.quote-layout),
 body:has(.quote-layout) {
-    overflow-x: clip !important;
+    overflow-x: hidden !important;
     overflow-y: auto !important;
     height: auto !important;
     max-height: none !important;
@@ -18,52 +17,424 @@ body:has(.quote-layout) .content,
 body:has(.quote-layout) .main,
 body:has(.quote-layout) .quote-layout,
 body:has(.quote-layout) .quote-main,
-body:has(.quote-layout) .quote-side,
-body:has(.quote-layout) .quote-layout .card {
+body:has(.quote-layout) .quote-side {
     height: auto !important;
     max-height: none !important;
     min-height: 0 !important;
-    overflow-x: clip !important;
+    overflow-x: visible !important;
     overflow-y: visible !important;
 }
-body:has(.quote-layout) .sidebar {
-    /* сайдбар sticky; не создаём второй скролл-контейнер контента */
-    overscroll-behavior: contain;
+
+/* Верхняя статусная строка как на макете */
+.quote-top-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    background: var(--bg-2, #f8fafc);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 12px;
+    margin-bottom: 14px;
+    font-size: 14px;
+    color: var(--text, #0f172a);
+    gap: 12px;
+    flex-wrap: wrap;
 }
-#catalogContainer,
-#cartContainer {
-    max-height: none !important;
-    overflow: visible !important;
+.quote-top-summary strong {
+    font-weight: 700;
 }
-.quote-main,
+.qts-title {
+    font-size: 14px;
+}
+.qts-meta {
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.quote-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 16px;
+    align-items: start;
+}
+.quote-main {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
 .quote-side {
-    position: static !important;
-    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 }
-@media (max-width: 1024px) {
-    .quote-layout { grid-template-columns: 1fr !important; }
+
+/* --- Карточки категорий в каталоге (как на скриншоте) --- */
+.cat-group-card {
+    background: var(--surface, #ffffff);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 16px;
+    margin-bottom: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
+.cat-group-head {
+    font-weight: 800;
+    font-size: 14.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text, #0f172a);
+    padding: 12px 16px;
+    background: var(--bg-2, #f8fafc);
+    border-bottom: 1px solid var(--border, #e2e8f0);
+}
+.cat-item-list {
+    display: flex;
+    flex-direction: column;
+}
+.cat-item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-soft, #f1f5f9);
+    gap: 14px;
+    transition: background 0.15s;
+}
+.cat-item-row:last-child {
+    border-bottom: none;
+}
+.cat-item-row:hover {
+    background: var(--bg-2, #fbfcfd);
+}
+.cat-item-row.is-conflict {
+    background: var(--danger-soft, #fee2e2) !important;
+}
+.cat-item-info {
+    flex: 1;
+    min-width: 0;
+}
+.cat-item-name {
+    font-weight: 600;
+    font-size: 15.5px;
+    color: var(--text, #0f172a);
+    line-height: 1.35;
+    word-break: break-word;
+}
+.cat-item-name .sub-label {
+    display: block;
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--text-2, #64748b);
+    margin-top: 1px;
+}
+.cat-item-cost {
+    font-size: 12.5px;
+    color: var(--text-2, #64748b);
+    margin-top: 3px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Правая колонка строки: цена + степпер ровно под ней */
+.cat-item-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.cat-item-price {
+    font-weight: 800;
+    font-size: 16px;
+    color: var(--text, #0f172a);
+    white-space: nowrap;
+    text-align: right;
+}
+
+/* Степпер [ —  1  + ] в стиле макета */
+.stepper-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 106px;
+    height: 36px;
+    border: 1px solid var(--border, #cbd5e1);
+    border-radius: 8px;
+    background: var(--surface, #ffffff);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.stepper-btn {
+    border: none;
+    background: transparent;
+    width: 36px;
+    height: 100%;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text, #334155);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    -webkit-tap-highlight-color: transparent;
+}
+.stepper-btn:active {
+    background: var(--bg-2, #f1f5f9);
+}
+.stepper-val {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-2, #94a3b8);
+    text-align: center;
+    flex: 1;
+    user-select: none;
+}
+.stepper-val.active {
+    color: var(--text, #0f172a);
+    font-weight: 800;
+}
+
+.btn-sub-dup {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid #fdba74;
+    background: #fff7ed;
+    color: #c2410c;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.conflict-icon {
+    color: #fff;
+    font-weight: 800;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: var(--danger, #ef4444);
+    border-radius: 50%;
+    font-size: 12px;
+    border: none;
+    padding: 0;
+    line-height: 1;
+    margin-left: 6px;
+}
+
+/* --- Корзина (Позиции сметы) --- */
+.cart-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.cart-card {
+    background: var(--surface, #ffffff);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.cart-card-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+}
+.cart-card-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text, #0f172a);
+    flex: 1;
+    line-height: 1.35;
+}
+.cart-card-del {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: var(--danger-soft, #fee2e2);
+    color: var(--danger, #dc2626);
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.cart-card-inputs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.3fr;
+    gap: 8px;
+}
+.cart-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.cart-input-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-2, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.cart-input-box {
+    display: flex;
+    align-items: center;
+    background: var(--bg-2, #f8fafc);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 8px;
+    height: 42px;
+    padding: 0 8px;
+}
+.cart-input-box input {
+    border: none !important;
+    background: transparent !important;
+    width: 100% !important;
+    height: 100% !important;
+    font-size: 15px !important;
+    font-weight: 700;
+    text-align: center;
+    padding: 0;
+    box-shadow: none !important;
+    color: var(--text, #0f172a);
+}
+.cart-input-unit {
+    font-size: 12px;
+    color: var(--text-2, #64748b);
+    font-weight: 500;
+    margin-left: 2px;
+}
+.cart-card-bottom-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border, #e2e8f0);
+}
+.cart-card-sum-label {
+    font-size: 13px;
+    color: var(--text-2, #64748b);
+}
+.cart-card-sum {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--text, #0f172a);
+}
+
+/* Мобильная прилипающая нижняя плашка */
+.mobile-quote-bar {
+    display: none;
+}
+
+/* ========================================================
+   МОБИЛЬНАЯ АДАПТАЦИЯ (экран <= 768px)
+   ======================================================== */
 @media (max-width: 768px) {
-    .quote-layout .card { overflow: visible !important; }
+    .quote-layout {
+        grid-template-columns: 1fr !important;
+        gap: 12px;
+    }
+    .quote-main, .quote-side {
+        gap: 12px;
+    }
+    .quote-layout .card {
+        padding: 14px !important;
+        border-radius: 16px;
+    }
+
+    /* Шапка: 1 колонка */
+    .quote-layout .card .grid.cols-2,
+    .quote-layout .card .grid.cols-3 {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+    }
+
+    /* Поля ввода крупные под пальцы */
+    label.field input, label.field select {
+        min-height: 44px;
+        font-size: 16px !important;
+    }
+
+    /* Мобильная прилипающая нижняя плашка */
+    .mobile-quote-bar {
+        display: flex;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: var(--bottom-nav-h, 60px);
+        background: var(--surface, #ffffff);
+        border-top: 1px solid var(--border, #e2e8f0);
+        padding: 10px 16px;
+        z-index: 95;
+        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .mqb-info {
+        display: flex;
+        flex-direction: column;
+        cursor: pointer;
+    }
+    .mqb-sum {
+        font-size: 18px;
+        font-weight: 800;
+        color: var(--primary, #e25a3c);
+        line-height: 1.1;
+    }
+    .mqb-count {
+        font-size: 12px;
+        color: var(--text-2, #64748b);
+    }
+    .mqb-save {
+        min-height: 44px;
+        padding: 0 20px;
+        font-size: 15px;
+        font-weight: 700;
+        border-radius: 10px;
+    }
+
+    /* Отступ снизу для мобильного контента */
+    body:has(.quote-layout) .content {
+        padding-bottom: 150px !important;
+    }
 }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="toolbar" style="margin-bottom:6px">
-    <h1 class="page-title" style="margin:0" id="pageTitle">Новая смета / договор</h1>
+<!-- Верхняя строка статуса как на макете -->
+<div class="quote-top-summary">
+    <div class="qts-title">Оценка: <strong id="topProjectName">Новый проект</strong></div>
+    <div class="qts-meta">Всего: <strong id="topGrandSum">0 ₸</strong> / <span id="topItemCount">0 позиций</span></div>
+</div>
+
+<div class="toolbar" style="margin-bottom:10px">
+    <h1 class="page-title" style="margin:0" id="pageTitle">Смета / договор</h1>
     <div class="spacer"></div>
     <a class="btn" href="/quotes">← К списку</a>
 </div>
-<p class="page-sub">Добавьте позиции, задайте даты и скидку — затем сохраните и выгрузите документы.</p>
 
-<div class="grid quote-layout" style="grid-template-columns:1fr 360px;align-items:start">
-    <div class="grid quote-main" style="gap:16px">
-        <div class="card">
+<div class="grid quote-layout">
+    <div class="quote-main">
+        <!-- Шапка сметы -->
+        <div class="card" id="headerCard">
             <h3 style="margin-top:0">Шапка сметы</h3>
             <div class="grid cols-2">
                 <label class="field"><span>Дата договора</span><input id="qDate" type="date"/></label>
-                <label class="field"><span>Наименование проекта</span><input id="qTitle" placeholder="Презентация / концерт / …"/></label>
+                <label class="field"><span>Наименование проекта</span><input id="qTitle" placeholder="Презентация / концерт / …" oninput="document.getElementById('topProjectName').textContent = this.value || 'Новый проект'"/></label>
             </div>
             <div class="grid cols-2">
                 <label class="field"><span>Город</span>
@@ -87,9 +458,11 @@ body:has(.quote-layout) .sidebar {
             </div>
             <p class="muted" id="availHint" style="font-size:12.5px;margin:6px 0 0">Смены считаются автоматически по датам (разница календарных дней, минимум 1). Выезд/возврат также проверяют занятость склада.</p>
         </div>
-        <div class="card">
-            <h3 style="margin-top:0">Каталог — добавить позиции</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+
+        <!-- Каталог оборудования (в стиле макета) -->
+        <div class="card" id="catalogCard">
+            <h3 style="margin-top:0">Каталог оборудования</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
                 <button type="button" class="btn btn-sm cat-wh active" data-wh="all" onclick="setCatWarehouse('all')">Все</button>
                 <button type="button" class="btn btn-sm cat-wh" data-wh="own" onclick="setCatWarehouse('own')">Свой склад</button>
                 <button type="button" class="btn btn-sm cat-wh" data-wh="subrental" onclick="setCatWarehouse('subrental')">Субаренда</button>
@@ -100,18 +473,21 @@ body:has(.quote-layout) .sidebar {
                 <button type="button" class="btn btn-sm" onclick="applyEstimateTemplate()">Применить</button>
                 <button type="button" class="btn btn-sm" onclick="saveEstimateTemplate()">Сохранить как шаблон</button>
             </div>
-            <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:10px" oninput="renderCatalog()"/>
+            <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:14px;font-size:16px;min-height:44px;" oninput="renderCatalog()"/>
             <div id="catalogContainer"></div>
         </div>
-        <div class="card">
-            <h3 style="margin-top:0">Позиции сметы</h3>
-            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену можно менять прямо здесь — она сохранится в этой смете. В клиентской смете позиции субаренды идут как обычные, без отдельного блока субаренды.</p>
-            <p class="muted" id="cartEmpty">Пока пусто — добавьте позиции из каталога выше.</p>
+
+        <!-- Позиции сметы (Корзина) -->
+        <div class="card" id="cartCard">
+            <h3 style="margin-top:0">Выбранные позиции сметы</h3>
+            <p class="muted" style="font-size:12.5px;margin:0 0 8px">Цену и дни можно менять прямо здесь — они сохранятся в этой смете.</p>
+            <p class="muted" id="cartEmpty" style="padding:16px 0;text-align:center;">Пока пусто — добавьте позиции из каталога выше с помощью кнопок «+».</p>
             <div id="cartContainer"></div>
         </div>
     </div>
 
-    <div class="grid quote-side" style="gap:16px">
+    <!-- Боковая панель: Арендатор, Скидка, Итоги, Документы -->
+    <div class="quote-side" id="sideCard">
         <div class="card">
             <h3 style="margin-top:0">Арендатор (клиент)</h3>
             <label class="field"><span>Компания</span>
@@ -119,6 +495,7 @@ body:has(.quote-layout) .sidebar {
             </label>
             <p class="muted" style="font-size:12px;margin:4px 0 0">Контакты подтягиваются из карточки компании.</p>
         </div>
+
         <div class="card">
             <h3 style="margin-top:0">Скидка и налог</h3>
             <div class="grid cols-2">
@@ -130,6 +507,7 @@ body:has(.quote-layout) .sidebar {
             </div>
             <p class="muted" style="font-size:12px;margin:10px 0 0">Скидка применяется ко всему, кроме «Логистика, Персонал, Расходники». Налог всегда 16%.</p>
         </div>
+
         <div class="card">
             <h3 style="margin-top:0">Итоги</h3>
             <div class="totals">
@@ -145,15 +523,25 @@ body:has(.quote-layout) .sidebar {
                 <div class="row" id="tMarginRow" style="display:none"><span class="muted">Маржа</span><span id="tMargin">0 ₸</span></div>
             </div>
         </div>
+
         <div class="card">
             <h3 style="margin-top:0">Документы</h3>
             <div class="grid" style="gap:8px">
-                <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить</button>
-                <button type="button" class="btn btn-primary" style="width:100%" onclick="openDocsRegistry()">Документы</button>
+                <button class="btn btn-green" onclick="saveQuote(false)">💾 Сохранить смету</button>
+                <button type="button" class="btn btn-primary" style="width:100%" onclick="openDocsRegistry()">📄 Реестр документов</button>
             </div>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">Один реестр: для нас / клиентская / договор (Word и PDF). Техничка создаётся автоматически в CRM → Команда — в этом списке её нет.</p>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">Один реестр: для нас / клиентская / договор (Word и PDF).</p>
         </div>
     </div>
+</div>
+
+<!-- Мобильная прилипающая нижняя плашка -->
+<div class="mobile-quote-bar">
+    <div class="mqb-info" onclick="document.getElementById('cartCard').scrollIntoView({behavior:'smooth'})">
+        <span class="mqb-sum" id="mqbSum">0 ₸</span>
+        <span class="mqb-count" id="mqbCount">В смете: 0 поз.</span>
+    </div>
+    <button type="button" class="btn btn-green mqb-save" onclick="saveQuote(false)">💾 Сохранить</button>
 </div>
 
 <!-- Реестр документов сметы -->
@@ -163,7 +551,7 @@ body:has(.quote-layout) .sidebar {
             <h3 id="docsRegistryTitle" style="margin:0">Реестр документов</h3>
             <button type="button" class="btn btn-sm" onclick="closeDocsRegistry()">Закрыть</button>
         </div>
-        <p class="muted" style="font-size:12.5px;margin:0 0 12px">Откройте превью с данными сметы, отредактируйте в документе, затем скачайте Word/PDF. Техничка — CRM → Команда.</p>
+        <p class="muted" style="font-size:12.5px;margin:0 0 12px">Откройте превью с данными сметы, отредактируйте в документе, затем скачайте Word/PDF.</p>
         <div class="docs-registry-list">
             <div class="docs-registry-row">
                 <div>
@@ -213,38 +601,6 @@ body:has(.quote-layout) .sidebar {
 
 {% block extra_scripts %}
 <style>
-.cat-row-conflict { background: var(--danger-soft) !important; }
-.cat-qty-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 26px;
-    height: 24px;
-    padding: 0 7px;
-    border-radius: 8px;
-    background: var(--primary);
-    color: #fff;
-    font-size: 12px;
-    font-weight: 700;
-    white-space: nowrap;
-}
-.cat-qty-cell { width: 44px; text-align: center; vertical-align: middle; }
-.cat-actions { width: 96px; white-space: nowrap; text-align: right; }
-.cat-stepper {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-.cat-stepper .btn { min-width: 32px; }
-.cat-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.badge-sub { display:inline-block; font-size:10.5px; font-weight:650; padding:2px 6px; border-radius:7px; background:var(--accent-soft,#fff1ea); color:#c2410c; }
-.btn-sub-dup {
-    font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
-    border: 1px solid #fdba74; background: #fff7ed; color: #c2410c; cursor: pointer;
-    white-space: nowrap;
-}
-.btn-sub-dup:hover { background: #ffedd5; }
-.btn-sub-dup:disabled { opacity: 0.6; cursor: wait; }
 .cat-wh.active { background: var(--primary); color:#fff; border-color: var(--primary); }
 .docs-registry-overlay {
     position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,0.45);
@@ -263,25 +619,7 @@ body:has(.quote-layout) .sidebar {
     padding:12px; border:1px solid var(--border); border-radius:10px; background: var(--bg-2, #f8fafc);
 }
 .docs-registry-actions { display:flex; gap:6px; flex-shrink:0; }
-.conflict-icon {
-    color: #fff;
-    font-weight: 800;
-    cursor: pointer;
-    margin-left: 8px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    background: var(--danger);
-    border-radius: 50%;
-    font-size: 12px;
-    flex: none;
-    border: none;
-    padding: 0;
-    line-height: 1;
-}
-.conflict-icon:hover { filter: brightness(1.08); }
+
 /* Всплывашка вне overflow-контейнера каталога — иначе обрезается */
 #conflict-popover {
     display: none;
@@ -302,58 +640,17 @@ body:has(.quote-layout) .sidebar {
 #conflict-popover.visible { display: block; }
 #conflict-popover .cp-title {
     font-weight: 700;
-    margin-bottom: 6px;
     color: var(--danger);
-    font-size: 12.5px;
+    margin-bottom: 6px;
+    font-size: 14px;
 }
 #conflict-popover-backdrop {
     display: none;
     position: fixed;
     inset: 0;
     z-index: 10040;
-    background: transparent;
 }
 #conflict-popover-backdrop.visible { display: block; }
-.cat-name { position: relative; }
-.price-input {
-    width: 90px;
-    padding: 5px 8px;
-    text-align: right;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text);
-    font-family: inherit;
-}
-/* Мобильный: позиции сметы — карточками, без горизонтального сжатия */
-@media (max-width: 768px) {
-    table.cart-table, table.cart-table tbody { display: block; width: 100%; }
-    table.cart-table tr {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px 10px;
-        padding: 12px 0;
-        border-bottom: 1px solid var(--border-2);
-    }
-    table.cart-table tr:hover { background: transparent; }
-    table.cart-table td { display: block; padding: 0; border: none !important; text-align: left; }
-    table.cart-table td.ct-name { grid-column: 1 / -1; font-weight: 600; line-height: 1.35; white-space: normal; }
-    table.cart-table td.ct-qty, table.cart-table td.ct-days { white-space: nowrap; }
-    table.cart-table td.ct-price { grid-column: 1 / 2; white-space: nowrap; }
-    table.cart-table td.ct-sum { grid-column: 2 / 3; text-align: right; align-self: center; white-space: nowrap; }
-    table.cart-table td.ct-del { grid-column: 1 / -1; text-align: right; }
-    table.cart-table td input { font-size: 16px; }
-    table.cart-table td.ct-qty input, table.cart-table td.ct-days input { width: 64px !important; }
-    table.cart-table td.ct-price input { width: 110px; }
-    table.cart-table td.ct-del .btn { min-height: 34px; font-size: 20px; }
-    #conflict-popover {
-        left: 12px !important;
-        right: 12px !important;
-        max-width: none;
-        bottom: calc(var(--bottom-nav-h, 64px) + 16px);
-        top: auto !important;
-    }
-}
 </style>
 <div id="conflict-popover-backdrop" onclick="hideConflictPopover()"></div>
 <div id="conflict-popover" role="dialog" aria-live="polite"></div>
@@ -399,7 +696,6 @@ function showConflictPopover(event, btn) {
     bd.classList.add('visible');
     pop.classList.add('visible');
 
-    // Позиция рядом с кнопкой «!», с поправкой на края экрана
     const rect = btn.getBoundingClientRect();
     const margin = 12;
     pop.style.left = '0px';
@@ -451,16 +747,16 @@ function renderContactSelect(selectedId) {
 }
 
 async function loadContactsForCompany(companyId, selectedId) {
-    contacts = [];
     if (!companyId) {
+        contacts = [];
         renderContactSelect(null);
         return;
     }
     try {
         const res = await fetch('/api/contacts?company_id=' + companyId);
-        if (res.ok) contacts = await res.json();
+        contacts = res.ok ? await res.json() : [];
     } catch (e) {
-        console.error(e);
+        contacts = [];
     }
     renderContactSelect(selectedId);
 }
@@ -468,41 +764,42 @@ async function loadContactsForCompany(companyId, selectedId) {
 async function onCompanyChange() {
     const companyId = document.getElementById('companySelect').value;
     await loadContactsForCompany(companyId, null);
-    // Автовыбор основного контакта
-    const primary = contacts.find(c => c.is_primary);
-    if (primary) document.getElementById('contactSelect').value = String(primary.id);
 }
 
-/** Календарная разница дней: max(1, end − start). Одинаковые даты → 1. */
 function calcShiftsFromDates(startStr, endStr) {
     if (!startStr || !endStr) return null;
-    const start = new Date(startStr + 'T00:00:00');
-    const end = new Date(endStr + 'T00:00:00');
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return null;
-    const diff = Math.round((end - start) / 86400000);
-    return Math.max(1, diff);
+    const s = new Date(startStr + 'T00:00:00');
+    const e = new Date(endStr + 'T00:00:00');
+    if (isNaN(s.getTime()) || isNaN(e.getTime())) return null;
+    const diffDays = Math.round((e - s) / (1000 * 60 * 60 * 24));
+    return Math.max(1, diffDays);
 }
 
 function applyShiftsToCart(shifts, { silent } = { silent: true }) {
-    const n = parseFloat(shifts) || 1;
-    document.getElementById('qShifts').value = n;
-    if (!cart.length) return;
-    if (!silent && !confirm('Обновить «дней» у всех позиций сметы на ' + n + '?')) return;
-    cart.forEach(c => { c.days = n; });
+    if (!shifts || shifts < 1) return;
+    cart.forEach(it => { it.days = shifts; });
+    mergeCartLines();
     renderCart();
+    if (!silent) {
+        const hint = document.getElementById('availHint');
+        if (hint) hint.textContent = `✓ Дни во всех позициях обновлены на ${shifts}.`;
+    }
 }
 
 function onRentDatesChange() {
     const start = document.getElementById('rentStart').value;
     const end = document.getElementById('rentEnd').value;
-    const days = calcShiftsFromDates(start, end);
-    if (days != null) applyShiftsToCart(days, { silent: true });
+    const shifts = calcShiftsFromDates(start, end);
+    if (shifts != null) {
+        document.getElementById('qShifts').value = shifts;
+        applyShiftsToCart(shifts);
+    }
     checkAvailability();
 }
 
 function onShiftsChange() {
-    const shifts = parseFloat(document.getElementById('qShifts').value) || 1;
-    applyShiftsToCart(shifts, { silent: true });
+    const shifts = Math.max(1, parseFloat(document.getElementById('qShifts').value) || 1);
+    applyShiftsToCart(shifts, { silent: false });
 }
 
 async function loadCitiesForQuote(selectedId) {
@@ -510,133 +807,167 @@ async function loadCitiesForQuote(selectedId) {
     if (!sel) return;
     try {
         const res = await fetch('/api/cities?scope=deal');
-        const data = await res.json();
-        const cities = data.cities || [];
-        const currentId = selectedId || data.current_city_id || '';
-        sel.innerHTML = '<option value="">— город —</option>' + cities.map(c =>
-            `<option value="${c.id}">${c.name}</option>`
-        ).join('');
-        if (currentId) sel.value = String(currentId);
-        const opt = sel.options[sel.selectedIndex];
-        document.getElementById('qCity').value = opt && opt.value ? opt.textContent : '';
-        sel.onchange = () => {
-            const o = sel.options[sel.selectedIndex];
-            document.getElementById('qCity').value = o && o.value ? o.textContent : '';
-        };
-    } catch (e) { console.error(e); }
-}
-
-async function loadAll() {
-    try {
-        const [resEq, resFold, resComp, resUsers] = await Promise.all([
-            fetch('/api/equipment'),
-            fetch('/api/folders'),
-            fetch('/api/companies'),
-            fetch('/api/users/names'),
-        ]);
-        equipment = await resEq.json();
-        folders = await resFold.json();
-        companies = await resComp.json();
-        managers = resUsers.ok ? await resUsers.json() : [];
-
-        const sel = document.getElementById('companySelect');
-        companies.forEach(c => {
+        const cities = res.ok ? await res.json() : [];
+        sel.innerHTML = '<option value="">— город —</option>';
+        cities.forEach(c => {
             const opt = document.createElement('option');
             opt.value = c.id;
             opt.textContent = c.name;
             sel.appendChild(opt);
         });
-        fillManagerSelect(null);
+        if (selectedId) sel.value = String(selectedId);
+    } catch (e) {
+        console.error('loadCitiesForQuote', e);
+    }
+}
 
-        renderCatalog();
+async function loadAll() {
+    try {
+        const [eqRes, fRes, compRes, uRes] = await Promise.all([
+            fetch('/api/equipment'),
+            fetch('/api/folders'),
+            fetch('/api/companies'),
+            fetch('/api/users/names'),
+        ]);
+        equipment = await eqRes.json();
+        folders = await fRes.json();
+        companies = await compRes.json();
+        managers = await uRes.json();
+
+        equipment.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+        const compSel = document.getElementById('companySelect');
+        compSel.innerHTML = '<option value="">— выберите —</option>';
+        companies.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name + (c.phone ? ` (${c.phone})` : '');
+            compSel.appendChild(opt);
+        });
+
+        fillManagerSelect(null);
+        await loadCitiesForQuote(null);
         await loadEstimateTemplates();
+
         if (QUOTE_ID) {
             await loadQuote();
         } else {
-            await loadCitiesForQuote(null);
+            renderCatalog();
+            renderCart();
         }
     } catch (e) {
-        console.error('Ошибка загрузки данных:', e);
+        console.error(e);
+        alert('Ошибка при загрузке данных: ' + e.message);
     }
 }
+
+// ---------- Шаблоны смет ----------
 
 async function loadEstimateTemplates() {
     const sel = document.getElementById('estimateTemplateSelect');
     if (!sel) return;
     try {
         const res = await fetch('/api/estimate-templates');
-        if (!res.ok) return;
-        const rows = await res.json();
-        sel.innerHTML = '<option value="">Шаблон сметы…</option>' +
-            rows.map(t => `<option value="${t.id}">${(t.name || '').replace(/</g,'&lt;')} (${(t.items||[]).length})</option>`).join('');
-    } catch (e) {}
+        const list = res.ok ? await res.json() : [];
+        sel.innerHTML = '<option value="">Шаблон сметы…</option>';
+        list.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.name + (t.item_count ? ` (${t.item_count} поз.)` : '');
+            sel.appendChild(opt);
+        });
+    } catch (e) { console.error('loadEstimateTemplates', e); }
 }
 
 async function saveEstimateTemplate() {
-    if (!cart.length) { alert('Сначала добавьте позиции в смету'); return; }
-    const name = prompt('Название шаблона сметы:');
+    if (!cart.length) {
+        alert('Сначала добавьте позиции в смету.');
+        return;
+    }
+    const name = prompt('Название шаблона (например, «Презентация LED 4×3м»):');
     if (!name || !name.trim()) return;
-    const items = cart.map(p => ({
-        equipment_id: p.id,
-        quantity: p.qty || 1,
-        days: p.days || 1,
-        price: p.price,
+    const items = cart.map(c => ({
+        equipment_id: c.id,
+        quantity: c.qty,
+        days: c.days,
+        price: c.price,
     }));
-    const res = await fetch('/api/estimate-templates', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ name: name.trim(), items })
-    });
-    if (!res.ok) { alert('Не удалось сохранить шаблон'); return; }
-    await loadEstimateTemplates();
-    alert('Шаблон сохранён');
+    try {
+        const res = await fetch('/api/estimate-templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name.trim(), items }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Ошибка');
+        alert('Шаблон сохранён');
+        await loadEstimateTemplates();
+    } catch (err) {
+        alert(err.message || 'Не удалось сохранить шаблон');
+    }
 }
 
 async function applyEstimateTemplate() {
     const sel = document.getElementById('estimateTemplateSelect');
-    const tid = parseInt(sel && sel.value) || 0;
-    if (!tid) { alert('Выберите шаблон'); return; }
-    if (QUOTE_ID) {
-        const res = await fetch(`/api/estimate-templates/${tid}/apply/${QUOTE_ID}`, { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { alert(data.error || 'Не удалось применить'); return; }
-        await loadQuote();
-        alert('Добавлено позиций: ' + (data.added || 0));
+    const tid = sel && sel.value;
+    if (!tid) {
+        alert('Выберите шаблон из списка');
         return;
     }
-    // Новая смета: подтянуть items из списка шаблонов
+    if (cart.length && !confirm('Заменить позиции сметы позициями из шаблона?')) return;
     try {
+        if (QUOTE_ID) {
+            const res = await fetch(`/api/estimate-templates/${tid}/apply/${QUOTE_ID}`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Ошибка');
+            alert('Шаблон применён');
+            window.location.reload();
+            return;
+        }
         const res = await fetch('/api/estimate-templates');
-        const rows = await res.json();
-        const t = rows.find(x => x.id === tid);
-        if (!t) return;
-        (t.items || []).forEach(it => {
+        const list = res.ok ? await res.json() : [];
+        const t = list.find(x => String(x.id) === String(tid));
+        if (!t || !t.items) throw new Error('Шаблон не найден');
+        cart = [];
+        t.items.forEach(it => {
             const eq = equipment.find(e => e.id === it.equipment_id);
-            if (!eq) return;
-            const existing = cart.find(c => c.id === eq.id);
-            if (existing) {
-                existing.qty = (existing.qty || 0) + (it.quantity || 1);
-            } else {
-                cart.push({
-                    id: eq.id, name: eq.name, category: eq.category,
-                    price: it.price != null ? it.price : eq.price,
-                    stock_price: eq.price, qty: it.quantity || 1, days: it.days || 1,
-                    warehouse_type: eq.warehouse_type || 'own',
-                    cost_price: eq.cost_price || 0, supplier: eq.supplier || '',
-                });
-            }
+            cart.push({
+                id: it.equipment_id,
+                name: it.name,
+                category: eq ? eq.category : '',
+                price: it.price,
+                stock_price: eq ? eq.price : it.price,
+                qty: it.quantity,
+                days: it.days,
+                warehouse_type: eq ? (eq.warehouse_type || 'own') : 'own',
+                cost_price: eq ? (eq.cost_price || 0) : 0,
+                supplier: eq ? eq.supplier : null,
+            });
         });
         renderCart();
-        recalc();
-    } catch (e) { console.error(e); }
+        checkAvailability();
+    } catch (err) {
+        alert(err.message || 'Не удалось применить шаблон');
+    }
 }
+
+// ---------- Загрузка существующей сметы ----------
 
 async function loadQuote() {
     const res = await fetch('/api/deals/' + QUOTE_ID);
-    if (!res.ok) return;
+    if (!res.ok) { alert('Смета не найдена'); return; }
     const deal = await res.json();
-    document.getElementById('pageTitle').textContent = 'Смета №CRM-' + deal.id;
+    savedDealId = deal.id;
+
+    const titleText = deal.title || 'Смета';
+    document.getElementById('pageTitle').textContent = titleText + ' (CRM-' + deal.id + ')';
     document.getElementById('qTitle').value = deal.title || '';
-    await loadCitiesForQuote(deal.city_id || null);
+    document.getElementById('topProjectName').textContent = deal.title || 'Проект';
+
+    if (deal.created_at) {
+        try { document.getElementById('qDate').value = deal.created_at.slice(0, 10); } catch(e){}
+    }
+    await loadCitiesForQuote(deal.city_id);
     document.getElementById('qCity').value = deal.city || '';
     document.getElementById('qAddress').value = deal.event_address || '';
     document.getElementById('rentStart').value = deal.setup_date || '';
@@ -685,10 +1016,10 @@ function mergeCartLines() {
     cart.forEach(item => {
         const key = [
             (item.name || '').trim().toLowerCase(),
-            Number(item.price) || 0,
-            parseInt(item.days) || 1,
-            item.warehouse_type || 'own',
-        ].join('|');
+            Number(item.price),
+            parseFloat(item.days) || 1,
+            item.warehouse_type || 'own'
+        ].join('||');
         if (indexByKey[key] == null) {
             indexByKey[key] = merged.length;
             merged.push({ ...item, qty: parseInt(item.qty) || 1 });
@@ -713,24 +1044,28 @@ function renderCatalog() {
         (grouped[fname] = grouped[fname] || []).push(eq);
     });
 
-    for (const [fname, items] of Object.entries(grouped)) {
-        const groupDiv = document.createElement('div');
-        groupDiv.className = 'cat-group';
-        groupDiv.innerHTML = `<div class="cat-head"><span>${esc(fname)}</span></div>`;
+    const groupKeys = Object.keys(grouped);
+    if (!groupKeys.length) {
+        container.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">Ничего не найдено</p>';
+        return;
+    }
 
-        const table = document.createElement('table');
-        table.className = 'data catalog-table';
-        const tbody = document.createElement('tbody');
+    for (const [fname, items] of Object.entries(grouped)) {
+        const groupCard = document.createElement('div');
+        groupCard.className = 'cat-group-card';
+        groupCard.innerHTML = `<div class="cat-group-head">${esc(fname).toUpperCase()}</div>`;
+
+        const list = document.createElement('div');
+        list.className = 'cat-item-list';
 
         items.forEach(item => {
-            const tr = document.createElement('tr');
             const c = conflictsData[item.id];
             const isSub = (item.warehouse_type || 'own') === 'subrental';
             const hasConflict = !!(c && c.booked > 0);
             let conflictHtml = '';
             let subFromConflictBtn = '';
+
             if (hasConflict) {
-                tr.className = 'cat-row-conflict';
                 const lines = (c.conflicts || []).map(x =>
                     `• Договор № ${x.contract_no}` +
                     (x.until ? ` до ${x.until}` : '') + ` — ${x.qty} шт.` +
@@ -742,34 +1077,38 @@ function renderCatalog() {
                 conflictHtml = `<button type="button" class="conflict-icon" title="Подробности брони"
                         data-tip="${tipAttr}"
                         onclick="showConflictPopover(event, this)">!</button>`;
-                // Только свой склад + конфликт/нехватка: кнопка «Добавить из субаренды»
                 if (!isSub) {
                     subFromConflictBtn = `<button type="button" class="btn-sub-dup"
                         title="Найти или создать позицию в субаренде и добавить в смету"
-                        onclick="event.stopPropagation(); addFromSubrental(${item.id}, this)">Добавить из субаренды</button>`;
+                        onclick="event.stopPropagation(); addFromSubrental(${item.id}, this)">+ Субаренда</button>`;
                 }
             }
+
             const inCart = cartQtyForName(item.name);
-            const badgeHtml = inCart > 0
-                ? `<span class="cat-qty-badge" title="Уже в смете">${inCart}</span>`
-                : '<span class="muted" style="font-size:12px">—</span>';
-            const actionsHtml = inCart > 0
-                ? `<div class="cat-stepper">
-                        <button type="button" class="btn btn-sm" title="Убрать из сметы" onclick="removeOneFromCart(${item.id})">−</button>
-                        <button type="button" class="btn btn-sm btn-primary" title="Добавить ещё" onclick="addToCart(${item.id})">+</button>
-                   </div>`
-                : `<button type="button" class="btn btn-sm btn-primary" title="Добавить в смету" onclick="addToCart(${item.id})">+</button>`;
-            const costHint = isSub && item.cost_price ? `<div class="muted" style="font-size:11px">себест. ${fmt(item.cost_price)} ₸</div>` : '';
-            tr.innerHTML = `
-                <td class="cat-name"><span class="cat-name-cell"><span>${esc(item.name)}</span> ${conflictHtml} ${subFromConflictBtn}</span>${costHint}</td>
-                <td class="cat-qty-cell">${badgeHtml}</td>
-                <td class="num muted cat-price">${fmt(item.price)} ₸</td>
-                <td class="num cat-actions">${actionsHtml}</td>`;
-            tbody.appendChild(tr);
+            const costText = item.cost_price ? `себест: ${fmt(item.cost_price)} ₸` : '';
+            const costHtml = costText ? `<span>${costText}</span>` : '';
+            const subLabelHtml = isSub ? `<span class="sub-label">(субаренда)</span>` : '';
+
+            const row = document.createElement('div');
+            row.className = 'cat-item-row' + (hasConflict ? ' is-conflict' : '');
+            row.innerHTML = `
+                <div class="cat-item-info">
+                    <div class="cat-item-name">${esc(item.name)} ${subLabelHtml} ${conflictHtml}</div>
+                    <div class="cat-item-cost">${costHtml} ${subFromConflictBtn}</div>
+                </div>
+                <div class="cat-item-right">
+                    <div class="cat-item-price">${fmt(item.price)} ₸</div>
+                    <div class="stepper-pill">
+                        <button type="button" class="stepper-btn minus" onclick="removeOneFromCart(${item.id})" title="Убрать">−</button>
+                        <span class="stepper-val ${inCart > 0 ? 'active' : ''}">${inCart}</span>
+                        <button type="button" class="stepper-btn plus" onclick="addToCart(${item.id})" title="Добавить">+</button>
+                    </div>
+                </div>`;
+            list.appendChild(row);
         });
-        table.appendChild(tbody);
-        groupDiv.appendChild(table);
-        container.appendChild(groupDiv);
+
+        groupCard.appendChild(list);
+        container.appendChild(groupCard);
     }
 }
 
@@ -789,7 +1128,7 @@ async function checkAvailability() {
 
     const nConflicts = Object.keys(conflictsData).length;
     hint.textContent = nConflicts
-        ? `⚠ На выбранные даты частично занято ${nConflicts} позиций — они подсвечены красным, наведите на значок «!»`
+        ? `⚠ На выбранные даты частично занято ${nConflicts} позиций — они подсвечены красным.`
         : '✓ Всё оборудование свободно на выбранные даты.';
     hint.style.color = nConflicts ? 'var(--danger)' : 'var(--success)';
 }
@@ -838,10 +1177,8 @@ function addToCart(id) {
         supplier: item.supplier || null,
     });
 
-    // Если своего не хватает — предложить субаренду или продублировать товар
-    const c2 = conflictsData[id];
-    if (wh === 'own' && c2) {
-        const available = item.stock_quantity - c2.booked;
+    if (wh === 'own' && c) {
+        const available = item.stock_quantity - c.booked;
         if (newQty > available) {
             const alts = equipment.filter(e =>
                 (e.warehouse_type || 'own') === 'subrental' &&
@@ -861,7 +1198,6 @@ function addToCart(id) {
     renderCart();
 }
 
-/** Добавить позицию из субаренды (по конфликту своего склада): найти/создать twin → в корзину → вкладка Субаренда. */
 async function addFromSubrental(equipId, btn) {
     if (btn) btn.disabled = true;
     try {
@@ -985,9 +1321,8 @@ async function updateCartPrice(id, val) {
     if (isNaN(newPrice) || newPrice < 0) { renderCart(); return; }
     item.price = newPrice;
 
-    // Предложить обновить цену на складе, чтобы не заходить каждый раз в «Склад»
     if (newPrice !== item.stock_price) {
-        const ok = confirm(`Поменять цену на товар «${item.name}» и на складе?\n\nБыло: ${fmt(item.stock_price)} ₸ → станет: ${fmt(newPrice)} ₸\n\nOK — обновить на складе, Отмена — цена изменится только в этой смете.`);
+        const ok = confirm(`Поменять цену на товар «${item.name}» и на складе?\n\nБыло: ${fmt(item.stock_price)} ₸ → станет: ${fmt(newPrice)} ₸\n\nOK — обновить на складе, Отмена — только в этой смете.`);
         if (ok) {
             try {
                 const res = await fetch(`/api/equipment/${id}/price`, {
@@ -1021,26 +1356,53 @@ function renderCart() {
     }
     empty.style.display = 'none';
 
-    const table = document.createElement('table');
-    table.className = 'data cart-table';
-    const tbody = document.createElement('tbody');
+    const list = document.createElement('div');
+    list.className = 'cart-list';
 
     cart.forEach(item => {
         const changed = item.price !== item.stock_price;
         const sub = (item.warehouse_type || 'own') === 'subrental'
             ? ' <span class="badge-sub">субаренда</span>' : '';
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td class="ct-name">${esc(item.name)}${sub}${changed ? ' <span class="muted" style="font-size:11px">(цена изменена)</span>' : ''}</td>
-            <td class="num ct-qty"><input type="number" class="num" style="width:52px;padding:4px" value="${item.qty}" min="1" onchange="updateCartItem(${item.id}, 'qty', this.value)"> шт</td>
-            <td class="num ct-days"><input type="number" class="num" style="width:52px;padding:4px" value="${item.days}" min="1" onchange="updateCartItem(${item.id}, 'days', this.value)"> дн</td>
-            <td class="num ct-price"><input type="number" class="price-input" value="${item.price}" min="0" onchange="updateCartPrice(${item.id}, this.value)"> ₸</td>
-            <td class="num ct-sum" style="white-space:nowrap"><strong>${fmt(item.price * item.qty * item.days)} ₸</strong></td>
-            <td class="ct-del" style="width:30px"><button class="btn btn-sm" style="color:var(--danger);border:none;background:none" onclick="removeFromCart(${item.id})">×<span class="mobile-only" style="font-size:13px;margin-left:4px">удалить</span></button></td>`;
-        tbody.appendChild(tr);
+        const totalSum = item.price * item.qty * item.days;
+
+        const card = document.createElement('div');
+        card.className = 'cart-card';
+        card.innerHTML = `
+            <div class="cart-card-top-row">
+                <div class="cart-card-title">${esc(item.name)}${sub}${changed ? ' <span class="muted" style="font-size:11px">(цена изм.)</span>' : ''}</div>
+                <button type="button" class="cart-card-del" onclick="removeFromCart(${item.id})" title="Удалить позицию">×</button>
+            </div>
+            <div class="cart-card-inputs-grid">
+                <div class="cart-input-group">
+                    <span class="cart-input-label">Кол-во</span>
+                    <div class="cart-input-box">
+                        <input type="number" value="${item.qty}" min="1" inputmode="numeric" onchange="updateCartItem(${item.id}, 'qty', this.value)">
+                        <span class="cart-input-unit">шт</span>
+                    </div>
+                </div>
+                <div class="cart-input-group">
+                    <span class="cart-input-label">Дней</span>
+                    <div class="cart-input-box">
+                        <input type="number" value="${item.days}" min="1" inputmode="numeric" onchange="updateCartItem(${item.id}, 'days', this.value)">
+                        <span class="cart-input-unit">дн</span>
+                    </div>
+                </div>
+                <div class="cart-input-group">
+                    <span class="cart-input-label">Цена за ед.</span>
+                    <div class="cart-input-box">
+                        <input type="number" class="price-input" value="${item.price}" min="0" inputmode="decimal" onchange="updateCartPrice(${item.id}, this.value)">
+                        <span class="cart-input-unit">₸</span>
+                    </div>
+                </div>
+            </div>
+            <div class="cart-card-bottom-row">
+                <span class="cart-card-sum-label">Сумма:</span>
+                <span class="cart-card-sum">${fmt(totalSum)} ₸</span>
+            </div>`;
+        list.appendChild(card);
     });
-    table.appendChild(tbody);
-    container.appendChild(table);
+
+    container.appendChild(list);
     calculateTotals();
     renderCatalog();
 }
@@ -1050,9 +1412,10 @@ function renderCart() {
 const FIXED_CATS = ["Логистика, Тех персонал", "Логистика", "Персонал", "Расходники"];
 
 function calculateTotals() {
-    let ownEqTotal = 0, fixedTotal = 0, costTotal = 0, subRev = 0;
+    let ownEqTotal = 0, fixedTotal = 0, costTotal = 0, subRev = 0, totalCount = 0;
     cart.forEach(item => {
         const sum = item.price * item.qty * item.days;
+        totalCount += (parseInt(item.qty) || 0);
         const isSub = (item.warehouse_type || 'own') === 'subrental';
         if (FIXED_CATS.includes(item.category)) {
             fixedTotal += sum;
@@ -1064,7 +1427,7 @@ function calculateTotals() {
         }
     });
 
-    const eqTotal = ownEqTotal + subRev; // база для скидки (оборудование + субаренда)
+    const eqTotal = ownEqTotal + subRev;
     const discountPercent = parseFloat(document.getElementById('discountInput').value) || 0;
     const taxPercent = 16;
     const discountSum = (eqTotal * discountPercent) / 100;
@@ -1075,7 +1438,6 @@ function calculateTotals() {
     document.getElementById('tEq').textContent = fmt(ownEqTotal) + ' ₸';
     const subRow = document.getElementById('tSubRow');
     if (subRow) {
-        // Всегда показываем строку «Субаренда», если в корзине есть позиции субаренды
         subRow.style.display = subRev > 0 ? 'flex' : 'none';
         document.getElementById('tSub').textContent = fmt(subRev) + ' ₸';
     }
@@ -1095,6 +1457,18 @@ function calculateTotals() {
         document.getElementById('tCost').textContent = fmt(costTotal) + ' ₸';
         document.getElementById('tMargin').textContent = fmt(grand - costTotal) + ' ₸';
     }
+
+    // Обновляем верхнюю строку (как на макете)
+    const topGrand = document.getElementById('topGrandSum');
+    const topCount = document.getElementById('topItemCount');
+    if (topGrand) topGrand.textContent = fmt(grand) + ' ₸';
+    if (topCount) topCount.textContent = `${cart.length} позиций (${totalCount} шт.)`;
+
+    // Обновляем мобильную прилипающую плашку
+    const mqbSum = document.getElementById('mqbSum');
+    const mqbCount = document.getElementById('mqbCount');
+    if (mqbSum) mqbSum.textContent = fmt(grand) + ' ₸';
+    if (mqbCount) mqbCount.textContent = `В смете: ${cart.length} поз. (${totalCount} шт.)`;
 }
 
 document.getElementById('discountInput').addEventListener('input', calculateTotals);
@@ -1228,7 +1602,6 @@ async function openQuoteDocPreview(docType, mode) {
     DocPreview.open({ docType, dealId: id, mode: mode === 'pdf' ? 'pdf' : 'html' });
 }
 
-/** Совместимость со старыми вызовами */
 async function downloadDoc(kind) {
     const map = {
         internal: 'estimate_internal',

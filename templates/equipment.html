@@ -81,7 +81,31 @@
         .mobile-eq-cards { display: block; }
         .folders-grid { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
         .equip-toolbar { position: sticky; top: 0; z-index: 5; background: var(--surface); padding-bottom: 8px; }
+        
+        .fab-add { display: flex; }
     }
+    
+    .fab-add {
+        display: none;
+        position: fixed;
+        bottom: calc(24px + env(safe-area-inset-bottom));
+        right: 24px;
+        width: 60px;
+        height: 60px;
+        border-radius: 30px;
+        background-color: var(--primary);
+        color: white;
+        font-size: 32px;
+        font-weight: 300;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        border: none;
+        z-index: 90;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .fab-add:active { transform: scale(0.92); }
 </style>
 {% endblock %}
 
@@ -280,6 +304,11 @@
             </div>
         </div>
     </div>
+    
+    <!-- Floating Action Button for Mobile -->
+    <button type="button" class="fab-add" onclick="openEquipModal()" aria-label="Добавить оборудование" title="Добавить">
+        +
+    </button>
 
 {% endblock %}
 
