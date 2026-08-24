@@ -1373,48 +1373,17 @@ table.data th.num {
     max-width: 160px;
     text-align: right;
   }
+  /* Каталог и корзина в смете: на мобильных используются div-карточки (.m-cat-cards / .m-cart-cards),
+     таблицы скрываем */
   table.catalog-table,
-  table.catalog-table tbody,
-  table.catalog-table td,
-  table.catalog-table tr {
-    display: block;
-    width: 100%;
+  table.cart-table {
+    display: none !important;
   }
-  table.catalog-table tr {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 0;
-    border-bottom: 1px solid var(--border-2);
-  }
-  table.catalog-table tr:hover {
-    background: transparent;
-  }
-  table.catalog-table td {
-    padding: 0;
-    border: none !important;
-  }
-  table.catalog-table td.cat-name {
-    flex: 1 1;
-    min-width: 0;
-    white-space: normal;
-    text-align: left;
-    line-height: 1.35;
-  }
-  table.catalog-table td.cat-price {
-    flex: 0 0 auto;
-    white-space: nowrap;
-    font-size: 13px;
-  }
-  table.catalog-table td .btn {
-    min-height: 38px;
-    padding: 0 14px;
-  }
-  .card table.data:not(.cards-mobile):not(.catalog-table) {
+  .card table.data:not(.cards-mobile):not(.catalog-table):not(.cart-table) {
     table-layout: fixed;
     width: 100%;
   }
-  .card table.data:not(.cards-mobile):not(.catalog-table) td {
+  .card table.data:not(.cards-mobile):not(.catalog-table):not(.cart-table) td {
     word-break: break-word;
   }
   .copilot-fab {

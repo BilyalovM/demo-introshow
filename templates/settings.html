@@ -31,7 +31,11 @@
         #qr_container { margin-top: 1.5rem; display: none; text-align: center; }
         #qr_image { max-width: 300px; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; background: white; }
         @media (max-width: 640px) {
-            #quick-add-user { grid-template-columns: 1fr !important; }
+            #quick-add-user,
+            #change-password-form,
+            #company-letterhead-form {
+                grid-template-columns: 1fr !important;
+            }
         }
 </style>
 {% endblock %}

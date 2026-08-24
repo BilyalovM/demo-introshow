@@ -31,7 +31,7 @@ os.environ.setdefault("RENTAL_UPLOADS_DIR", UPLOADS_DIR)
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from database import init_db, get_db, SessionLocal, Equipment, Company, Deal, DealItem, CustomField, DealFieldValue, DealHistory, Project2D, Folder, Pipeline, Stage, PipelineRoutingRule, PushSubscription, User, UserInvite, Role, BotSettings, KnowledgeItem, ChatMessage, Invoice, Task, TaskComment, TaskAssignee, TaskObserver, TaskChecklistItem, Contact, Activity, DealAttachment, DealDocument, DocumentTemplate, CrmNote, DealAdvance, DealExpense, DealPayrollLine, DealStaffAssignment, InternalChat, InternalChatMember, InternalMessage, AppNotification, EstimateTemplate, ChecklistTemplate, AuditLog, AppSetting, WorkSession, City, engine, database_backend_info, DATABASE_URL
 import secrets
 from sqlalchemy import text, func, or_
@@ -49,561 +49,563 @@ import demo_seed
 # Налог в сметах всегда 16% (UI + DB + PDF/DOCX)
 FIXED_TAX_PERCENTAGE = DEFAULT_TAX_PERCENTAGE
 
+import os
+if not os.environ.get("VERCEL"):
 # Initialize the database
-init_db()
-
-# DB Migration & Seeding
-with Session(engine) as session:
-    # 1. Add pipeline_id to deals if it doesn't exist
-    try:
-        session.execute(text("ALTER TABLE deals ADD COLUMN pipeline_id INTEGER"))
-        session.commit()
-    except Exception:
-        session.rollback() # column already exists
-
-    # 1b. Pipeline kinds / stage flags — ДО любых ORM-запросов к Pipeline/Stage
-    for ddl in [
-        "ALTER TABLE pipelines ADD COLUMN kind VARCHAR DEFAULT 'deal'",
-        "ALTER TABLE pipelines ADD COLUMN target_pipeline_id INTEGER",
-        "ALTER TABLE stages ADD COLUMN is_won BOOLEAN DEFAULT 0",
-        "ALTER TABLE stages ADD COLUMN is_lost BOOLEAN DEFAULT 0",
-        "ALTER TABLE stages ADD COLUMN creates_deal BOOLEAN DEFAULT 0",
-    ]:
+    init_db()
+    
+    # DB Migration & Seeding
+    with Session(engine) as session:
+        # 1. Add pipeline_id to deals if it doesn't exist
         try:
-            session.execute(text(ddl))
+            session.execute(text("ALTER TABLE deals ADD COLUMN pipeline_id INTEGER"))
+            session.commit()
+        except Exception:
+            session.rollback() # column already exists
+    
+        # 1b. Pipeline kinds / stage flags — ДО любых ORM-запросов к Pipeline/Stage
+        for ddl in [
+            "ALTER TABLE pipelines ADD COLUMN kind VARCHAR DEFAULT 'deal'",
+            "ALTER TABLE pipelines ADD COLUMN target_pipeline_id INTEGER",
+            "ALTER TABLE stages ADD COLUMN is_won BOOLEAN DEFAULT 0",
+            "ALTER TABLE stages ADD COLUMN is_lost BOOLEAN DEFAULT 0",
+            "ALTER TABLE stages ADD COLUMN creates_deal BOOLEAN DEFAULT 0",
+        ]:
+            try:
+                session.execute(text(ddl))
+                session.commit()
+            except Exception:
+                session.rollback()
+            
+        # 2. Seed main pipeline if empty
+        default_pipeline = session.query(Pipeline).first()
+        if not default_pipeline:
+            default_pipeline = Pipeline(name="Основная воронка", kind="deal")
+            session.add(default_pipeline)
+            session.commit()
+            session.refresh(default_pipeline)
+            
+            # Create default stages
+            default_stages = [
+                "Первичный контакт", "Согласование сметы", "Договор и счет",
+                "Предоплата внесена", "Монтаж / Мероприятие", "Успешно реализовано",
+                "Сделка проиграна"
+            ]
+            for i, stage_name in enumerate(default_stages):
+                st = Stage(
+                    pipeline_id=default_pipeline.id,
+                    name=stage_name,
+                    order_index=i+1,
+                    is_won="успешн" in stage_name.lower(),
+                    is_lost="проигра" in stage_name.lower(),
+                    is_active_rent=any(k in stage_name for k in ("Предоплата", "Монтаж", "Мероприятие")),
+                )
+                session.add(st)
+            session.commit()
+            
+        # 3. Update existing deals to the default pipeline if they are null
+        session.execute(
+            text("UPDATE deals SET pipeline_id = :pid WHERE pipeline_id IS NULL"),
+            {"pid": default_pipeline.id},
+        )
+        session.commit()
+    
+        try:
+            for p in session.query(Pipeline).all():
+                if not getattr(p, "kind", None):
+                    p.kind = "deal"
+            # Пометить существующие стадии успех/проигрыш
+            for st in session.query(Stage).all():
+                name_l = (st.name or "").lower()
+                if "успешн" in name_l and not st.is_won:
+                    st.is_won = True
+                if "проигра" in name_l and not st.is_lost:
+                    st.is_lost = True
             session.commit()
         except Exception:
             session.rollback()
-        
-    # 2. Seed main pipeline if empty
-    default_pipeline = session.query(Pipeline).first()
-    if not default_pipeline:
-        default_pipeline = Pipeline(name="Основная воронка", kind="deal")
-        session.add(default_pipeline)
-        session.commit()
-        session.refresh(default_pipeline)
-        
-        # Create default stages
-        default_stages = [
-            "Первичный контакт", "Согласование сметы", "Договор и счет",
-            "Предоплата внесена", "Монтаж / Мероприятие", "Успешно реализовано",
-            "Сделка проиграна"
-        ]
-        for i, stage_name in enumerate(default_stages):
-            st = Stage(
-                pipeline_id=default_pipeline.id,
-                name=stage_name,
-                order_index=i+1,
-                is_won="успешн" in stage_name.lower(),
-                is_lost="проигра" in stage_name.lower(),
-                is_active_rent=any(k in stage_name for k in ("Предоплата", "Монтаж", "Мероприятие")),
-            )
-            session.add(st)
-        session.commit()
-        
-    # 3. Update existing deals to the default pipeline if they are null
-    session.execute(
-        text("UPDATE deals SET pipeline_id = :pid WHERE pipeline_id IS NULL"),
-        {"pid": default_pipeline.id},
-    )
-    session.commit()
-
-    try:
-        for p in session.query(Pipeline).all():
-            if not getattr(p, "kind", None):
-                p.kind = "deal"
-        # Пометить существующие стадии успех/проигрыш
-        for st in session.query(Stage).all():
-            name_l = (st.name or "").lower()
-            if "успешн" in name_l and not st.is_won:
-                st.is_won = True
-            if "проигра" in name_l and not st.is_lost:
-                st.is_lost = True
-        session.commit()
-    except Exception:
-        session.rollback()
-
-    # Seed воронки «Лиды» + привязка к продажам
-    try:
-        deal_pipeline = (
-            session.query(Pipeline)
-            .filter(Pipeline.kind == "deal")
-            .order_by(Pipeline.id)
-            .first()
-        ) or session.query(Pipeline).order_by(Pipeline.id).first()
-        if deal_pipeline and not getattr(deal_pipeline, "kind", None):
-            deal_pipeline.kind = "deal"
-            session.commit()
-
-        leads_pipeline = (
-            session.query(Pipeline)
-            .filter(Pipeline.kind == "lead")
-            .order_by(Pipeline.id)
-            .first()
-        )
-        if not leads_pipeline:
-            by_name = session.query(Pipeline).filter(Pipeline.name == "Лиды").first()
-            if by_name:
-                leads_pipeline = by_name
-                leads_pipeline.kind = "lead"
-            else:
-                leads_pipeline = Pipeline(
-                    name="Лиды",
-                    kind="lead",
-                    target_pipeline_id=deal_pipeline.id if deal_pipeline else None,
-                )
-                session.add(leads_pipeline)
-                session.commit()
-                session.refresh(leads_pipeline)
-                lead_stages = [
-                    ("Новый лид", False, False, False),
-                    ("В работе", False, False, False),
-                    ("Квалифицирован", False, False, False),
-                    ("Успешно", True, False, True),
-                    ("Отказ", False, True, False),
-                ]
-                for i, (nm, won, lost, creates) in enumerate(lead_stages):
-                    session.add(Stage(
-                        pipeline_id=leads_pipeline.id,
-                        name=nm,
-                        order_index=i + 1,
-                        is_won=won,
-                        is_lost=lost,
-                        creates_deal=creates,
-                    ))
-                session.commit()
-        if leads_pipeline and deal_pipeline and not leads_pipeline.target_pipeline_id:
-            leads_pipeline.target_pipeline_id = deal_pipeline.id
-            session.commit()
-
-        # Две deal-воронки: Аренда + Продажа (лид → выбор целевой при конвертации)
+    
+        # Seed воронки «Лиды» + привязка к продажам
         try:
-            deal_pipes = (
+            deal_pipeline = (
                 session.query(Pipeline)
                 .filter(Pipeline.kind == "deal")
                 .order_by(Pipeline.id)
-                .all()
+                .first()
+            ) or session.query(Pipeline).order_by(Pipeline.id).first()
+            if deal_pipeline and not getattr(deal_pipeline, "kind", None):
+                deal_pipeline.kind = "deal"
+                session.commit()
+    
+            leads_pipeline = (
+                session.query(Pipeline)
+                .filter(Pipeline.kind == "lead")
+                .order_by(Pipeline.id)
+                .first()
             )
-            rental = next((p for p in deal_pipes if (p.name or "").strip().lower() in ("аренда", "прокат")), None)
-            sales = next((p for p in deal_pipes if (p.name or "").strip().lower() in ("продажа", "продажи")), None)
-            if not rental and deal_pipes:
-                # Переименовать первую deal-воронку («Основная…») → Аренда
-                first = deal_pipes[0]
-                if (first.name or "").strip().lower() in ("основная воронка", "продажи", "основная"):
-                    first.name = "Аренда"
-                    rental = first
-                    session.commit()
+            if not leads_pipeline:
+                by_name = session.query(Pipeline).filter(Pipeline.name == "Лиды").first()
+                if by_name:
+                    leads_pipeline = by_name
+                    leads_pipeline.kind = "lead"
                 else:
-                    rental = first
-            if not rental:
-                rental = Pipeline(name="Аренда", kind="deal")
-                session.add(rental)
+                    leads_pipeline = Pipeline(
+                        name="Лиды",
+                        kind="lead",
+                        target_pipeline_id=deal_pipeline.id if deal_pipeline else None,
+                    )
+                    session.add(leads_pipeline)
+                    session.commit()
+                    session.refresh(leads_pipeline)
+                    lead_stages = [
+                        ("Новый лид", False, False, False),
+                        ("В работе", False, False, False),
+                        ("Квалифицирован", False, False, False),
+                        ("Успешно", True, False, True),
+                        ("Отказ", False, True, False),
+                    ]
+                    for i, (nm, won, lost, creates) in enumerate(lead_stages):
+                        session.add(Stage(
+                            pipeline_id=leads_pipeline.id,
+                            name=nm,
+                            order_index=i + 1,
+                            is_won=won,
+                            is_lost=lost,
+                            creates_deal=creates,
+                        ))
+                    session.commit()
+            if leads_pipeline and deal_pipeline and not leads_pipeline.target_pipeline_id:
+                leads_pipeline.target_pipeline_id = deal_pipeline.id
                 session.commit()
-                session.refresh(rental)
-                for i, (nm, won, lost, rent) in enumerate([
-                    ("Первичный контакт", False, False, False),
-                    ("Согласование сметы", False, False, False),
-                    ("Договор и счет", False, False, False),
-                    ("Предоплата внесена", False, False, True),
-                    ("Монтаж / Мероприятие", False, False, True),
-                    ("Успешно реализовано", True, False, False),
-                    ("Сделка проиграна", False, True, False),
-                ]):
-                    session.add(Stage(
-                        pipeline_id=rental.id, name=nm, order_index=i + 1,
-                        is_won=won, is_lost=lost, is_active_rent=rent,
-                    ))
-                session.commit()
-            if not sales:
-                sales = Pipeline(name="Продажа", kind="deal")
-                session.add(sales)
-                session.commit()
-                session.refresh(sales)
-                for i, (nm, won, lost) in enumerate([
-                    ("Первичный контакт", False, False),
-                    ("КП / согласование", False, False),
-                    ("Договор и счет", False, False),
-                    ("Оплата", False, False),
-                    ("Отгружено / закрыто", True, False),
-                    ("Отказ", False, True),
-                ]):
-                    session.add(Stage(
-                        pipeline_id=sales.id, name=nm, order_index=i + 1,
-                        is_won=won, is_lost=lost, is_active_rent=False,
-                    ))
-                session.commit()
-            if leads_pipeline and rental and not leads_pipeline.target_pipeline_id:
-                leads_pipeline.target_pipeline_id = rental.id
+    
+            # Две deal-воронки: Аренда + Продажа (лид → выбор целевой при конвертации)
+            try:
+                deal_pipes = (
+                    session.query(Pipeline)
+                    .filter(Pipeline.kind == "deal")
+                    .order_by(Pipeline.id)
+                    .all()
+                )
+                rental = next((p for p in deal_pipes if (p.name or "").strip().lower() in ("аренда", "прокат")), None)
+                sales = next((p for p in deal_pipes if (p.name or "").strip().lower() in ("продажа", "продажи")), None)
+                if not rental and deal_pipes:
+                    # Переименовать первую deal-воронку («Основная…») → Аренда
+                    first = deal_pipes[0]
+                    if (first.name or "").strip().lower() in ("основная воронка", "продажи", "основная"):
+                        first.name = "Аренда"
+                        rental = first
+                        session.commit()
+                    else:
+                        rental = first
+                if not rental:
+                    rental = Pipeline(name="Аренда", kind="deal")
+                    session.add(rental)
+                    session.commit()
+                    session.refresh(rental)
+                    for i, (nm, won, lost, rent) in enumerate([
+                        ("Первичный контакт", False, False, False),
+                        ("Согласование сметы", False, False, False),
+                        ("Договор и счет", False, False, False),
+                        ("Предоплата внесена", False, False, True),
+                        ("Монтаж / Мероприятие", False, False, True),
+                        ("Успешно реализовано", True, False, False),
+                        ("Сделка проиграна", False, True, False),
+                    ]):
+                        session.add(Stage(
+                            pipeline_id=rental.id, name=nm, order_index=i + 1,
+                            is_won=won, is_lost=lost, is_active_rent=rent,
+                        ))
+                    session.commit()
+                if not sales:
+                    sales = Pipeline(name="Продажа", kind="deal")
+                    session.add(sales)
+                    session.commit()
+                    session.refresh(sales)
+                    for i, (nm, won, lost) in enumerate([
+                        ("Первичный контакт", False, False),
+                        ("КП / согласование", False, False),
+                        ("Договор и счет", False, False),
+                        ("Оплата", False, False),
+                        ("Отгружено / закрыто", True, False),
+                        ("Отказ", False, True),
+                    ]):
+                        session.add(Stage(
+                            pipeline_id=sales.id, name=nm, order_index=i + 1,
+                            is_won=won, is_lost=lost, is_active_rent=False,
+                        ))
+                    session.commit()
+                if leads_pipeline and rental and not leads_pipeline.target_pipeline_id:
+                    leads_pipeline.target_pipeline_id = rental.id
+                    session.commit()
+            except Exception:
+                session.rollback()
+    
+            # Дефолтные правила маршрутизации источников → Лиды
+            if leads_pipeline:
+                for src in ("whatsapp", "telegram", "instagram", "site", "maps", "onec", "manual", "referral", "other"):
+                    exists = session.query(PipelineRoutingRule).filter(PipelineRoutingRule.source == src).first()
+                    if not exists:
+                        session.add(PipelineRoutingRule(
+                            source=src,
+                            pipeline_id=leads_pipeline.id,
+                            assignee_id=None,
+                            is_active=True,
+                        ))
                 session.commit()
         except Exception:
             session.rollback()
-
-        # Дефолтные правила маршрутизации источников → Лиды
-        if leads_pipeline:
-            for src in ("whatsapp", "telegram", "instagram", "site", "maps", "onec", "manual", "referral", "other"):
-                exists = session.query(PipelineRoutingRule).filter(PipelineRoutingRule.source == src).first()
-                if not exists:
-                    session.add(PipelineRoutingRule(
-                        source=src,
-                        pipeline_id=leads_pipeline.id,
-                        assignee_id=None,
-                        is_active=True,
-                    ))
-            session.commit()
-    except Exception:
-        session.rollback()
-
-    # 4. Add AI & 3D properties and custom fields to equipment
-    try:
-        session.execute(text("ALTER TABLE equipment ADD COLUMN weight FLOAT"))
-        session.execute(text("ALTER TABLE equipment ADD COLUMN dimensions TEXT"))
-        session.execute(text("ALTER TABLE equipment ADD COLUMN power_w FLOAT"))
-        session.execute(text("ALTER TABLE equipment ADD COLUMN dispersion TEXT"))
-        session.commit()
-    except Exception:
-        session.rollback() # Columns already exist
-
-    try:
-        session.execute(text("ALTER TABLE equipment ADD COLUMN custom_fields JSON"))
-        session.commit()
-    except Exception:
-        session.rollback()
-        
-    try:
-        session.execute(text("ALTER TABLE companies ADD COLUMN telegram_chat_id VARCHAR"))
-        session.commit()
-    except Exception:
-        session.rollback()
-
-    # 4b. New columns: instagram for companies, permissions/full_name for users
-    for ddl in [
-        "ALTER TABLE companies ADD COLUMN instagram VARCHAR",
-        "ALTER TABLE users ADD COLUMN full_name VARCHAR",
-        "ALTER TABLE users ADD COLUMN permissions JSON",
-        # Цена позиции в смете (может отличаться от цены склада)
-        "ALTER TABLE deal_items ADD COLUMN price FLOAT",
-        # Привязка сделки к контакту, чату мессенджера и прошлому обращению
-        "ALTER TABLE deals ADD COLUMN contact_id INTEGER",
-        "ALTER TABLE deals ADD COLUMN chat_channel VARCHAR",
-        "ALTER TABLE deals ADD COLUMN chat_id VARCHAR",
-        "ALTER TABLE deals ADD COLUMN prev_deal_id INTEGER",
-        "ALTER TABLE deals ADD COLUMN created_at DATETIME",
-        # Задачи в стиле Битрикс24
-        "ALTER TABLE tasks ADD COLUMN description VARCHAR",
-        "ALTER TABLE tasks ADD COLUMN created_by VARCHAR",
-        "ALTER TABLE tasks ADD COLUMN creator_id INTEGER",
-        "ALTER TABLE tasks ADD COLUMN tags VARCHAR",
-        "ALTER TABLE tasks ADD COLUMN priority VARCHAR DEFAULT 'normal'",
-        "ALTER TABLE tasks ADD COLUMN completed_at DATETIME",
-        # CRM → ближе к Битрикс24
-        "ALTER TABLE deals ADD COLUMN assignee_id INTEGER",
-        "ALTER TABLE deals ADD COLUMN source VARCHAR",
-        "ALTER TABLE deals ADD COLUMN loss_reason VARCHAR",
-        "ALTER TABLE deals ADD COLUMN is_qualified BOOLEAN DEFAULT 0",
-        "ALTER TABLE deals ADD COLUMN is_archived BOOLEAN DEFAULT 0",
-        "ALTER TABLE contacts ADD COLUMN is_primary BOOLEAN DEFAULT 0",
-        # Субаренда / внешний склад
-        "ALTER TABLE equipment ADD COLUMN cost_price FLOAT DEFAULT 0",
-        "ALTER TABLE equipment ADD COLUMN warehouse_type VARCHAR DEFAULT 'own'",
-        "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
-        "ALTER TABLE equipment ADD COLUMN condition VARCHAR DEFAULT 'good'",
-        # Налог в смете (%) — исторически DEFAULT 0; ниже принудительно 16
-        "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 16",
-        # Шапка сметы (как в Excel)
-        "ALTER TABLE deals ADD COLUMN city VARCHAR",
-        "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
-        # v2: операционный пайплайн отгрузки
-        "ALTER TABLE deals ADD COLUMN ops_status VARCHAR DEFAULT 'none'",
-        # v2: статусы выдачи субаренды на позициях сметы
-        "ALTER TABLE deal_items ADD COLUMN subrental_status VARCHAR",
-        "ALTER TABLE deal_items ADD COLUMN issued_at DATETIME",
-        "ALTER TABLE deal_items ADD COLUMN issued_by_id INTEGER",
-        "ALTER TABLE deal_items ADD COLUMN returned_at DATETIME",
-        "ALTER TABLE deal_items ADD COLUMN returned_by_id INTEGER",
-        "ALTER TABLE deal_items ADD COLUMN subrental_note VARCHAR",
-        # Сотрудник на проекте ↔ задача «Выезд»
-        "ALTER TABLE deal_staff_assignments ADD COLUMN task_id INTEGER",
-        "ALTER TABLE deal_staff_assignments ADD COLUMN attachment_id INTEGER",
-        "ALTER TABLE deal_staff_assignments ADD COLUMN notified_at DATETIME",
-        "ALTER TABLE deal_staff_assignments ADD COLUMN role_name VARCHAR",
-        "ALTER TABLE deal_staff_assignments ADD COLUMN note VARCHAR",
-        "ALTER TABLE deal_staff_assignments ADD COLUMN created_by VARCHAR",
-        # v2 security: logout-all через инкремент версии сессии
-        "ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0",
-        # Квалификация лида + менеджеры + фиксы
-        "ALTER TABLE deals ADD COLUMN qualification VARCHAR",
-        "ALTER TABLE deals ADD COLUMN sales_manager_id INTEGER",
-        "ALTER TABLE deals ADD COLUMN project_manager_id INTEGER",
-        "ALTER TABLE deals ADD COLUMN sales_fix_kzt FLOAT DEFAULT 0",
-        "ALTER TABLE deals ADD COLUMN project_fix_kzt FLOAT DEFAULT 0",
-        "ALTER TABLE deals ADD COLUMN margin_target_pct FLOAT DEFAULT 10",
-        # Multi-city foundation
-        "ALTER TABLE users ADD COLUMN city_id INTEGER",
-        "ALTER TABLE users ADD COLUMN phone VARCHAR",
-        "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1",
-        "ALTER TABLE users ADD COLUMN dismissed_at DATETIME",
-        "ALTER TABLE users ADD COLUMN role_id INTEGER",
-        "ALTER TABLE user_invites ADD COLUMN role_id INTEGER",
-        "ALTER TABLE deals ADD COLUMN city_id INTEGER",
-        "ALTER TABLE work_sessions ADD COLUMN city_id INTEGER",
-        "ALTER TABLE work_sessions ADD COLUMN start_place VARCHAR",
-        "ALTER TABLE work_sessions ADD COLUMN end_place VARCHAR",
-        # Soft-delete / корзина (additive only — never drops data)
-        "ALTER TABLE deals ADD COLUMN deleted_at DATETIME",
-        "ALTER TABLE deals ADD COLUMN deleted_by_id INTEGER",
-        "ALTER TABLE tasks ADD COLUMN deleted_at DATETIME",
-        "ALTER TABLE tasks ADD COLUMN deleted_by_id INTEGER",
-        "ALTER TABLE companies ADD COLUMN deleted_at DATETIME",
-        "ALTER TABLE companies ADD COLUMN deleted_by_id INTEGER",
-        "ALTER TABLE deal_documents ADD COLUMN deleted_at DATETIME",
-        "ALTER TABLE deal_documents ADD COLUMN deleted_by_id INTEGER",
-    ]:
+    
+        # 4. Add AI & 3D properties and custom fields to equipment
         try:
-            session.execute(text(ddl))
+            session.execute(text("ALTER TABLE equipment ADD COLUMN weight FLOAT"))
+            session.execute(text("ALTER TABLE equipment ADD COLUMN dimensions TEXT"))
+            session.execute(text("ALTER TABLE equipment ADD COLUMN power_w FLOAT"))
+            session.execute(text("ALTER TABLE equipment ADD COLUMN dispersion TEXT"))
+            session.commit()
+        except Exception:
+            session.rollback() # Columns already exist
+    
+        try:
+            session.execute(text("ALTER TABLE equipment ADD COLUMN custom_fields JSON"))
             session.commit()
         except Exception:
             session.rollback()
-
-    # Города: Алматы (default), Астана/Шымкент наготове
-    try:
-        seed_cities = [
-            ("Алматы", "almaty", True, "Asia/Almaty", 10),
-            ("Астана", "astana", False, "Asia/Almaty", 20),
-            ("Шымкент", "shymkent", False, "Asia/Almaty", 30),
-        ]
-        for name, slug, active, tz, order in seed_cities:
-            row = session.query(City).filter(City.slug == slug).first()
-            if not row:
-                session.add(City(
-                    name=name, slug=slug, is_active=active,
-                    timezone=tz, sort_order=order,
-                ))
-        session.commit()
-        almaty = session.query(City).filter(City.slug == "almaty").first()
-        if almaty:
-            session.execute(
-                text("UPDATE deals SET city_id = :cid WHERE city_id IS NULL"),
-                {"cid": almaty.id},
-            )
-            # Подтянуть текстовый city из справочника, если пусто
-            session.execute(
-                text(
-                    "UPDATE deals SET city = :cname "
-                    "WHERE (city IS NULL OR TRIM(city) = '') AND city_id = :cid"
-                ),
-                {"cname": almaty.name, "cid": almaty.id},
-            )
-            # Активный город организации по умолчанию
-            active_setting = session.query(AppSetting).filter(AppSetting.key == "active_city_id").first()
-            if not active_setting:
-                session.add(AppSetting(key="active_city_id", value=str(almaty.id)))
-            session.commit()
-    except Exception as e:
-        session.rollback()
-        print("cities seed error:", e)
-
-    # Системные роли доступа (права сотрудников)
-    try:
-        default_roles = [
-            (
-                "Менеджер продаж",
-                "CRM, сметы, клиенты и коммуникации. Свои сделки и флаг менеджера продаж.",
-                [
-                    "dashboard", "today", "inbox", "chats", "crm", "quotes",
-                    "calendar", "companies", "tasks", "analytics",
-                    "crm_own_only", "role_sales",
-                ],
-            ),
-            (
-                "Менеджер проекта",
-                "Ведение проектов: CRM, документы, склад, календарь и задачи.",
-                [
-                    "dashboard", "today", "crm", "quotes", "documents",
-                    "calendar", "equipment", "companies", "tasks",
-                    "role_project", "hide_margin",
-                ],
-            ),
-            (
-                "Техник / Склад",
-                "Склад, календарь и задачи. Цены, маржа и ФОТ скрыты.",
-                [
-                    "today", "equipment", "calendar", "tasks",
-                    "hide_prices", "hide_margin", "hide_payroll", "hide_subrental_cost",
-                ],
-            ),
-            (
-                "Админ-помощник",
-                "Почти полный доступ к разделам без роли администратора системы.",
-                list(auth.SECTIONS.keys()),
-            ),
-        ]
-        for name, desc, perms in default_roles:
-            existing = session.query(Role).filter(Role.name == name).first()
-            if not existing:
-                session.add(Role(
-                    name=name,
-                    description=desc,
-                    permissions=perms,
-                    is_system=True,
-                    created_at=datetime.utcnow(),
-                ))
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        print("roles seed error:", e)
-
-    # Seed реквизитов компании для шапки сметы (если ещё пусто)
-    try:
-        defaults = {
-            "company_name": "Intro Show",
-            "company_phone": "+7 (701) 554-13-80",
-            "company_email": "show.intro@yandex.kz",
-            "company_address": "Тюлькубасская улица, 4, Алматы",
-            "company_bin": "",
-        }
-        for key, val in defaults.items():
-            existing = session.query(AppSetting).filter(AppSetting.key == key).first()
-            if not existing:
-                session.add(AppSetting(key=key, value=val))
-        session.commit()
-    except Exception:
-        session.rollback()
-
-    # Seed системных шаблонов документов (смета / договор / техничка)
-    try:
-        doc_templates.seed_document_templates(session)
-    except Exception as e:
-        session.rollback()
-        print("document_templates seed error:", e)
-
-    # 4b2. Налог всегда 16%: выравниваем существующие сделки
-    try:
-        session.execute(
-            text("UPDATE deals SET tax_percentage = 16 WHERE tax_percentage IS NULL OR tax_percentage != 16")
-        )
-        session.commit()
-    except Exception:
-        session.rollback()
-
-    # 4b3. Пустые/NULL типы склада → own
-    try:
-        session.execute(
-            text("UPDATE equipment SET warehouse_type = 'own' WHERE warehouse_type IS NULL OR TRIM(warehouse_type) = ''")
-        )
-        session.commit()
-    except Exception:
-        session.rollback()
-
-    # 4b3b. Состояние товара на складе (внутреннее)
-    try:
-        session.execute(
-            text("UPDATE equipment SET condition = 'good' WHERE condition IS NULL OR TRIM(condition) = ''")
-        )
-        session.commit()
-    except Exception:
-        session.rollback()
-
-    # 4b4. Демо-каталог субаренды (Vercel SQLite эфемерен — без seed вкладка пустая)
-    try:
-        sub_cnt = session.query(Equipment).filter(Equipment.warehouse_type == "subrental").count()
-        if sub_cnt == 0:
-            for name, cat, price, cost, supplier, qty in [
-                ("LED экран P3.9 (субаренда)", "Экраны", 45000, 32000, "EventPro Almaty", 10),
-                ("Линейный массив 2×top (субаренда)", "Звук", 80000, 55000, "SoundRent", 4),
-                ("Дым-машина hazer (субаренда)", "Свет", 12000, 7000, "LightHub", 6),
-                ("Генератор 30 кВт (субаренда)", "Логистика", 35000, 22000, "PowerGo", 2),
-            ]:
-                session.add(Equipment(
-                    name=name,
-                    category=cat,
-                    price=float(price),
-                    cost_price=float(cost),
-                    stock_quantity=int(qty),
-                    status="Доступно",
-                    warehouse_type="subrental",
-                    supplier=supplier,
-                    description="Демо-позиция внешнего склада (субаренда)",
-                ))
-            session.commit()
-    except Exception:
-        session.rollback()
-
-    # 4b5. Демо-сделки: только если CRM пустая (cold start /tmp на Vercel).
-    # На проде отключить: SEED_DEMO_DEALS=0
-    if os.environ.get("SEED_DEMO_DEALS", "1").strip() != "0":
+            
         try:
-            demo_seed.seed_demo_deals(session, only_if_empty=True)
+            session.execute(text("ALTER TABLE companies ADD COLUMN telegram_chat_id VARCHAR"))
+            session.commit()
+        except Exception:
+            session.rollback()
+    
+        # 4b. New columns: instagram for companies, permissions/full_name for users
+        for ddl in [
+            "ALTER TABLE companies ADD COLUMN instagram VARCHAR",
+            "ALTER TABLE users ADD COLUMN full_name VARCHAR",
+            "ALTER TABLE users ADD COLUMN permissions JSON",
+            # Цена позиции в смете (может отличаться от цены склада)
+            "ALTER TABLE deal_items ADD COLUMN price FLOAT",
+            # Привязка сделки к контакту, чату мессенджера и прошлому обращению
+            "ALTER TABLE deals ADD COLUMN contact_id INTEGER",
+            "ALTER TABLE deals ADD COLUMN chat_channel VARCHAR",
+            "ALTER TABLE deals ADD COLUMN chat_id VARCHAR",
+            "ALTER TABLE deals ADD COLUMN prev_deal_id INTEGER",
+            "ALTER TABLE deals ADD COLUMN created_at DATETIME",
+            # Задачи в стиле Битрикс24
+            "ALTER TABLE tasks ADD COLUMN description VARCHAR",
+            "ALTER TABLE tasks ADD COLUMN created_by VARCHAR",
+            "ALTER TABLE tasks ADD COLUMN creator_id INTEGER",
+            "ALTER TABLE tasks ADD COLUMN tags VARCHAR",
+            "ALTER TABLE tasks ADD COLUMN priority VARCHAR DEFAULT 'normal'",
+            "ALTER TABLE tasks ADD COLUMN completed_at DATETIME",
+            # CRM → ближе к Битрикс24
+            "ALTER TABLE deals ADD COLUMN assignee_id INTEGER",
+            "ALTER TABLE deals ADD COLUMN source VARCHAR",
+            "ALTER TABLE deals ADD COLUMN loss_reason VARCHAR",
+            "ALTER TABLE deals ADD COLUMN is_qualified BOOLEAN DEFAULT 0",
+            "ALTER TABLE deals ADD COLUMN is_archived BOOLEAN DEFAULT 0",
+            "ALTER TABLE contacts ADD COLUMN is_primary BOOLEAN DEFAULT 0",
+            # Субаренда / внешний склад
+            "ALTER TABLE equipment ADD COLUMN cost_price FLOAT DEFAULT 0",
+            "ALTER TABLE equipment ADD COLUMN warehouse_type VARCHAR DEFAULT 'own'",
+            "ALTER TABLE equipment ADD COLUMN supplier VARCHAR",
+            "ALTER TABLE equipment ADD COLUMN condition VARCHAR DEFAULT 'good'",
+            # Налог в смете (%) — исторически DEFAULT 0; ниже принудительно 16
+            "ALTER TABLE deals ADD COLUMN tax_percentage FLOAT DEFAULT 16",
+            # Шапка сметы (как в Excel)
+            "ALTER TABLE deals ADD COLUMN city VARCHAR",
+            "ALTER TABLE deals ADD COLUMN shifts FLOAT DEFAULT 1",
+            # v2: операционный пайплайн отгрузки
+            "ALTER TABLE deals ADD COLUMN ops_status VARCHAR DEFAULT 'none'",
+            # v2: статусы выдачи субаренды на позициях сметы
+            "ALTER TABLE deal_items ADD COLUMN subrental_status VARCHAR",
+            "ALTER TABLE deal_items ADD COLUMN issued_at DATETIME",
+            "ALTER TABLE deal_items ADD COLUMN issued_by_id INTEGER",
+            "ALTER TABLE deal_items ADD COLUMN returned_at DATETIME",
+            "ALTER TABLE deal_items ADD COLUMN returned_by_id INTEGER",
+            "ALTER TABLE deal_items ADD COLUMN subrental_note VARCHAR",
+            # Сотрудник на проекте ↔ задача «Выезд»
+            "ALTER TABLE deal_staff_assignments ADD COLUMN task_id INTEGER",
+            "ALTER TABLE deal_staff_assignments ADD COLUMN attachment_id INTEGER",
+            "ALTER TABLE deal_staff_assignments ADD COLUMN notified_at DATETIME",
+            "ALTER TABLE deal_staff_assignments ADD COLUMN role_name VARCHAR",
+            "ALTER TABLE deal_staff_assignments ADD COLUMN note VARCHAR",
+            "ALTER TABLE deal_staff_assignments ADD COLUMN created_by VARCHAR",
+            # v2 security: logout-all через инкремент версии сессии
+            "ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0",
+            # Квалификация лида + менеджеры + фиксы
+            "ALTER TABLE deals ADD COLUMN qualification VARCHAR",
+            "ALTER TABLE deals ADD COLUMN sales_manager_id INTEGER",
+            "ALTER TABLE deals ADD COLUMN project_manager_id INTEGER",
+            "ALTER TABLE deals ADD COLUMN sales_fix_kzt FLOAT DEFAULT 0",
+            "ALTER TABLE deals ADD COLUMN project_fix_kzt FLOAT DEFAULT 0",
+            "ALTER TABLE deals ADD COLUMN margin_target_pct FLOAT DEFAULT 10",
+            # Multi-city foundation
+            "ALTER TABLE users ADD COLUMN city_id INTEGER",
+            "ALTER TABLE users ADD COLUMN phone VARCHAR",
+            "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN dismissed_at DATETIME",
+            "ALTER TABLE users ADD COLUMN role_id INTEGER",
+            "ALTER TABLE user_invites ADD COLUMN role_id INTEGER",
+            "ALTER TABLE deals ADD COLUMN city_id INTEGER",
+            "ALTER TABLE work_sessions ADD COLUMN city_id INTEGER",
+            "ALTER TABLE work_sessions ADD COLUMN start_place VARCHAR",
+            "ALTER TABLE work_sessions ADD COLUMN end_place VARCHAR",
+            # Soft-delete / корзина (additive only — never drops data)
+            "ALTER TABLE deals ADD COLUMN deleted_at DATETIME",
+            "ALTER TABLE deals ADD COLUMN deleted_by_id INTEGER",
+            "ALTER TABLE tasks ADD COLUMN deleted_at DATETIME",
+            "ALTER TABLE tasks ADD COLUMN deleted_by_id INTEGER",
+            "ALTER TABLE companies ADD COLUMN deleted_at DATETIME",
+            "ALTER TABLE companies ADD COLUMN deleted_by_id INTEGER",
+            "ALTER TABLE deal_documents ADD COLUMN deleted_at DATETIME",
+            "ALTER TABLE deal_documents ADD COLUMN deleted_by_id INTEGER",
+        ]:
+            try:
+                session.execute(text(ddl))
+                session.commit()
+            except Exception:
+                session.rollback()
+    
+        # Города: Алматы (default), Астана/Шымкент наготове
+        try:
+            seed_cities = [
+                ("Алматы", "almaty", True, "Asia/Almaty", 10),
+                ("Астана", "astana", False, "Asia/Almaty", 20),
+                ("Шымкент", "shymkent", False, "Asia/Almaty", 30),
+            ]
+            for name, slug, active, tz, order in seed_cities:
+                row = session.query(City).filter(City.slug == slug).first()
+                if not row:
+                    session.add(City(
+                        name=name, slug=slug, is_active=active,
+                        timezone=tz, sort_order=order,
+                    ))
+            session.commit()
+            almaty = session.query(City).filter(City.slug == "almaty").first()
+            if almaty:
+                session.execute(
+                    text("UPDATE deals SET city_id = :cid WHERE city_id IS NULL"),
+                    {"cid": almaty.id},
+                )
+                # Подтянуть текстовый city из справочника, если пусто
+                session.execute(
+                    text(
+                        "UPDATE deals SET city = :cname "
+                        "WHERE (city IS NULL OR TRIM(city) = '') AND city_id = :cid"
+                    ),
+                    {"cname": almaty.name, "cid": almaty.id},
+                )
+                # Активный город организации по умолчанию
+                active_setting = session.query(AppSetting).filter(AppSetting.key == "active_city_id").first()
+                if not active_setting:
+                    session.add(AppSetting(key="active_city_id", value=str(almaty.id)))
+                session.commit()
         except Exception as e:
             session.rollback()
-            print("demo_seed error:", e)
-    else:
-        print("demo_seed: skipped (SEED_DEMO_DEALS=0)")
-
-    # 4c. Стадии «в работе» для проверки брони оборудования:
-    # если ни одна стадия не помечена, помечаем стандартные.
-    try:
-        active_cnt = session.query(Stage).filter(Stage.is_active_rent == True).count()  # noqa: E712
-        if active_cnt == 0:
-            for st in session.query(Stage).all():
-                if any(k in (st.name or "") for k in ("Предоплата", "Монтаж", "Мероприятие")):
-                    st.is_active_rent = True
+            print("cities seed error:", e)
+    
+        # Системные роли доступа (права сотрудников)
+        try:
+            default_roles = [
+                (
+                    "Менеджер продаж",
+                    "CRM, сметы, клиенты и коммуникации. Свои сделки и флаг менеджера продаж.",
+                    [
+                        "dashboard", "today", "inbox", "chats", "crm", "quotes",
+                        "calendar", "companies", "tasks", "analytics",
+                        "crm_own_only", "role_sales",
+                    ],
+                ),
+                (
+                    "Менеджер проекта",
+                    "Ведение проектов: CRM, документы, склад, календарь и задачи.",
+                    [
+                        "dashboard", "today", "crm", "quotes", "documents",
+                        "calendar", "equipment", "companies", "tasks",
+                        "role_project", "hide_margin",
+                    ],
+                ),
+                (
+                    "Техник / Склад",
+                    "Склад, календарь и задачи. Цены, маржа и ФОТ скрыты.",
+                    [
+                        "today", "equipment", "calendar", "tasks",
+                        "hide_prices", "hide_margin", "hide_payroll", "hide_subrental_cost",
+                    ],
+                ),
+                (
+                    "Админ-помощник",
+                    "Почти полный доступ к разделам без роли администратора системы.",
+                    list(auth.SECTIONS.keys()),
+                ),
+            ]
+            for name, desc, perms in default_roles:
+                existing = session.query(Role).filter(Role.name == name).first()
+                if not existing:
+                    session.add(Role(
+                        name=name,
+                        description=desc,
+                        permissions=perms,
+                        is_system=True,
+                        created_at=datetime.utcnow(),
+                    ))
             session.commit()
-    except Exception:
-        session.rollback()
-
-    # 5. Create default admin user (пароль из ADMIN_PASSWORD или "admin")
-    try:
-        if session.query(User).count() == 0:
-            admin_pw = (os.environ.get("ADMIN_PASSWORD") or "admin").strip() or "admin"
-            admin_user = User(
-                username="admin",
-                hashed_password=auth.get_password_hash(admin_pw),
-                role="admin",
-                full_name="Администратор",
+        except Exception as e:
+            session.rollback()
+            print("roles seed error:", e)
+    
+        # Seed реквизитов компании для шапки сметы (если ещё пусто)
+        try:
+            defaults = {
+                "company_name": "Intro Show",
+                "company_phone": "+7 (701) 554-13-80",
+                "company_email": "show.intro@yandex.kz",
+                "company_address": "Тюлькубасская улица, 4, Алматы",
+                "company_bin": "",
+            }
+            for key, val in defaults.items():
+                existing = session.query(AppSetting).filter(AppSetting.key == key).first()
+                if not existing:
+                    session.add(AppSetting(key=key, value=val))
+            session.commit()
+        except Exception:
+            session.rollback()
+    
+        # Seed системных шаблонов документов (смета / договор / техничка)
+        try:
+            doc_templates.seed_document_templates(session)
+        except Exception as e:
+            session.rollback()
+            print("document_templates seed error:", e)
+    
+        # 4b2. Налог всегда 16%: выравниваем существующие сделки
+        try:
+            session.execute(
+                text("UPDATE deals SET tax_percentage = 16 WHERE tax_percentage IS NULL OR tax_percentage != 16")
             )
-            session.add(admin_user)
             session.commit()
-            if admin_pw == "admin":
-                print(
-                    "⚠️  SECURITY: создан admin с паролем по умолчанию «admin». "
-                    "Смените пароль сразу после входа или задайте ADMIN_PASSWORD."
+        except Exception:
+            session.rollback()
+    
+        # 4b3. Пустые/NULL типы склада → own
+        try:
+            session.execute(
+                text("UPDATE equipment SET warehouse_type = 'own' WHERE warehouse_type IS NULL OR TRIM(warehouse_type) = ''")
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+    
+        # 4b3b. Состояние товара на складе (внутреннее)
+        try:
+            session.execute(
+                text("UPDATE equipment SET condition = 'good' WHERE condition IS NULL OR TRIM(condition) = ''")
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+    
+        # 4b4. Демо-каталог субаренды (Vercel SQLite эфемерен — без seed вкладка пустая)
+        try:
+            sub_cnt = session.query(Equipment).filter(Equipment.warehouse_type == "subrental").count()
+            if sub_cnt == 0:
+                for name, cat, price, cost, supplier, qty in [
+                    ("LED экран P3.9 (субаренда)", "Экраны", 45000, 32000, "EventPro Almaty", 10),
+                    ("Линейный массив 2×top (субаренда)", "Звук", 80000, 55000, "SoundRent", 4),
+                    ("Дым-машина hazer (субаренда)", "Свет", 12000, 7000, "LightHub", 6),
+                    ("Генератор 30 кВт (субаренда)", "Логистика", 35000, 22000, "PowerGo", 2),
+                ]:
+                    session.add(Equipment(
+                        name=name,
+                        category=cat,
+                        price=float(price),
+                        cost_price=float(cost),
+                        stock_quantity=int(qty),
+                        status="Доступно",
+                        warehouse_type="subrental",
+                        supplier=supplier,
+                        description="Демо-позиция внешнего склада (субаренда)",
+                    ))
+                session.commit()
+        except Exception:
+            session.rollback()
+    
+        # 4b5. Демо-сделки: только если CRM пустая (cold start /tmp на Vercel).
+        # На проде отключить: SEED_DEMO_DEALS=0
+        if os.environ.get("SEED_DEMO_DEALS", "1").strip() != "0":
+            try:
+                demo_seed.seed_demo_deals(session, only_if_empty=True)
+            except Exception as e:
+                session.rollback()
+                print("demo_seed error:", e)
+        else:
+            print("demo_seed: skipped (SEED_DEMO_DEALS=0)")
+    
+        # 4c. Стадии «в работе» для проверки брони оборудования:
+        # если ни одна стадия не помечена, помечаем стандартные.
+        try:
+            active_cnt = session.query(Stage).filter(Stage.is_active_rent == True).count()  # noqa: E712
+            if active_cnt == 0:
+                for st in session.query(Stage).all():
+                    if any(k in (st.name or "") for k in ("Предоплата", "Монтаж", "Мероприятие")):
+                        st.is_active_rent = True
+                session.commit()
+        except Exception:
+            session.rollback()
+    
+        # 5. Create default admin user (пароль из ADMIN_PASSWORD или "admin")
+        try:
+            if session.query(User).count() == 0:
+                admin_pw = (os.environ.get("ADMIN_PASSWORD") or "admin").strip() or "admin"
+                admin_user = User(
+                    username="admin",
+                    hashed_password=auth.get_password_hash(admin_pw),
+                    role="admin",
+                    full_name="Администратор",
                 )
-    except Exception:
-        session.rollback()
-
-    # 6. Громкие предупреждения готовности к проду (лог при старте)
-    try:
-        _prod_warns = []
-        _info = database_backend_info()
-        if _info.get("is_sqlite"):
-            _prod_warns.append(
-                "SQLite вместо Postgres — для боя сотрудников обязателен DATABASE_URL=postgresql+psycopg2://…"
-            )
-        if not os.environ.get("SESSION_SECRET"):
-            _prod_warns.append(
-                "SESSION_SECRET не задан в env — секрет берётся из файла/.session_secret; для прода задайте ≥64 символов"
-            )
-        _admin = session.query(User).filter(User.username == "admin").first()
-        if _admin and auth.verify_password("admin", _admin.hashed_password):
-            _prod_warns.append(
-                "Пароль пользователя admin всё ещё «admin» — смените в Настройках или через ADMIN_PASSWORD на чистой БД"
-            )
-        if os.environ.get("FORCE_SECURE_COOKIE") != "1" and not os.environ.get("VERCEL"):
-            if os.environ.get("ENV", "").lower() in ("production", "prod") or _info.get("is_postgres"):
+                session.add(admin_user)
+                session.commit()
+                if admin_pw == "admin":
+                    print(
+                        "⚠️  SECURITY: создан admin с паролем по умолчанию «admin». "
+                        "Смените пароль сразу после входа или задайте ADMIN_PASSWORD."
+                    )
+        except Exception:
+            session.rollback()
+    
+        # 6. Громкие предупреждения готовности к проду (лог при старте)
+        try:
+            _prod_warns = []
+            _info = database_backend_info()
+            if _info.get("is_sqlite"):
                 _prod_warns.append(
-                    "FORCE_SECURE_COOKIE не =1 — на HTTPS за nginx рекомендуется FORCE_SECURE_COOKIE=1"
+                    "SQLite вместо Postgres — для боя сотрудников обязателен DATABASE_URL=postgresql+psycopg2://…"
                 )
-        for _w in _prod_warns:
-            print(f"⚠️  PROD-READY: {_w}")
-        if _prod_warns and (
-            os.environ.get("ENV", "").lower() in ("production", "prod")
-            or os.environ.get("FORCE_SECURE_COOKIE") == "1"
-            or _info.get("is_postgres")
-        ):
-            print("⚠️  PROD-READY: исправьте пункты выше до запуска сотрудников (см. docs/prod-readiness-2026-08-14.md)")
-    except Exception as e:
-        print("prod-ready check error:", e)
-
+            if not os.environ.get("SESSION_SECRET"):
+                _prod_warns.append(
+                    "SESSION_SECRET не задан в env — секрет берётся из файла/.session_secret; для прода задайте ≥64 символов"
+                )
+            _admin = session.query(User).filter(User.username == "admin").first()
+            if _admin and auth.verify_password("admin", _admin.hashed_password):
+                _prod_warns.append(
+                    "Пароль пользователя admin всё ещё «admin» — смените в Настройках или через ADMIN_PASSWORD на чистой БД"
+                )
+            if os.environ.get("FORCE_SECURE_COOKIE") != "1" and not os.environ.get("VERCEL"):
+                if os.environ.get("ENV", "").lower() in ("production", "prod") or _info.get("is_postgres"):
+                    _prod_warns.append(
+                        "FORCE_SECURE_COOKIE не =1 — на HTTPS за nginx рекомендуется FORCE_SECURE_COOKIE=1"
+                    )
+            for _w in _prod_warns:
+                print(f"⚠️  PROD-READY: {_w}")
+            if _prod_warns and (
+                os.environ.get("ENV", "").lower() in ("production", "prod")
+                or os.environ.get("FORCE_SECURE_COOKIE") == "1"
+                or _info.get("is_postgres")
+            ):
+                print("⚠️  PROD-READY: исправьте пункты выше до запуска сотрудников (см. docs/prod-readiness-2026-08-14.md)")
+        except Exception as e:
+            print("prod-ready check error:", e)
+    
 app = FastAPI(title="Rental Business Automation")
 
 def expand_company_type(name: str) -> str:
@@ -1694,30 +1696,37 @@ async def read_dashboard(request: Request, db: Session = Depends(get_db), user: 
     active = _resolve_active_city(db, user, request)
     deals_q = _not_deleted(db.query(Deal), Deal)
     deals_q = _apply_deal_city_filter(deals_q, active.id if active else None)
-    deals = deals_q.all()
+    
     stages = {s.id: s for s in db.query(Stage).all()}
+    won_stage_ids = [sid for sid, s in stages.items() if "Успешно" in s.name]
+    lost_stage_ids = [sid for sid, s in stages.items() if "проиграна" in s.name.lower()]
 
-    def stage_name(d):
-        st = stages.get(d.stage)
-        return st.name if st else ""
+    stage_stats_query = deals_q.with_entities(
+        Deal.stage,
+        func.count(Deal.id).label('count'),
+        func.sum(Deal.final_sum).label('sum')
+    ).group_by(Deal.stage).all()
 
-    won_deals = [d for d in deals if "Успешно" in stage_name(d)]
-    lost_deals = [d for d in deals if "проиграна" in stage_name(d).lower()]
-    active_deals = [d for d in deals if d not in won_deals and d not in lost_deals]
+    stage_stats = {row.stage: {"count": row.count, "sum": row.sum or 0} for row in stage_stats_query}
 
-    revenue = sum(d.final_sum or 0 for d in won_deals)
-    in_work_sum = sum(d.final_sum or 0 for d in active_deals)
+    deals_total = sum(s["count"] for s in stage_stats.values())
+    deals_won = sum(stage_stats.get(sid, {}).get("count", 0) for sid in won_stage_ids)
+    deals_lost = sum(stage_stats.get(sid, {}).get("count", 0) for sid in lost_stage_ids)
+    deals_active = deals_total - deals_won - deals_lost
+
+    revenue = sum(stage_stats.get(sid, {}).get("sum", 0) for sid in won_stage_ids)
+    in_work_sum = sum(stage_stats.get(sid, {}).get("sum", 0) for sid, _ in stages.items() if sid not in won_stage_ids and sid not in lost_stage_ids)
 
     # Воронка по стадиям (основная воронка)
     funnel = []
     pipeline = db.query(Pipeline).first()
     if pipeline:
         for st in sorted(pipeline.stages, key=lambda s: s.order_index):
-            st_deals = [d for d in deals if d.stage == st.id]
+            st_stats = stage_stats.get(st.id, {"count": 0, "sum": 0})
             funnel.append({
                 "name": st.name,
-                "count": len(st_deals),
-                "sum": sum(d.final_sum or 0 for d in st_deals),
+                "count": st_stats["count"],
+                "sum": st_stats["sum"],
             })
     max_count = max((f["count"] for f in funnel), default=0) or 1
 
@@ -1732,9 +1741,9 @@ async def read_dashboard(request: Request, db: Session = Depends(get_db), user: 
     stats = {
         "revenue": revenue,
         "in_work_sum": in_work_sum,
-        "deals_total": len(deals),
-        "deals_active": len(active_deals),
-        "deals_won": len(won_deals),
+        "deals_total": deals_total,
+        "deals_active": deals_active,
+        "deals_won": deals_won,
         "companies_count": _not_deleted(db.query(Company), Company).count(),
         "equipment_count": db.query(Equipment).count(),
         "active_chats": active_chats,
@@ -1761,7 +1770,10 @@ def read_quote_detail(request: Request, quote_id: int, user: User = Depends(get_
 
 @app.get("/quotes", response_class=HTMLResponse)
 def read_quotes(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    deals = _not_deleted(db.query(Deal), Deal).order_by(Deal.id.desc()).all()
+    deals = _not_deleted(db.query(Deal), Deal).options(
+        joinedload(Deal.company),
+        joinedload(Deal.assignee)
+    ).order_by(Deal.id.desc()).all()
     return templates.TemplateResponse("quotes.html", {"request": request, "active_page": "quotes", "deals": deals})
 
 @app.get("/calendar", response_class=HTMLResponse)
@@ -2376,6 +2388,12 @@ def get_tasks(deal_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = _not_deleted(db.query(Task), Task)
     if deal_id:
         query = query.filter(Task.deal_id == deal_id)
+    query = query.options(
+        joinedload(Task.assignees),
+        joinedload(Task.observers),
+        joinedload(Task.checklist_items),
+        joinedload(Task.deal)
+    )
     tasks = query.order_by(Task.status, Task.due_date).all()
     counts = dict(
         db.query(TaskComment.task_id, func.count(TaskComment.id))
@@ -5362,7 +5380,7 @@ def _set_primary_contact(db: Session, contact: Contact):
 
 @app.get("/api/contacts")
 def get_contacts(company_id: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(Contact)
+    query = db.query(Contact).options(joinedload(Contact.company))
     if company_id:
         query = query.filter(Contact.company_id == company_id)
     return [{
@@ -5948,10 +5966,11 @@ def get_equipment_availability(start_date: str = None, end_date: str = None, db:
     # Бронь считаем только по сделкам «в работе» (стадии с флагом is_active_rent,
     # например «Предоплата внесена», «Монтаж / Мероприятие»)
     active_stage_ids = [s.id for s in db.query(Stage).filter(Stage.is_active_rent == True).all()]  # noqa: E712
+    query = _not_deleted(db.query(Deal.id, Deal.setup_date, Deal.event_date), Deal)
     if active_stage_ids:
-        all_deals = _not_deleted(db.query(Deal), Deal).filter(Deal.stage.in_(active_stage_ids)).all()
+        all_deals = query.filter(Deal.stage.in_(active_stage_ids)).all()
     else:
-        all_deals = _not_deleted(db.query(Deal), Deal).all()
+        all_deals = query.all()
     overlapping_deal_ids = []
     
     def parse_date(d_str):
@@ -7133,22 +7152,33 @@ def get_deals(
             filter_city = active.id if active else None
     query = _apply_deal_city_filter(query, filter_city)
 
+    if q:
+        q_norm = q.strip()
+        # Ensure Company is joined for filtering if not already (safest way is outerjoin)
+        query = query.outerjoin(Company, Deal.company_id == Company.id).filter(
+            or_(
+                Deal.title.ilike(f"%{q_norm}%"),
+                Company.name.ilike(f"%{q_norm}%"),
+                Company.phone.ilike(f"%{q_norm}%"),
+                # Cast id to string if needed, or use integer check
+                Deal.id == (int(q_norm) if q_norm.isdigit() else -1)
+            )
+        )
+
+    # Avoid N+1 queries during serialization
+    query = query.options(
+        joinedload(Deal.assignee),
+        joinedload(Deal.company),
+        joinedload(Deal.workspace_city)
+    )
+
     deals = query.order_by(Deal.id.desc()).all()
     result = []
-    q_norm = (q or "").strip().lower()
+    
     for d in deals:
         card = _serialize_deal_card(d, db)
         if overdue_only and not card["has_overdue_activity"]:
             continue
-        if q_norm:
-            blob = " ".join([
-                card["title"] or "",
-                card["company_name"] or "",
-                card["company_phone"] or "",
-                str(card["id"]),
-            ]).lower()
-            if q_norm not in blob:
-                continue
         result.append(card)
     return result
 
