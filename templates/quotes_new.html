@@ -68,18 +68,18 @@ body:has(.quote-layout) .quote-side {
     gap: 16px;
 }
 
-/* --- Карточки категорий в каталоге (как на скриншоте) --- */
+/* --- Карточки категорий и оборудования в каталоге --- */
 .cat-group-card {
     background: var(--surface, #ffffff);
     border: 1px solid var(--border, #e2e8f0);
     border-radius: 16px;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 .cat-group-head {
     font-weight: 800;
-    font-size: 14.5px;
+    font-size: 14px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text, #0f172a);
@@ -93,12 +93,14 @@ body:has(.quote-layout) .quote-side {
 }
 .cat-item-row {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
     padding: 14px 16px;
     border-bottom: 1px solid var(--border-soft, #f1f5f9);
-    gap: 14px;
-    transition: background 0.15s;
+    gap: 8px;
+    background: var(--surface, #ffffff);
+    transition: all 0.15s ease;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
 }
 .cat-item-row:last-child {
     border-bottom: none;
@@ -106,75 +108,133 @@ body:has(.quote-layout) .quote-side {
 .cat-item-row:hover {
     background: var(--bg-2, #fbfcfd);
 }
+.cat-item-row:active {
+    background: var(--bg-2, #f1f5f9);
+}
+.cat-item-row.in-cart {
+    background: rgba(226, 90, 60, 0.04) !important;
+    border-left: 4px solid var(--primary, #e25a3c);
+}
 .cat-item-row.is-conflict {
     background: var(--danger-soft, #fee2e2) !important;
+    border-left: 4px solid var(--danger, #ef4444);
 }
-.cat-item-info {
-    flex: 1;
-    min-width: 0;
+
+.cat-item-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
 }
 .cat-item-name {
-    font-weight: 600;
+    font-weight: 700;
     font-size: 15.5px;
     color: var(--text, #0f172a);
     line-height: 1.35;
     word-break: break-word;
 }
-.cat-item-name .sub-label {
-    display: block;
-    font-weight: 500;
-    font-size: 14px;
-    color: var(--text-2, #64748b);
-    margin-top: 1px;
-}
-.cat-item-cost {
-    font-size: 12.5px;
-    color: var(--text-2, #64748b);
-    margin-top: 3px;
+.cat-item-badges {
     display: flex;
-    gap: 8px;
-    align-items: center;
     flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+.cat-item-badges .sub-label {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #9a3412;
+    background: #ffedd5;
+    padding: 2px 7px;
+    border-radius: 6px;
+}
+.cat-cost-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-2, #64748b);
+    background: var(--bg-2, #f1f5f9);
+    padding: 2px 7px;
+    border-radius: 6px;
 }
 
-/* Правая колонка строки: цена + степпер ровно под ней */
-.cat-item-right {
+.cat-item-footer {
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-top: 4px;
+    gap: 12px;
+}
+.cat-item-price-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
     flex-shrink: 0;
 }
 .cat-item-price {
     font-weight: 800;
-    font-size: 16px;
+    font-size: 16.5px;
     color: var(--text, #0f172a);
-    white-space: nowrap;
-    text-align: right;
+}
+.cat-item-unit {
+    font-size: 12.5px;
+    color: var(--text-2, #64748b);
+    font-weight: 500;
 }
 
-/* Степпер [ —  1  + ] в стиле макета */
+.cat-item-action {
+    flex-shrink: 0;
+}
+
+/* Большая нажимаемая кнопка «+ Добавить» */
+.btn-add-item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 38px;
+    padding: 0 16px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #ffffff;
+    background: var(--primary, #e25a3c);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(226, 90, 60, 0.25);
+    transition: all 0.15s;
+    touch-action: manipulation;
+}
+.btn-add-item:active {
+    transform: scale(0.96);
+    background: #c8462a;
+}
+
+/* Степпер [ —  1 шт  + ] */
 .stepper-pill {
     display: inline-flex;
     align-items: center;
     justify-content: space-between;
-    width: 106px;
-    height: 36px;
-    border: 1px solid var(--border, #cbd5e1);
-    border-radius: 8px;
-    background: var(--surface, #ffffff);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    width: 124px;
+    height: 38px;
+    border: 1.5px solid var(--primary, #e25a3c);
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 2px 6px rgba(226, 90, 60, 0.15);
     box-sizing: border-box;
     overflow: hidden;
+    touch-action: manipulation;
 }
 .stepper-btn {
     border: none;
-    background: transparent;
-    width: 36px;
+    background: rgba(226, 90, 60, 0.08);
+    width: 40px;
     height: 100%;
     font-size: 20px;
-    font-weight: 600;
-    color: var(--text, #334155);
+    font-weight: 700;
+    color: var(--primary, #e25a3c);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -182,21 +242,20 @@ body:has(.quote-layout) .quote-side {
     padding: 0;
     line-height: 1;
     -webkit-tap-highlight-color: transparent;
+    transition: background 0.1s;
 }
 .stepper-btn:active {
-    background: var(--bg-2, #f1f5f9);
+    background: var(--primary, #e25a3c);
+    color: #ffffff;
 }
 .stepper-val {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--text-2, #94a3b8);
+    font-size: 13.5px;
+    font-weight: 800;
+    color: var(--text, #0f172a);
     text-align: center;
     flex: 1;
     user-select: none;
-}
-.stepper-val.active {
-    color: var(--text, #0f172a);
-    font-weight: 800;
+    padding: 0 2px;
 }
 
 .btn-sub-dup {
@@ -226,6 +285,54 @@ body:has(.quote-layout) .quote-side {
     padding: 0;
     line-height: 1;
     margin-left: 6px;
+}
+
+/* --- Панель фильтров и шаблонов каталога --- */
+.cat-filter-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.cat-wh-group {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-2, #f1f5f9);
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--border, #e2e8f0);
+}
+.cat-wh-group .cat-wh {
+    border: none;
+    background: transparent;
+    padding: 6px 14px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-2, #64748b);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.cat-wh-group .cat-wh.active {
+    background: var(--surface, #ffffff);
+    color: var(--text, #0f172a);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.cat-tmpl-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.cat-tmpl-group select {
+    min-width: 170px;
+    padding: 7px 10px;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 8px;
+    background: var(--surface, #ffffff);
+    color: var(--text, #0f172a);
+    font-size: 13.5px;
 }
 
 /* --- Корзина (Позиции сметы) --- */
@@ -342,9 +449,32 @@ body:has(.quote-layout) .quote-side {
    МОБИЛЬНАЯ АДАПТАЦИЯ (экран <= 768px)
    ======================================================== */
 @media (max-width: 768px) {
+    .quote-top-summary {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 10px 14px;
+    }
+    .quote-top-summary .qts-title {
+        font-size: 15px;
+    }
+    .quote-top-summary .qts-meta {
+        font-size: 13px;
+        color: var(--text-2, #64748b);
+    }
+    
+    .toolbar {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .toolbar .page-title {
+        font-size: 1.35rem;
+    }
+
     .quote-layout {
         grid-template-columns: 1fr !important;
         gap: 12px;
+        padding-bottom: calc(var(--bottom-nav-h, 64px) + 90px + env(safe-area-inset-bottom, 0px)) !important;
     }
     .quote-main, .quote-side {
         gap: 12px;
@@ -361,9 +491,101 @@ body:has(.quote-layout) .quote-side {
         gap: 10px;
     }
 
-    /* Поля ввода крупные под пальцы */
+    /* Поля ввода крупные под пальцы и без автозума iOS */
     label.field input, label.field select {
         min-height: 44px;
+        font-size: 16px !important;
+    }
+
+    /* Каталог: фильтры и шаблоны */
+    .cat-filter-bar {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    .cat-wh-group {
+        display: flex;
+        width: 100%;
+        gap: 6px;
+    }
+    .cat-wh-group .cat-wh {
+        flex: 1;
+        min-height: 38px;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 0 4px;
+        text-align: center;
+    }
+    .cat-tmpl-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        width: 100%;
+    }
+    .cat-tmpl-group select {
+        flex: 1 1 100%;
+        min-height: 40px;
+        font-size: 14px;
+    }
+    .cat-tmpl-group .btn {
+        flex: 1 1 calc(50% - 3px);
+        min-height: 36px;
+        font-size: 13px;
+    }
+
+    /* Строки каталога */
+    .cat-group-head {
+        font-size: 13px;
+        padding: 10px 14px;
+    }
+    .cat-item-row {
+        padding: 12px 14px;
+        gap: 8px;
+    }
+    .cat-item-name {
+        font-size: 15px;
+        line-height: 1.35;
+    }
+    .cat-item-footer {
+        margin-top: 6px;
+    }
+    .cat-item-price {
+        font-size: 16px;
+    }
+    .btn-add-item {
+        min-height: 38px;
+        padding: 0 14px;
+        font-size: 13.5px;
+    }
+    .stepper-pill {
+        width: 114px;
+        height: 38px;
+        touch-action: manipulation;
+    }
+    .stepper-btn {
+        width: 36px;
+        font-size: 20px;
+    }
+
+    /* Корзина позиций */
+    .cart-card {
+        padding: 12px;
+        gap: 8px;
+    }
+    .cart-card-title {
+        font-size: 14px;
+    }
+    .cart-card-inputs-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1.3fr;
+        gap: 6px;
+    }
+    .cart-input-box {
+        height: 40px;
+        padding: 0 6px;
+    }
+    .cart-input-box input {
         font-size: 16px !important;
     }
 
@@ -373,42 +595,90 @@ body:has(.quote-layout) .quote-side {
         position: fixed;
         left: 0;
         right: 0;
-        bottom: var(--bottom-nav-h, 60px);
+        bottom: calc(var(--bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
         background: var(--surface, #ffffff);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         border-top: 1px solid var(--border, #e2e8f0);
-        padding: 10px 16px;
+        padding: 10px 14px;
         z-index: 95;
-        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 10px;
     }
     .mqb-info {
         display: flex;
         flex-direction: column;
         cursor: pointer;
+        min-width: 0;
+        flex: 1;
     }
     .mqb-sum {
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 800;
         color: var(--primary, #e25a3c);
-        line-height: 1.1;
+        line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     .mqb-count {
-        font-size: 12px;
+        font-size: 11.5px;
         color: var(--text-2, #64748b);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mqb-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+    .mqb-docs {
+        min-height: 42px;
+        padding: 0 12px;
+        font-size: 13.5px;
+        font-weight: 600;
+        border-radius: 10px;
+        white-space: nowrap;
     }
     .mqb-save {
-        min-height: 44px;
-        padding: 0 20px;
-        font-size: 15px;
+        min-height: 42px;
+        padding: 0 16px;
+        font-size: 14.5px;
         font-weight: 700;
         border-radius: 10px;
+        white-space: nowrap;
     }
 
-    /* Отступ снизу для мобильного контента */
-    body:has(.quote-layout) .content {
-        padding-bottom: 150px !important;
+    /* Модалка реестра документов */
+    .docs-registry-modal {
+        padding: 14px;
+        width: 100%;
+        max-width: calc(100vw - 28px);
+    }
+    .docs-registry-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        padding: 10px 12px;
+    }
+    .docs-registry-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        width: 100%;
+    }
+    .docs-registry-actions .btn {
+        width: 100%;
+        min-height: 38px;
+        font-size: 13.5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 }
 </style>
@@ -462,16 +732,19 @@ body:has(.quote-layout) .quote-side {
         <!-- Каталог оборудования (в стиле макета) -->
         <div class="card" id="catalogCard">
             <h3 style="margin-top:0">Каталог оборудования</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-                <button type="button" class="btn btn-sm cat-wh active" data-wh="all" onclick="setCatWarehouse('all')">Все</button>
-                <button type="button" class="btn btn-sm cat-wh" data-wh="own" onclick="setCatWarehouse('own')">Свой склад</button>
-                <button type="button" class="btn btn-sm cat-wh" data-wh="subrental" onclick="setCatWarehouse('subrental')">Субаренда</button>
-                <span class="muted" style="font-size:12px;margin-left:4px;">|</span>
-                <select id="estimateTemplateSelect" style="min-width:180px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);">
-                    <option value="">Шаблон сметы…</option>
-                </select>
-                <button type="button" class="btn btn-sm" onclick="applyEstimateTemplate()">Применить</button>
-                <button type="button" class="btn btn-sm" onclick="saveEstimateTemplate()">Сохранить как шаблон</button>
+            <div class="cat-filter-bar">
+                <div class="cat-wh-group">
+                    <button type="button" class="btn btn-sm cat-wh active" data-wh="all" onclick="setCatWarehouse('all')">Все</button>
+                    <button type="button" class="btn btn-sm cat-wh" data-wh="own" onclick="setCatWarehouse('own')">Свой склад</button>
+                    <button type="button" class="btn btn-sm cat-wh" data-wh="subrental" onclick="setCatWarehouse('subrental')">Субаренда</button>
+                </div>
+                <div class="cat-tmpl-group">
+                    <select id="estimateTemplateSelect">
+                        <option value="">Шаблон сметы…</option>
+                    </select>
+                    <button type="button" class="btn btn-sm" onclick="applyEstimateTemplate()">Применить</button>
+                    <button type="button" class="btn btn-sm" onclick="saveEstimateTemplate()">+ Шаблон</button>
+                </div>
             </div>
             <input id="catalogSearch" placeholder="Поиск по каталогу…" style="margin-bottom:14px;font-size:16px;min-height:44px;" oninput="renderCatalog()"/>
             <div id="catalogContainer"></div>
@@ -537,11 +810,14 @@ body:has(.quote-layout) .quote-side {
 
 <!-- Мобильная прилипающая нижняя плашка -->
 <div class="mobile-quote-bar">
-    <div class="mqb-info" onclick="document.getElementById('cartCard').scrollIntoView({behavior:'smooth'})">
+    <div class="mqb-info" onclick="document.getElementById('cartCard').scrollIntoView({behavior:'smooth'})" title="Перейти к выбранным позициям">
         <span class="mqb-sum" id="mqbSum">0 ₸</span>
         <span class="mqb-count" id="mqbCount">В смете: 0 поз.</span>
     </div>
-    <button type="button" class="btn btn-green mqb-save" onclick="saveQuote(false)">💾 Сохранить</button>
+    <div class="mqb-actions">
+        <button type="button" class="btn btn-sm btn-primary mqb-docs" onclick="openDocsRegistry()" title="Документы и договор">📄 Документы</button>
+        <button type="button" class="btn btn-green mqb-save" onclick="saveQuote(false)">💾 Сохранить</button>
+    </div>
 </div>
 
 <!-- Реестр документов сметы -->
@@ -1086,24 +1362,41 @@ function renderCatalog() {
 
             const inCart = cartQtyForName(item.name);
             const costText = item.cost_price ? `себест: ${fmt(item.cost_price)} ₸` : '';
-            const costHtml = costText ? `<span>${costText}</span>` : '';
-            const subLabelHtml = isSub ? `<span class="sub-label">(субаренда)</span>` : '';
+            const costHtml = costText ? `<span class="cat-cost-badge">${costText}</span>` : '';
+            const subLabelHtml = isSub ? `<span class="sub-label">Субаренда</span>` : '';
 
             const row = document.createElement('div');
-            row.className = 'cat-item-row' + (hasConflict ? ' is-conflict' : '');
+            row.className = 'cat-item-row' + (hasConflict ? ' is-conflict' : '') + (inCart > 0 ? ' in-cart' : '');
+            
+            let actionHtml = '';
+            if (inCart > 0) {
+                actionHtml = `
+                    <div class="stepper-pill is-active">
+                        <button type="button" class="stepper-btn minus" onclick="event.stopPropagation(); removeOneFromCart(${item.id})" title="Убрать">−</button>
+                        <span class="stepper-val">${inCart} шт</span>
+                        <button type="button" class="stepper-btn plus" onclick="event.stopPropagation(); addToCart(${item.id})" title="Добавить">+</button>
+                    </div>`;
+            } else {
+                actionHtml = `<button type="button" class="btn-add-item" onclick="event.stopPropagation(); addToCart(${item.id})">+ Добавить</button>`;
+            }
+
             row.innerHTML = `
-                <div class="cat-item-info">
-                    <div class="cat-item-name">${esc(item.name)} ${subLabelHtml} ${conflictHtml}</div>
-                    <div class="cat-item-cost">${costHtml} ${subFromConflictBtn}</div>
+                <div class="cat-item-header">
+                    <div class="cat-item-name">${esc(item.name)} ${conflictHtml}</div>
+                    <div class="cat-item-badges">${subLabelHtml}${costHtml}${subFromConflictBtn}</div>
                 </div>
-                <div class="cat-item-right">
-                    <div class="cat-item-price">${fmt(item.price)} ₸</div>
-                    <div class="stepper-pill">
-                        <button type="button" class="stepper-btn minus" onclick="removeOneFromCart(${item.id})" title="Убрать">−</button>
-                        <span class="stepper-val ${inCart > 0 ? 'active' : ''}">${inCart}</span>
-                        <button type="button" class="stepper-btn plus" onclick="addToCart(${item.id})" title="Добавить">+</button>
+                <div class="cat-item-footer">
+                    <div class="cat-item-price-wrap">
+                        <span class="cat-item-price">${fmt(item.price)} ₸</span>
+                        <span class="cat-item-unit">/ сут</span>
+                    </div>
+                    <div class="cat-item-action">
+                        ${actionHtml}
                     </div>
                 </div>`;
+            row.onclick = () => {
+                addToCart(item.id);
+            };
             list.appendChild(row);
         });
 
